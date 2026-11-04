@@ -9,8 +9,19 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 2.2.0 27a2890136d7f9fb83482461f5cc58bfe949d924 -->
+<!-- release-baseline: 2.3.0 58db92835c4943db08ec452436b1272a70a2f4a2 -->
 ## [Unreleased]
+
+## [2.3.0] - 2026-11-04
+
+### Added
+
+- install and sign in to missing tools during setup (`b9b671d`).
+- connect Slack during setup through a prefilled Slack app (`7ee4e6d`).
+
+### Documentation
+
+- explain installing, upgrading, and removing with Homebrew or PyPI (`58db928`).
 
 ## [2.2.0] - 2026-11-04
 
