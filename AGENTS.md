@@ -52,6 +52,7 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
 - `tests/`: standard-library `unittest` suite mirroring application modules.
 - `evals/`: example replay cases and experiment arms; the real ones are ignored.
 - `VERSION`: canonical SemVer version, mirrored by `prwarden.__version__`.
+- `pyproject.toml`: packaging metadata and the `prwarden` command; build-time only.
 - `CHANGELOG.md`: Keep a Changelog-style release history.
 - `LICENSE`, `NOTICE`: Apache License 2.0 and the copyright notice it carries.
 - `SECURITY.md`: how to report a vulnerability, and what is in scope.

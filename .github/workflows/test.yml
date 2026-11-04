@@ -26,3 +26,45 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m compileall -q prwarden tests
       - run: python -m unittest discover -s tests
+
+  install:
+    # The way Homebrew and pip run it: a built wheel, started outside the checkout,
+    # finding its configuration in the user's directories and writing nothing there
+    # before it has any.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.9", "3.15"]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip wheel --no-deps --wheel-dir dist .
+      - name: Run the installed command outside the checkout
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --no-deps dist/*.whl
+          home="$RUNNER_TEMP/home"
+          mkdir "$home"
+          cd "$RUNNER_TEMP"
+          run() {
+            env -i HOME="$home" PATH="$RUNNER_TEMP/venv/bin:/usr/bin:/bin" \
+              GITHUB_REVIEWER_USERNAME=ci-reviewer prwarden "$@"
+          }
+          test "$(run --version)" = "PR Warden $(cat "$GITHUB_WORKSPACE/VERSION")"
+          status=0
+          output="$(run 2>&1)" || status=$?
+          echo "$output"
+          test "$status" -eq 2
+          case "$output" in
+            *"$home/.config/prwarden/repositories.json"*) ;;
+            *) echo "the installed copy did not look in ~/.config/prwarden"; exit 1 ;;
+          esac
+          test -z "$(ls -A "$home")"

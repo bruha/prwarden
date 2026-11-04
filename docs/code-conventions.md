@@ -60,8 +60,9 @@ run the suite under `/usr/bin/python3` when changing syntax-sensitive code:
 
 Raising the floor is a legitimate decision, not a forbidden one. It requires
 updating this section, [AGENTS.md](../AGENTS.md), the
-[README](../README.md) requirements, and the CI matrix in the same change, so
-the documented floor and the enforced floor never disagree again.
+[README](../README.md) requirements, the CI matrices, and `requires-python` and
+the pinned build backend in `pyproject.toml` in the same change, so the
+documented floor and the enforced floor never disagree again.
 
 ## DRY
 

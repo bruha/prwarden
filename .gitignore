@@ -33,3 +33,8 @@ evals/results/
 # checks against, and research notes built from real review data.
 .private/
 research/
+
+# Packaging output.
+build/
+dist/
+*.egg-info/

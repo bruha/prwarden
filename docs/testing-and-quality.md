@@ -73,6 +73,23 @@ interpreter, which is the oldest supported version
 CI runs the same checks on 3.9 through 3.15, so a missed incompatibility fails
 the pull request rather than reaching a release.
 
+A second CI job builds the wheel on Linux and macOS under 3.9 and 3.15, installs
+it into a clean virtual environment, and runs `prwarden` from outside the checkout
+with an empty home directory. A file the package needs but does not ship, or a
+lookup that still assumes a checkout, fails there instead of in a user's install.
+The same check by hand:
+
+```sh
+python3 -m pip wheel --no-deps --wheel-dir /tmp/prwarden-dist .
+python3 -m venv /tmp/prwarden-venv
+/tmp/prwarden-venv/bin/python -m pip install --no-deps /tmp/prwarden-dist/*.whl
+(cd /tmp && env -i HOME=/tmp/prwarden-home PATH=/tmp/prwarden-venv/bin:/usr/bin:/bin \
+  GITHUB_REVIEWER_USERNAME=example prwarden)
+```
+
+It should report the missing `~/.config/prwarden/repositories.json` under that
+home and create nothing.
+
 For release automation changes, verify at least:
 
 ```sh
