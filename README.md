@@ -38,14 +38,25 @@ and a command of your own can review.
 
 With the [requirements](#requirements) below installed and signed in (`gh auth
 login`, plus your AI CLI's own login), install PR Warden with Homebrew on macOS or
-Linux, or with [pipx](https://pipx.pypa.io/) anywhere Python 3.9 runs:
+Linux, or with [pipx](https://pipx.pypa.io/) anywhere Python 3.9 runs, and set it
+up:
 
 ```sh
 brew install bruha/tap/prwarden    # or: pipx install prwarden
+prwarden setup
 ```
 
-An installed copy reads its configuration from `~/.config/prwarden`. Create it
-from the two examples:
+`prwarden setup` asks which GitHub account reviews, which AI CLI reviews and which
+verifies, and which repositories to watch. A repository you have no clone of is
+cloned by PR Warden on its first review; setup says where, and roughly how large,
+before you agree. It writes `.env` and `repositories.json` to `~/.config/prwarden`,
+then offers a dry-run preview of one pull request, which spends credits and posts
+nothing, live delivery, and a schedule. `prwarden doctor` checks the result at any
+time and spends nothing.
+
+### By hand, or from a clone
+
+An installed copy can also be configured from the two examples:
 
 ```sh
 mkdir -p ~/.config/prwarden && cd ~/.config/prwarden
@@ -63,6 +74,9 @@ cd prwarden
 install -m 600 .env.example .env
 cp repositories.example.json repositories.json
 ```
+
+`prwarden setup --import <clone>` later moves a clone's configuration and delivery
+records to an installed copy, so nothing is reviewed twice.
 
 1. In `.env`, set `REVIEW_ENGINE` to the AI CLI you are signed in to, such as `kiro`
    or `claude`, and optionally `REVIEW_VERIFY_ENGINE` to a second one.

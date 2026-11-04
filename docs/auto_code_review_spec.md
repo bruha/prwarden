@@ -94,6 +94,30 @@ account's own pull request into a teammate's, which is the route that approves.
 `python3 -m prwarden.public_safety refresh-terms` reads such a repository as its account
 too, because the active login cannot list it.
 
+### Installation commands
+
+`prwarden setup`, `prwarden doctor`, and `prwarden schedule` look after an
+installation and never review. A first word naming one of them is dispatched before
+the review parser, which takes no positional argument, so no review invocation can
+be mistaken for one.
+
+- `setup` writes `.env` and `repositories.json`, both mode `0600`, keeping any
+  files it replaces beside them. It pins `GITHUB_REVIEWER_USERNAME` to the chosen
+  account, tries each signed-in account in turn for a repository the reviewer
+  cannot read and records the first that can as that entry's `github_account`, and
+  leaves Slack off for every entry when no webhook is given. It writes
+  `AUTO_REVIEW_DRY_RUN=1`; a preview, going live, and a schedule are each asked
+  for. `--import` copies a source checkout's configuration with its relative paths
+  made absolute, and its delivery records, and refuses to merge into an existing
+  installation.
+- `doctor` only reads: no post, clone, or model call. It exits 1 for anything that
+  would stop reviews or delivery, including two schedules running at once.
+- `schedule install` writes a per-user LaunchAgent on macOS or a systemd user
+  timer on Linux that runs `prwarden --live`, and refuses while the configuration
+  keeps `AUTO_REVIEW_DRY_RUN` on: a dry run records nothing, so a scheduled one
+  would review the same heads at every slot. On macOS it also refuses while
+  another LaunchAgent runs PR Warden.
+
 ## Review Scheduling
 
 Discovery completes for every configured repository before the first review

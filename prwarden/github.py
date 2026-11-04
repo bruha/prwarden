@@ -875,6 +875,20 @@ def repository_reachable(repository: Repository) -> str:
     ).strip()
 
 
+def repository_size(repository: Repository) -> Optional[int]:
+    """Return GitHub's estimate of a repository's size in kilobytes, if it has one."""
+
+    try:
+        output = _run_for(
+            repository,
+            ["gh", "api", f"repos/{repository.slug}", "--jq", ".size"],
+            timeout_seconds=30,
+        )
+        return int(output.strip())
+    except (CommandError, ValueError):
+        return None
+
+
 def repository_account_problem(repository: Repository) -> Optional[str]:
     """Return why the account a repository names could not be pinned, if it was not."""
 

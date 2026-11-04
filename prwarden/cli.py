@@ -148,7 +148,7 @@ BOARD_FALLBACK_TERMINAL_SIZE = (80, 24)
 INTERRUPTED_EXIT_CODE = 130
 RUN_LOG_DIRECTORY_NAME = "run-logs"
 # Commands that look after this installation instead of reviewing.
-ADMIN_COMMANDS = ("doctor", "schedule")
+ADMIN_COMMANDS = ("doctor", "schedule", "setup")
 PLAN_TITLE_WIDTH = 60
 # The progress line is styled with the terminal's own text colour, never a palette
 # colour: a theme decides what each palette entry looks like, and Solarized Dark sets
@@ -653,8 +653,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Review configured GitHub pull requests with a pluggable review engine."
         ),
-        epilog="Other commands: `prwarden doctor` checks this installation, and "
-        "`prwarden schedule` reviews on a timer.",
+        epilog="Other commands: `prwarden setup` writes a configuration, "
+        "`prwarden doctor` checks it, and `prwarden schedule` reviews on a timer.",
     )
     parser.add_argument(
         "--version",
@@ -4485,6 +4485,10 @@ def _admin_command(name: str) -> "Callable[[Sequence[str]], int]":
         from . import doctor
 
         return doctor.main
+    if name == "setup":
+        from . import setup_wizard
+
+        return setup_wizard.main
     raise AssertionError(f"unknown command {name}")
 
 
