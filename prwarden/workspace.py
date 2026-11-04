@@ -1,5 +1,6 @@
 import filecmp
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -10,6 +11,7 @@ from types import TracebackType
 from typing import Optional, Type
 
 from .commands import CommandError, run_cmd
+from .github import run_git_for
 from .models import DependencyLink, PullRequest, Repository
 
 
@@ -23,6 +25,52 @@ DEPENDENCY_DIRECTORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("bun.lock", "bun.lockb", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"),
     ),
 )
+
+
+CLONE_TIMEOUT_SECONDS = 1800
+
+
+def ensure_managed_checkout(repository: Repository) -> Path:
+    """Clone a repository PR Warden manages itself the first time it is needed.
+
+    The clone carries Git objects only: every review reads its own detached
+    worktree, so the clone's own working tree is never checked out. It is made in a
+    temporary directory beside its final place and renamed there once complete, so
+    an interrupted clone is never mistaken for a finished one. The caller holds the
+    checkout lock, which keeps two reviews in this process from cloning it twice.
+    """
+
+    checkout = repository.path
+    if checkout is None or not repository.managed_checkout:
+        raise WorkspaceError(f"{repository.slug} is not a managed clone")
+    if (checkout / ".git").exists():
+        return checkout
+    checkout.parent.mkdir(parents=True, exist_ok=True)
+    partial = Path(
+        tempfile.mkdtemp(prefix=f".{checkout.name}.partial-", dir=checkout.parent)
+    )
+    print(f"    - Cloning {repository.slug} into {checkout}, once", flush=True)
+    try:
+        run_git_for(
+            repository,
+            [
+                "clone",
+                "--quiet",
+                "--no-checkout",
+                f"https://github.com/{repository.slug}.git",
+                str(partial),
+            ],
+            timeout_seconds=CLONE_TIMEOUT_SECONDS,
+        )
+        # A run started at the same time may have finished first; its clone wins.
+        if not (checkout / ".git").exists():
+            os.replace(partial, checkout)
+    except (CommandError, OSError) as error:
+        raise WorkspaceError(f"Cannot clone {repository.slug}: {error}") from error
+    finally:
+        if partial.exists():
+            shutil.rmtree(partial, ignore_errors=True)
+    return checkout
 
 
 def _remote_matches_slug(remote_url: str, slug: str) -> bool:
@@ -225,6 +273,8 @@ class ReviewWorkspace:
                 f"Repository {self.repository.slug} needs a local checkout path"
             )
         with _checkout_lock(checkout):
+            if self.repository.managed_checkout:
+                ensure_managed_checkout(self.repository)
             return self._create(checkout)
 
     def _create(self, checkout: Path) -> Repository:
@@ -260,21 +310,23 @@ class ReviewWorkspace:
         self.path = Path(tempfile.mkdtemp(prefix=prefix, dir=self.workspace_root))
         self.path.rmdir()
 
+        fetch = [
+            "-C",
+            str(checkout),
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-write-fetch-head",
+            "origin",
+            self.pull_request.head_sha,
+        ]
         try:
-            run_cmd(
-                [
-                    "git",
-                    "-C",
-                    str(checkout),
-                    "fetch",
-                    "--quiet",
-                    "--no-tags",
-                    "--no-write-fetch-head",
-                    "origin",
-                    self.pull_request.head_sha,
-                ],
-                timeout_seconds=180,
-            )
+            # A clone of the operator's fetches with the operator's own Git
+            # credentials; a managed clone has none, so GitHub CLI supplies them.
+            if self.repository.managed_checkout:
+                run_git_for(self.repository, fetch, timeout_seconds=180)
+            else:
+                run_cmd(["git", *fetch], timeout_seconds=180)
             run_cmd(
                 [
                     "git",

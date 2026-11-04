@@ -207,7 +207,38 @@ def resolve_path(value: str, base_directory: Path) -> Path:
     return expanded.resolve()
 
 
-def load_repositories(path: Path) -> list[Repository]:
+# What GitHub allows in an owner and a repository name. A managed clone's directory
+# is built from them, so anything else, `..` included, is refused before it can
+# name a directory outside the clones directory.
+MANAGED_OWNER_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?")
+MANAGED_NAME_PATTERN = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def managed_checkout_path(checkouts_directory: Path, slug: str) -> Path:
+    """Return where PR Warden keeps its own clone of ``slug``, or refuse the slug."""
+
+    owner, _, name = slug.partition("/")
+    if (
+        not MANAGED_OWNER_PATTERN.fullmatch(owner)
+        or not MANAGED_NAME_PATTERN.fullmatch(name)
+        or name in {".", ".."}
+    ):
+        raise ConfigError(
+            f"{slug!r} is not a GitHub owner/repository name PR Warden can clone"
+        )
+    return checkouts_directory / owner / name
+
+
+def load_repositories(
+    path: Path, checkouts_directory: Optional[Path] = None
+) -> list[Repository]:
+    """Read the repository list.
+
+    An entry without a ``path`` is cloned and kept by PR Warden under
+    ``checkouts_directory``. Without one, as for callers that only read the list,
+    such an entry keeps no path.
+    """
+
     if not path.exists():
         raise ConfigError(
             f"Repository configuration not found: {path}. Copy "
@@ -262,13 +293,21 @@ def load_repositories(path: Path) -> list[Repository]:
                     f"{label}.github_account is invalid: {error}"
                 ) from error
 
+        checkout: Optional[Path] = None
+        managed = False
+        if configured_path:
+            checkout = resolve_path(configured_path, path.parent)
+        elif checkouts_directory is not None:
+            checkout = managed_checkout_path(checkouts_directory, slug)
+            managed = True
         repositories.append(
             Repository(
                 name=name.strip(),
                 slug=slug,
-                path=resolve_path(configured_path, path.parent) if configured_path else None,
+                path=checkout,
                 slack=slack,
                 github_account=github_account,
+                managed_checkout=managed,
             )
         )
     return repositories
@@ -684,7 +723,9 @@ def load_settings(
 
     return Settings(
         reviewer_username=resolve_github_username(),
-        repositories=load_repositories(selected_repositories_file),
+        repositories=load_repositories(
+            selected_repositories_file, locations.checkouts_directory
+        ),
         dry_run=parse_bool(os.getenv("AUTO_REVIEW_DRY_RUN", "1"), "AUTO_REVIEW_DRY_RUN"),
         slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL", "").strip() or None,
         state_file=selected_state_file,

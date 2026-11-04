@@ -38,8 +38,14 @@ review-engine adapter, and route confirmed correctness or security findings:
 Private configuration remains outside Git:
 
 - `.env`: delivery gates, engine selection, Slack secret, and limits.
-- `repositories.json`: GitHub slugs and matching local Git checkout paths used
-  to fetch immutable PR head commits.
+- `repositories.json`: GitHub slugs and, optionally, matching local Git checkout
+  paths used to fetch immutable PR head commits. An entry with no path is cloned
+  by PR Warden into the managed checkouts directory on first use, objects only
+  and without a working tree, and every fetch into it goes through GitHub CLI's
+  credential helper with the token of the account the repository is read as.
+  Git's other credential helpers are disabled for those commands so the token is
+  never stored, and a slug that is not a valid GitHub owner and name is refused
+  before it can name a directory outside the checkouts directory.
 - `.state/review-state.json`: delivery idempotency records.
 
 These live in the configuration and state directories resolved at startup by

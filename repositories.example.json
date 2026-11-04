@@ -5,8 +5,7 @@
     "path": "~/src/example-app"
   },
   {
-    "slug": "your-org/example-library",
-    "path": "~/src/example-library"
+    "slug": "your-org/example-library"
   },
   {
     "slug": "another-org/side-project",

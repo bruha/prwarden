@@ -1,6 +1,8 @@
 import json
 import os
 import re
+import shlex
+import shutil
 from typing import Any, Optional, Sequence
 
 from . import commands
@@ -160,6 +162,37 @@ def _run_for(repository: Repository, args: Sequence[str], **options: Any) -> str
         environment.update(_repository_accounts[key])
         options["environment"] = environment
     return run_cmd(args, **options)
+
+
+def run_git_for(
+    repository: Repository, git_args: Sequence[str], **options: Any
+) -> str:
+    """Run one git command that reaches GitHub for a clone PR Warden manages.
+
+    Such a clone has no credentials of its own. Git asks GitHub CLI for them, and
+    the token it is given is the one every GitHub call for this repository carries,
+    so the clone is read as the same account. Git's other credential helpers are
+    switched off for the command, so the token is never written to a keychain, and
+    git never prompts, because a scheduled run has nobody to answer.
+    """
+
+    gh = shutil.which("gh") or "gh"
+    helper = f"!{shlex.quote(gh)} auth git-credential"
+    environment = dict(options.get("environment") or {})
+    environment["GIT_TERMINAL_PROMPT"] = "0"
+    options["environment"] = environment
+    return _run_for(
+        repository,
+        [
+            "git",
+            "-c",
+            "credential.helper=",
+            "-c",
+            f"credential.https://github.com.helper={helper}",
+            *git_args,
+        ],
+        **options,
+    )
 
 
 def run_cmd(args: Sequence[str], **options: Any) -> str:

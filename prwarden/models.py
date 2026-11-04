@@ -18,6 +18,10 @@ class Repository:
     # Who counts as the reviewer here follows it: the account's own pull requests
     # are its own, never approved.
     github_account: Optional[str] = None
+    # Whether `path` is a clone PR Warden makes and keeps itself, because the entry
+    # named no local checkout. Such a clone is fetched as the account above, with
+    # GitHub CLI's credentials, since it has none of its own.
+    managed_checkout: bool = False
 
 
 @dataclass(frozen=True)

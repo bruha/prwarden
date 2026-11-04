@@ -66,8 +66,9 @@ cp repositories.example.json repositories.json
 
 1. In `.env`, set `REVIEW_ENGINE` to the AI CLI you are signed in to, such as `kiro`
    or `claude`, and optionally `REVIEW_VERIFY_ENGINE` to a second one.
-2. In `repositories.json`, list each repository's `owner/name` slug and the path to
-   a local clone of it. Add `"slack": false` to an entry if you do not use Slack.
+2. In `repositories.json`, list each repository's `owner/name` slug, and the path to
+   a local clone of it if you have one; without a path PR Warden clones it itself.
+   Add `"slack": false` to an entry if you do not use Slack.
 3. Review one pull request as a dry run. Nothing is posted, but the model runs and
    uses your quota:
 
@@ -104,9 +105,17 @@ their examples, in `~/.config/prwarden` for an installed copy or in the clone. I
 `chmod 600 .env`. Edit both files for your environment. In a clone they are
 ignored by Git.
 
-Each `repositories.json` entry needs a GitHub `owner/repository` slug and the
-path to a matching local Git checkout. The checkout supplies Git objects; its
-currently checked-out branch does not need to match or be clean.
+Each `repositories.json` entry needs a GitHub `owner/repository` slug, and may name
+the `path` of a matching local Git checkout. The checkout supplies Git objects; its
+currently checked-out branch does not need to match or be clean, and dependencies
+installed in it, such as `node_modules`, are lent read-only to each review.
+
+An entry with no `path` is cloned by PR Warden itself the first time one of its
+pull requests is reviewed, into `~/.local/share/prwarden/checkouts/<owner>/<name>`
+for an installed copy or `.state/checkouts/` in a clone. The clone holds Git objects
+only, nothing is installed into it, and it is fetched with GitHub CLI's login for
+the account the repository is read as, so it needs no Git credentials of its own.
+Delete it to reclaim the space; the next review clones it again.
 
 An entry may also set `"slack": false` to keep the repository out of Slack, when
 the webhook belongs to a workspace the project is not part of. Your own pull
