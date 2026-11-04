@@ -20,36 +20,36 @@ The same applies to everything learned from the repositories this tool reviews,
 in tracked files and in commit messages alike: their organisation and repository
 names, people's logins, pull-request numbers, titles, and branch names, file paths
 from their code, and details of their product. Cite a real pull request as a
-`[pr:xxxx]` reference created with `python3 -m src.public_safety new-ref <url>`;
+`[pr:xxxx]` reference created with `python3 -m prwarden.public_safety new-ref <url>`;
 the map back to the URL lives in the ignored `.private/` directory. Report
 measurements as counts, never as named cases. The public-safety hook enforces
 this; see [development workflow](docs/development-workflow.md#public-safety).
 
 ## Repository map
 
-- `src/prwarden.py`: application entry point.
-- `src/cli.py`: orchestration, retry boundaries, and terminal behavior.
-- `src/config.py`: dotenv and repository configuration validation.
-- `src/engine.py`: provider-neutral prompt, schemas, and adapter registry.
-- `src/engine_*.py`: authenticated review-engine adapters.
-- `src/github.py`: GitHub discovery, feedback, checks, and delivery.
-- `src/github_status.py`: read-only lookup of announced GitHub incidents.
-- `src/review.py`: diff construction and semantic response validation.
-- `src/delivery.py`: Slack message formatting and delivery helpers.
-- `src/comment_template.py`: validated GitHub comment templates and tag aliases.
-- `src/progress.py`: in-place progress line and per-thread output capture.
-- `src/metrics.py`: structured measurement of what a run's reviews decided.
-- `src/compare_metrics.py`: reports what moved between two measurements.
-- `src/evaluate.py`: pins pull requests and replays them to measure a change.
-- `src/public_safety.py`: keeps reviewed projects' names out of commits; the
+- `prwarden/__main__.py`: application entry point.
+- `prwarden/cli.py`: orchestration, retry boundaries, and terminal behavior.
+- `prwarden/config.py`: dotenv and repository configuration validation.
+- `prwarden/engine.py`: provider-neutral prompt, schemas, and adapter registry.
+- `prwarden/engine_*.py`: authenticated review-engine adapters.
+- `prwarden/github.py`: GitHub discovery, feedback, checks, and delivery.
+- `prwarden/github_status.py`: read-only lookup of announced GitHub incidents.
+- `prwarden/review.py`: diff construction and semantic response validation.
+- `prwarden/delivery.py`: Slack message formatting and delivery helpers.
+- `prwarden/comment_template.py`: validated GitHub comment templates and tag aliases.
+- `prwarden/progress.py`: in-place progress line and per-thread output capture.
+- `prwarden/metrics.py`: structured measurement of what a run's reviews decided.
+- `prwarden/compare_metrics.py`: reports what moved between two measurements.
+- `prwarden/evaluate.py`: pins pull requests and replays them to measure a change.
+- `prwarden/public_safety.py`: keeps reviewed projects' names out of commits; the
   public-safety Git hooks and the private `[pr:xxxx]` reference map.
-- `src/state.py`: atomic JSON state and the single-host process lock.
-- `src/workspace.py`: immutable PR-head fetch, detached worktree lifecycle, and
+- `prwarden/state.py`: atomic JSON state and the single-host process lock.
+- `prwarden/workspace.py`: immutable PR-head fetch, detached worktree lifecycle, and
   read-only installed-dependency links.
 - `tests/`: standard-library `unittest` suite mirroring application modules.
 - `templates/`: public-safe default GitHub comment layout and tag registry.
 - `evals/`: example replay cases and experiment arms; the real ones are ignored.
-- `VERSION`: canonical SemVer version, mirrored by `src.__version__`.
+- `VERSION`: canonical SemVer version, mirrored by `prwarden.__version__`.
 - `CHANGELOG.md`: Keep a Changelog-style release history.
 - `LICENSE`, `NOTICE`: Apache License 2.0 and the copyright notice it carries.
 - `SECURITY.md`: how to report a vulnerability, and what is in scope.
@@ -115,12 +115,12 @@ Run from the repository root:
 
 ```sh
 python3 -m unittest discover -s tests
-python3 -m compileall -q src tests
+python3 -m compileall -q prwarden tests
 git diff --check
 ```
 
 Where the private word list exists, also run
-`python3 -m src.public_safety check --all`; the installed hooks check every commit
+`python3 -m prwarden.public_safety check --all`; the installed hooks check every commit
 and its message on their own.
 
 For documentation-only changes, still run the unit suite unless the user

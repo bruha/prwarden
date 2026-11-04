@@ -51,7 +51,7 @@ Run from the repository root:
 
 ```sh
 python3 -m unittest discover -s tests
-python3 -m compileall -q src tests
+python3 -m compileall -q prwarden tests
 git diff --check
 ```
 
@@ -66,7 +66,7 @@ interpreter, which is the oldest supported version
 ([why](code-conventions.md#why-python-39)):
 
 ```sh
-/usr/bin/python3 -m compileall -q src tests
+/usr/bin/python3 -m compileall -q prwarden tests
 /usr/bin/python3 -m unittest discover -s tests
 ```
 
@@ -77,7 +77,7 @@ For release automation changes, verify at least:
 
 ```sh
 python3 -m unittest tests.test_release
-python3 -m src.release --dry-run
+python3 -m prwarden.release --dry-run
 ```
 
 The dry run may intentionally report that there are no commits to release on a

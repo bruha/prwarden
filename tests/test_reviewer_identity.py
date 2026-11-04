@@ -1,6 +1,6 @@
 import unittest
 
-from src.reviewer_identity import (
+from prwarden.reviewer_identity import (
     format_model_display_name,
     format_review_attribution,
     format_review_plan,

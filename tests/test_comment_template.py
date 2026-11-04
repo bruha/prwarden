@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.comment_template import (
+from prwarden.comment_template import (
     DEFAULT_GITHUB_COMMENT_TAGS_FILE,
     DEFAULT_GITHUB_COMMENT_TEMPLATE_FILE,
     CommentTemplateError,

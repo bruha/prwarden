@@ -2,14 +2,14 @@ import json
 import unittest
 from unittest.mock import patch
 
-from src.delivery import (
+from prwarden.delivery import (
     format_manual_review_message,
     format_slack_lgtm_message,
     format_slack_message,
     redact_local_paths,
     send_slack_message,
 )
-from src.models import Finding, FindingEvidence, PullRequest, Repository
+from prwarden.models import Finding, FindingEvidence, PullRequest, Repository
 
 
 class DeliveryFormattingTests(unittest.TestCase):

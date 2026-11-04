@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import src.config as config
+import prwarden.config as config
 
 
 def write_private_env(path: Path, content: str) -> None:
@@ -273,7 +273,7 @@ class EffortSettingTests(unittest.TestCase):
     def test_a_verification_fallback_equal_to_the_verifier_is_none(self):
         """Repeating a failed call on the same engine and model recovers nothing."""
 
-        from src.engine import verify_fallback_engine_settings
+        from prwarden.engine import verify_fallback_engine_settings
 
         same = self.load(
             "REVIEW_VERIFY_FALLBACK_ENGINE=kiro",
@@ -382,7 +382,7 @@ class ConfigurationTests(unittest.TestCase):
             )
 
             with patch.dict(os.environ, {}, clear=True), patch(
-                "src.config.resolve_github_username",
+                "prwarden.config.resolve_github_username",
                 return_value="reviewer",
             ):
                 settings = config.load_settings(env_file)
@@ -423,7 +423,7 @@ class ConfigurationTests(unittest.TestCase):
             def settings_for(extra: str):
                 write_private_env(env_file, base + extra)
                 with patch.dict(os.environ, {}, clear=True), patch(
-                    "src.config.resolve_github_username", return_value="reviewer"
+                    "prwarden.config.resolve_github_username", return_value="reviewer"
                 ):
                     return config.load_settings(env_file)
 
@@ -457,7 +457,7 @@ class ConfigurationTests(unittest.TestCase):
             def settings_for(extra: str):
                 write_private_env(env_file, base + extra)
                 with patch.dict(os.environ, {}, clear=True), patch(
-                    "src.config.resolve_github_username", return_value="reviewer"
+                    "prwarden.config.resolve_github_username", return_value="reviewer"
                 ):
                     return config.load_settings(env_file)
 
@@ -495,7 +495,7 @@ class ConfigurationTests(unittest.TestCase):
             def settings_for(extra: str):
                 write_private_env(env_file, base + extra)
                 with patch.dict(os.environ, {}, clear=True), patch(
-                    "src.config.resolve_github_username", return_value="reviewer"
+                    "prwarden.config.resolve_github_username", return_value="reviewer"
                 ):
                     return config.load_settings(env_file)
 
@@ -569,7 +569,7 @@ class ConfigurationTests(unittest.TestCase):
             )
 
             with patch.dict(os.environ, {}, clear=True), patch(
-                "src.config.resolve_github_username",
+                "prwarden.config.resolve_github_username",
                 return_value="reviewer",
             ):
                 settings = config.load_settings(env_file)
@@ -670,7 +670,7 @@ class ConfigurationTests(unittest.TestCase):
                 'REVIEW_ENGINE=antigravity\nREVIEW_ENGINE_COMMAND=["agy-wrapper"]\n',
             )
             with patch.dict(os.environ, {}, clear=True), patch(
-                "src.config.resolve_github_username", return_value="reviewer"
+                "prwarden.config.resolve_github_username", return_value="reviewer"
             ):
                 settings = config.load_settings(
                     env_file,
@@ -700,7 +700,7 @@ class ConfigurationTests(unittest.TestCase):
                 "REVIEW_ENGINE=antigravity\nREVIEW_MODEL=gemini-3.1-pro-high\n",
             )
             with patch.dict(os.environ, {}, clear=True), patch(
-                "src.config.resolve_github_username", return_value="reviewer"
+                "prwarden.config.resolve_github_username", return_value="reviewer"
             ):
                 switched = config.load_settings(
                     env_file,
@@ -729,7 +729,7 @@ class ConfigurationTests(unittest.TestCase):
             env_file = root / "missing.env"
 
             with patch.dict(os.environ, {}, clear=True), patch(
-                "src.config.resolve_github_username", return_value="reviewer"
+                "prwarden.config.resolve_github_username", return_value="reviewer"
             ):
                 settings = config.load_settings(env_file, repositories_file)
             self.assertIsNone(settings.verify_engine)
@@ -743,7 +743,9 @@ class ConfigurationTests(unittest.TestCase):
                     "REVIEW_VERIFY_MODEL": "claude-opus-5",
                 },
                 clear=True,
-            ), patch("src.config.resolve_github_username", return_value="reviewer"):
+            ), patch(
+                "prwarden.config.resolve_github_username", return_value="reviewer"
+            ):
                 settings = config.load_settings(env_file, repositories_file)
             self.assertEqual(settings.verify_engine, "kiro")
             self.assertEqual(settings.verify_model, "claude-opus-5")
@@ -753,7 +755,9 @@ class ConfigurationTests(unittest.TestCase):
 
             with patch.dict(
                 os.environ, {"REVIEW_VERIFY_ENGINE": "command"}, clear=True
-            ), patch("src.config.resolve_github_username", return_value="reviewer"):
+            ), patch(
+                "prwarden.config.resolve_github_username", return_value="reviewer"
+            ):
                 with self.assertRaisesRegex(
                     config.ConfigError, "Unsupported REVIEW_VERIFY_ENGINE"
                 ):
@@ -761,7 +765,9 @@ class ConfigurationTests(unittest.TestCase):
 
             with patch.dict(
                 os.environ, {"REVIEW_VERIFY_MODEL": "claude-opus-5"}, clear=True
-            ), patch("src.config.resolve_github_username", return_value="reviewer"):
+            ), patch(
+                "prwarden.config.resolve_github_username", return_value="reviewer"
+            ):
                 with self.assertRaisesRegex(
                     config.ConfigError, "REVIEW_VERIFY_MODEL requires"
                 ):
@@ -777,7 +783,7 @@ class ConfigurationTests(unittest.TestCase):
             env_file = root / "missing.env"
 
             with patch.dict(os.environ, {}, clear=True), patch(
-                "src.config.resolve_github_username", return_value="reviewer"
+                "prwarden.config.resolve_github_username", return_value="reviewer"
             ):
                 settings = config.load_settings(env_file, repositories_file)
             self.assertIsNone(settings.fallback_engine)
@@ -791,7 +797,9 @@ class ConfigurationTests(unittest.TestCase):
                     "REVIEW_FALLBACK_MODEL": "claude-opus-5",
                 },
                 clear=True,
-            ), patch("src.config.resolve_github_username", return_value="reviewer"):
+            ), patch(
+                "prwarden.config.resolve_github_username", return_value="reviewer"
+            ):
                 settings = config.load_settings(env_file, repositories_file)
             self.assertEqual(settings.fallback_engine, "claude")
             self.assertEqual(settings.fallback_model, "claude-opus-5")
@@ -801,7 +809,9 @@ class ConfigurationTests(unittest.TestCase):
 
             with patch.dict(
                 os.environ, {"REVIEW_FALLBACK_ENGINE": "command"}, clear=True
-            ), patch("src.config.resolve_github_username", return_value="reviewer"):
+            ), patch(
+                "prwarden.config.resolve_github_username", return_value="reviewer"
+            ):
                 with self.assertRaisesRegex(
                     config.ConfigError, "Unsupported REVIEW_FALLBACK_ENGINE"
                 ):
@@ -809,7 +819,9 @@ class ConfigurationTests(unittest.TestCase):
 
             with patch.dict(
                 os.environ, {"REVIEW_FALLBACK_MODEL": "claude-opus-5"}, clear=True
-            ), patch("src.config.resolve_github_username", return_value="reviewer"):
+            ), patch(
+                "prwarden.config.resolve_github_username", return_value="reviewer"
+            ):
                 with self.assertRaisesRegex(
                     config.ConfigError, "REVIEW_FALLBACK_MODEL requires"
                 ):
@@ -832,7 +844,7 @@ class ConfigurationTests(unittest.TestCase):
                 '[{"slug":"example/app"}]', encoding="utf-8"
             )
             with patch.dict(os.environ, {"REVIEW_ENGINE": "command"}, clear=True), patch(
-                "src.config.resolve_github_username", return_value="reviewer"
+                "prwarden.config.resolve_github_username", return_value="reviewer"
             ):
                 with self.assertRaisesRegex(config.ConfigError, "is required"):
                     config.load_settings(root / "missing.env", repositories_file)
@@ -871,9 +883,9 @@ class EngineSwitchTests(unittest.TestCase):
                 f"STATE_FILE={root / 'state.json'}\n",
             )
             with patch.dict(os.environ, environment, clear=True), patch(
-                "src.config.resolve_github_username", return_value="reviewer"
+                "prwarden.config.resolve_github_username", return_value="reviewer"
             ), patch(
-                "src.config.parse_command", side_effect=lambda value: tuple(
+                "prwarden.config.parse_command", side_effect=lambda value: tuple(
                     json.loads(value)
                 )
             ):
@@ -925,9 +937,9 @@ class EngineSwitchTests(unittest.TestCase):
                 f"STATE_FILE={root / 'state.json'}\n",
             )
             with patch.dict(os.environ, {}, clear=True), patch(
-                "src.config.resolve_github_username", return_value="reviewer"
+                "prwarden.config.resolve_github_username", return_value="reviewer"
             ), patch(
-                "src.config.parse_command",
+                "prwarden.config.parse_command",
                 side_effect=lambda value: tuple(json.loads(value)),
             ):
                 settings = config.load_settings(env_file)
@@ -938,7 +950,7 @@ class EngineSwitchTests(unittest.TestCase):
 class GithubUsernameResolutionTests(unittest.TestCase):
     def test_rest_lookup_is_preferred_and_not_followed_by_fallbacks(self):
         with patch.dict(os.environ, {}, clear=True), patch(
-            "src.config.run_cmd", return_value="reviewer\n"
+            "prwarden.config.run_cmd", return_value="reviewer\n"
         ) as run_command:
             self.assertEqual(config.resolve_github_username(), "reviewer")
         self.assertEqual(run_command.call_count, 1)
@@ -949,7 +961,7 @@ class GithubUsernameResolutionTests(unittest.TestCase):
 
     def test_graphql_viewer_is_used_when_rest_user_endpoint_fails(self):
         with patch.dict(os.environ, {}, clear=True), patch(
-            "src.config.run_cmd",
+            "prwarden.config.run_cmd",
             side_effect=[
                 config.CommandError(
                     "gh exited with 1: gh: No server is currently available to "
@@ -975,7 +987,7 @@ class GithubUsernameResolutionTests(unittest.TestCase):
 
     def test_only_the_last_identity_source_spends_transient_retries(self):
         with patch.dict(os.environ, {}, clear=True), patch(
-            "src.config.run_cmd",
+            "prwarden.config.run_cmd",
             side_effect=[config.CommandError("rest boom (HTTP 503)"), "reviewer"],
         ) as run_command:
             self.assertEqual(config.resolve_github_username(), "reviewer")
@@ -988,7 +1000,7 @@ class GithubUsernameResolutionTests(unittest.TestCase):
             os.environ,
             {"GITHUB_REVIEWER_USERNAME": " configured-user \n"},
             clear=True,
-        ), patch("src.config.run_cmd") as run_command:
+        ), patch("prwarden.config.run_cmd") as run_command:
             self.assertEqual(config.resolve_github_username(), "configured-user")
         run_command.assert_not_called()
 
@@ -997,7 +1009,7 @@ class GithubUsernameResolutionTests(unittest.TestCase):
             os.environ,
             {"GITHUB_REVIEWER_USERNAME": "not a login"},
             clear=True,
-        ), patch("src.config.run_cmd") as run_command:
+        ), patch("prwarden.config.run_cmd") as run_command:
             with self.assertRaisesRegex(
                 config.ConfigError, "GITHUB_REVIEWER_USERNAME"
             ):
@@ -1009,20 +1021,20 @@ class GithubUsernameResolutionTests(unittest.TestCase):
             os.environ,
             {"GITHUB_REVIEWER_USERNAME": "   "},
             clear=True,
-        ), patch("src.config.run_cmd", return_value="reviewer") as run_command:
+        ), patch("prwarden.config.run_cmd", return_value="reviewer") as run_command:
             self.assertEqual(config.resolve_github_username(), "reviewer")
         self.assertEqual(run_command.call_count, 1)
 
     def test_empty_github_response_falls_back_to_graphql(self):
         with patch.dict(os.environ, {}, clear=True), patch(
-            "src.config.run_cmd", side_effect=["", "reviewer"]
+            "prwarden.config.run_cmd", side_effect=["", "reviewer"]
         ) as run_command:
             self.assertEqual(config.resolve_github_username(), "reviewer")
         self.assertEqual(run_command.call_count, 2)
 
     def test_all_sources_failing_reports_every_attempt_and_the_override(self):
         with patch.dict(os.environ, {}, clear=True), patch(
-            "src.config.run_cmd",
+            "prwarden.config.run_cmd",
             side_effect=[
                 config.CommandError("rest boom (HTTP 503)"),
                 config.CommandError("graphql boom (HTTP 503)"),
@@ -1047,7 +1059,7 @@ class GithubUsernameResolutionTests(unittest.TestCase):
             env_file = root / ".env"
             write_private_env(env_file, "GITHUB_REVIEWER_USERNAME=configured-user\n")
             with patch.dict(os.environ, {}, clear=True), patch(
-                "src.config.run_cmd"
+                "prwarden.config.run_cmd"
             ) as run_command:
                 settings = config.load_settings(env_file, repositories_file)
             self.assertEqual(settings.reviewer_username, "configured-user")

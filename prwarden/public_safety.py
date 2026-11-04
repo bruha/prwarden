@@ -58,11 +58,11 @@ REF_FORMAT = re.compile(r"\A[a-z2-7]{4}\Z")
 REF_PLACEHOLDER = "xxxx"
 # This module and its tests spell out the reference syntax and malformed examples of
 # it. They are exempt from the reference check only; names are still checked there.
-REF_CHECK_EXEMPT = ("src/public_safety.py", "tests/test_public_safety.py")
-HOOK_MARKER = "# Installed by: python3 -m src.public_safety install-hooks"
+REF_CHECK_EXEMPT = ("prwarden/public_safety.py", "tests/test_public_safety.py")
+HOOK_MARKER = "# Installed by: python3 -m prwarden.public_safety install-hooks"
 HOOKS = {
-    "pre-commit": "python3 -m src.public_safety check",
-    "commit-msg": 'python3 -m src.public_safety check-message "$1"',
+    "pre-commit": "python3 -m prwarden.public_safety check",
+    "commit-msg": 'python3 -m prwarden.public_safety check-message "$1"',
 }
 
 # Called with the command, and with ``environment`` only for a repository read as
@@ -245,7 +245,7 @@ def load_terms(root: Path) -> Terms:
     except FileNotFoundError:
         raise SafetyError(
             f"No word list at {PRIVATE_DIRECTORY}/{TERMS_FILE}, so nothing can be "
-            "checked; build it with `python3 -m src.public_safety refresh-terms`"
+            "checked; build it with `python3 -m prwarden.public_safety refresh-terms`"
         ) from None
     except (OSError, json.JSONDecodeError) as error:
         raise SafetyError(f"Cannot read {path}: {error}") from error
@@ -494,7 +494,7 @@ def _report(findings: "Sequence[Finding]") -> int:
     print(
         f"Public-safety check found {len(findings)} private reference(s); replace "
         "them, or cite a pull request as [pr:xxxx] from "
-        f"`python3 -m src.public_safety new-ref <url>`:",
+        f"`python3 -m prwarden.public_safety new-ref <url>`:",
         file=sys.stderr,
     )
     for finding in findings:

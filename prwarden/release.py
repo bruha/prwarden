@@ -14,7 +14,7 @@ from typing import Optional, Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VERSION_FILE = PROJECT_ROOT / "VERSION"
-INIT_FILE = PROJECT_ROOT / "src" / "__init__.py"
+INIT_FILE = PROJECT_ROOT / "prwarden" / "__init__.py"
 CHANGELOG_FILE = PROJECT_ROOT / "CHANGELOG.md"
 
 SEMVER_PATTERN = re.compile(
@@ -133,15 +133,15 @@ def _git(*args: str, root: Path = PROJECT_ROOT) -> str:
 
 def _read_current_version(root: Path) -> Version:
     version_path = root / "VERSION"
-    init_path = root / "src" / "__init__.py"
+    init_path = root / "prwarden" / "__init__.py"
     version = Version.parse(version_path.read_text(encoding="utf-8").strip())
     match = INIT_VERSION_PATTERN.search(init_path.read_text(encoding="utf-8"))
     if match is None:
-        raise ReleaseError("src/__init__.py does not contain a stable __version__")
+        raise ReleaseError("prwarden/__init__.py does not contain a stable __version__")
     init_version = Version.parse(match.group("version"))
     if version != init_version:
         raise ReleaseError(
-            f"VERSION ({version}) and src.__version__ ({init_version}) disagree"
+            f"VERSION ({version}) and prwarden.__version__ ({init_version}) disagree"
         )
     return version
 
@@ -332,14 +332,14 @@ def create_plan(
 def apply_plan(plan: ReleasePlan, root: Path = PROJECT_ROOT) -> None:
     (root / "VERSION").write_text(f"{plan.next_version}\n", encoding="utf-8")
 
-    init_path = root / "src" / "__init__.py"
+    init_path = root / "prwarden" / "__init__.py"
     init_text = init_path.read_text(encoding="utf-8")
     updated_init, replacements = INIT_VERSION_PATTERN.subn(
         f'__version__ = "{plan.next_version}"',
         init_text,
     )
     if replacements != 1:
-        raise ReleaseError("Expected exactly one src.__version__ assignment")
+        raise ReleaseError("Expected exactly one prwarden.__version__ assignment")
     init_path.write_text(updated_init, encoding="utf-8")
     (root / "CHANGELOG.md").write_text(plan.changelog, encoding="utf-8")
 
@@ -375,7 +375,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print("Dry run: no files changed")
         else:
             apply_plan(plan)
-            print("Updated VERSION, src/__init__.py, and CHANGELOG.md")
+            print("Updated VERSION, prwarden/__init__.py, and CHANGELOG.md")
             print("Review the diff before committing and tagging")
         return 0
     except (OSError, ReleaseError) as error:

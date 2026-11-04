@@ -3,16 +3,16 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from src.engine import REJECTION_CLASSES, RESPONSE_FIELD_LIMITS
-from src.models import (
+from prwarden.engine import REJECTION_CLASSES, RESPONSE_FIELD_LIMITS
+from prwarden.models import (
     DependencyLink,
     Finding,
     FindingEvidence,
     PriorReviewComment,
     PullRequestCheck,
 )
-import src.review as review
-from src.review import (
+import prwarden.review as review
+from prwarden.review import (
     OMITTED_PATCH_REASON,
     DiffTooLargeError,
     ReviewError,

@@ -648,6 +648,7 @@ def _review_with_validation_retry(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog="prwarden",
         description="Review configured GitHub pull requests with a pluggable review engine."
     )
     parser.add_argument(

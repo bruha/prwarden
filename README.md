@@ -54,7 +54,7 @@ cp repositories.example.json repositories.json
    uses your quota:
 
    ```sh
-   python3 -m src.prwarden --repo your-org/example-app --pr 123
+   python3 -m prwarden --repo your-org/example-app --pr 123
    ```
 
 4. When the result looks right, set `AUTO_REVIEW_DRY_RUN=0` in `.env` and add
@@ -158,27 +158,27 @@ adapter-specific commands.
 Display the installed project version:
 
 ```sh
-python3 -m src.prwarden --version
+python3 -m prwarden --version
 ```
 
 Run a dry review of every eligible open pull request:
 
 ```sh
-python3 -m src.prwarden
+python3 -m prwarden
 ```
 
 Target one pull request or temporarily select another engine:
 
 ```sh
-python3 -m src.prwarden --repo your-org/example-app --pr 123
-python3 -m src.prwarden --engine codex --repo your-org/example-app --pr 123
+python3 -m prwarden --repo your-org/example-app --pr 123
+python3 -m prwarden --engine codex --repo your-org/example-app --pr 123
 ```
 
 Every engine in the pipeline can be named for one run, so a combination can be tried
 without editing configuration:
 
 ```sh
-python3 -m src.prwarden \
+python3 -m prwarden \
   --engine kiro --model claude-opus-5.5 \
   --verify-engine claude --verify-model opus \
   --no-fallback \
@@ -207,14 +207,14 @@ or record terminal delivery state.
 For live delivery, set `AUTO_REVIEW_DRY_RUN=0` in `.env` and pass `--live`:
 
 ```sh
-python3 -m src.prwarden --live
+python3 -m prwarden --live
 ```
 
 Use `--force` only after inspecting GitHub, Slack, and local state when a
 targeted head must be reconsidered:
 
 ```sh
-python3 -m src.prwarden \
+python3 -m prwarden \
   --repo your-org/example-app \
   --pr 123 \
   --live \
@@ -227,7 +227,7 @@ python3 -m src.prwarden \
 defaulting to `2`, and `--concurrency N` overrides it for one run:
 
 ```sh
-python3 -m src.prwarden --concurrency 3
+python3 -m prwarden --concurrency 3
 ```
 
 Reviews are limited by provider capacity rather than local CPU. Each slot is
@@ -401,7 +401,7 @@ rather than advisory notes nobody checked.
 - A clean result never creates a GitHub comment.
 
 A repository can tell the reviewer what it is for. Commit
-`.ai-code-review/background.md` and every level reads it from the reviewed head:
+`.prwarden/background.md` and every level reads it from the reviewed head:
 what the product is, what its money or units mean, what a reader is assumed to know.
 It is framed as untrusted context in the prompt, capped, and may add background
 rather than authority, so it can never relax a review rule. A repository without the
@@ -433,10 +433,10 @@ confirmed by watching production afterwards. `--metrics` writes what a run's rev
 decided, so two runs can be compared:
 
 ```sh
-python3 -m src.prwarden --metrics /tmp/before.json
+python3 -m prwarden --metrics /tmp/before.json
 # change a prompt, a model, or a setting
-python3 -m src.prwarden --metrics /tmp/after.json
-python3 -m src.compare_metrics /tmp/before.json /tmp/after.json
+python3 -m prwarden --metrics /tmp/after.json
+python3 -m prwarden.compare_metrics /tmp/before.json /tmp/after.json
 ```
 
 The comparison lists the numbers that moved first:
@@ -465,11 +465,11 @@ them instead, and the input never changes again:
 
 ```sh
 cp evals/cases.example.json evals/cases.json    # or capture the open ones:
-python3 -m src.evaluate capture
-python3 -m src.evaluate replay --metrics /tmp/baseline.json
-python3 -m src.evaluate replay --metrics /tmp/baseline-again.json   # the noise floor
-python3 -m src.evaluate replay --arm claude --metrics /tmp/claude.json
-python3 -m src.compare_metrics /tmp/baseline.json /tmp/claude.json
+python3 -m prwarden.evaluate capture
+python3 -m prwarden.evaluate replay --metrics /tmp/baseline.json
+python3 -m prwarden.evaluate replay --metrics /tmp/baseline-again.json   # the noise floor
+python3 -m prwarden.evaluate replay --arm claude --metrics /tmp/claude.json
+python3 -m prwarden.compare_metrics /tmp/baseline.json /tmp/claude.json
 ```
 
 A case pins the head and the merge base it was reviewed against, so a merged pull
@@ -485,7 +485,7 @@ set. A prompt is code rather than a setting, so the commit is what identifies it
 
 ### Where the labels come from
 
-`python3 -m src.evaluate label` builds the corpus out of delivered history rather
+`python3 -m prwarden.evaluate label` builds the corpus out of delivered history rather
 than asking anybody to read pull requests. For every inline finding this reviewer has
 posted, it asks what the author did next: a finding whose lines were edited in a later
 push is a finding that was worth posting.
@@ -547,7 +547,7 @@ and the measurement is the same as one at a time, because only when a case runs
 changes, never how it is counted:
 
 ```sh
-python3 -m src.evaluate replay --labelled-only --concurrency 3 --metrics /tmp/baseline.json
+python3 -m prwarden.evaluate replay --labelled-only --concurrency 3 --metrics /tmp/baseline.json
 ```
 
 The run ends with the verifier's own number beside the reviewer's, here from a one-case
@@ -629,8 +629,8 @@ replay records what its review proposed, and `verify` re-judges those recordings
 reviewing anything:
 
 ```sh
-python3 -m src.evaluate replay --labelled-only --metrics /tmp/baseline.json
-python3 -m src.evaluate verify --metrics /tmp/strict-verifier.json
+python3 -m prwarden.evaluate replay --labelled-only --metrics /tmp/baseline.json
+python3 -m prwarden.evaluate verify --metrics /tmp/strict-verifier.json
 ```
 
 Measured on one real case: the replay took 8m40s across two invocations, the re-judge 58s
@@ -660,7 +660,7 @@ names the pull request and the head to judge directly, and runs only the level a
 for:
 
 ```sh
-python3 -m src.evaluate advisory --level docs \
+python3 -m prwarden.evaluate advisory --level docs \
   --pr owner/app#12@1a2b3c4d --pr owner/app#15 \
   --baseline-verifier HEAD~1 --metrics /tmp/docs-verifier.json
 ```

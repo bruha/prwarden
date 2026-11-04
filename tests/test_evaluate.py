@@ -1,7 +1,7 @@
 """Tests for the frozen replay harness."""
 
 import json
-import src.evaluate as evaluate
+import prwarden.evaluate as evaluate
 import argparse
 import os
 import subprocess
@@ -16,9 +16,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
 
-from src.commands import CommandError
-from src.config import ConfigError, Settings
-from src.evaluate import (
+from prwarden.commands import CommandError
+from prwarden.config import ConfigError, Settings
+from prwarden.evaluate import (
     ACTED_ON,
     ACTED_ON_AFTER_REBASE,
     BASELINE_ARM,
@@ -59,11 +59,11 @@ from src.evaluate import (
     transcript_name,
     verification_prompts_from,
 )
-from src.cli import VerificationPass
-from src.metrics import compare
-from src.engine import DESIGN_LEVEL, DOCS_LEVEL, EngineError, build_prompt
-from src.metrics import ReviewMetrics
-from src.models import (
+from prwarden.cli import VerificationPass
+from prwarden.metrics import compare
+from prwarden.engine import DESIGN_LEVEL, DOCS_LEVEL, EngineError, build_prompt
+from prwarden.metrics import ReviewMetrics
+from prwarden.models import (
     DocsAssessment,
     DocsFinding,
     Finding,
@@ -73,7 +73,7 @@ from src.models import (
     Repository,
     ReviewMaterial,
 )
-from src.review import ReviewError
+from prwarden.review import ReviewError
 
 
 def git(root: Path, *args: str) -> str:
@@ -456,9 +456,9 @@ class CaptureTests(unittest.TestCase):
             path = root / "evals" / "cases.json"
 
             with patch(
-                "src.evaluate.list_open_prs", return_value=[pull_request]
+                "prwarden.evaluate.list_open_prs", return_value=[pull_request]
             ), patch(
-                "src.evaluate.merge_base", return_value="e" * 40
+                "prwarden.evaluate.merge_base", return_value="e" * 40
             ), patch("builtins.print"):
                 cases = capture(settings, path)
 
@@ -475,7 +475,7 @@ class CaptureTests(unittest.TestCase):
             )
 
     def test_a_repository_whose_base_cannot_be_resolved_is_skipped(self) -> None:
-        from src.commands import CommandError
+        from prwarden.commands import CommandError
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -499,9 +499,9 @@ class CaptureTests(unittest.TestCase):
             )
 
             with patch(
-                "src.evaluate.list_open_prs", return_value=[pull_request]
+                "prwarden.evaluate.list_open_prs", return_value=[pull_request]
             ), patch(
-                "src.evaluate.merge_base",
+                "prwarden.evaluate.merge_base",
                 side_effect=CommandError("no such ref", command="git"),
             ), patch("builtins.print"), patch("sys.stderr"):
                 with self.assertRaisesRegex(ConfigError, "no open pull request"):
@@ -714,7 +714,7 @@ class PipelineComparabilityTests(unittest.TestCase):
             review_verify_model="gpt-5.6-terra",
         )
         identity = ("kiro", "gpt-5.6-terra")
-        with patch("src.cli._verifier_identity", return_value=identity):
+        with patch("prwarden.cli._verifier_identity", return_value=identity):
             described = current_attribution(settings)
 
         self.assertIn("Reviewed by", described)
@@ -727,7 +727,7 @@ class LabelledOnlySelectionTests(unittest.TestCase):
 
     def setUp(self) -> None:
         # Pinning asks the real GitHub CLI for a stored login, which no test has.
-        pinning = patch("src.evaluate.pin_github_account")
+        pinning = patch("prwarden.evaluate.pin_github_account")
         pinning.start()
         self.addCleanup(pinning.stop)
 
@@ -792,9 +792,9 @@ class LabelledOnlySelectionTests(unittest.TestCase):
             run_log_retention_days=7,
             repositories=(),
         )
-        with patch("src.evaluate.load_settings", return_value=settings), patch(
-            "src.evaluate.replay", return_value=0
-        ) as replay_call, patch("src.evaluate.load_arm") as load_arm:
+        with patch("prwarden.evaluate.load_settings", return_value=settings), patch(
+            "prwarden.evaluate.replay", return_value=0
+        ) as replay_call, patch("prwarden.evaluate.load_arm") as load_arm:
             load_arm.return_value.applied_to.return_value = settings
             exit_code = main(
                 [
@@ -888,22 +888,26 @@ class ReplayBundlingTests(unittest.TestCase):
             added_lines={"b.py": frozenset({1})},
             diff_budget=Mock(reviewed_files=1),
         )
-        with patch("src.evaluate._repository_for") as repository_for, patch(
-            "src.evaluate.changed_files", return_value=[{"filename": "a.py"}]
-        ), patch("src.cli._bundled_material", return_value=(primary, (second,))), patch(
-            "src.cli._bundle_material_from", return_value=second
-        ), patch("src.cli.create_review_engine"), patch(
-            "src.cli._create_verification_pass"
-        ), patch("src.cli._create_fallback_reviewer", return_value=None), patch(
-            "src.cli.review_workspace"
-        ) as workspace, patch(
-            "src.evaluate.read_background", return_value=""
-        ), patch("src.cli._design_level"), patch("src.cli._docs_level"), patch(
-            "src.cli._report_diff_budget"
+        with patch("prwarden.evaluate._repository_for") as repository_for, patch(
+            "prwarden.evaluate.changed_files", return_value=[{"filename": "a.py"}]
         ), patch(
-            "src.cli._review_with_engine_fallback"
+            "prwarden.cli._bundled_material", return_value=(primary, (second,))
+        ), patch(
+            "prwarden.cli._bundle_material_from", return_value=second
+        ), patch("prwarden.cli.create_review_engine"), patch(
+            "prwarden.cli._create_verification_pass"
+        ), patch("prwarden.cli._create_fallback_reviewer", return_value=None), patch(
+            "prwarden.cli.review_workspace"
+        ) as workspace, patch(
+            "prwarden.evaluate.read_background", return_value=""
+        ), patch("prwarden.cli._design_level"), patch(
+            "prwarden.cli._docs_level"
+        ), patch(
+            "prwarden.cli._report_diff_budget"
+        ), patch(
+            "prwarden.cli._review_with_engine_fallback"
         ) as review, patch(
-            "src.evaluate.replace", side_effect=lambda material, **kw: material
+            "prwarden.evaluate.replace", side_effect=lambda material, **kw: material
         ):
             repository_for.return_value = Repository("app", "owner/app", Path("/tmp"))
             workspace.return_value.__enter__.return_value = repository_for.return_value
@@ -936,12 +940,12 @@ class ReplayResilienceTests(unittest.TestCase):
             "Resets in 17h59m45s."
         )
         with patch(
-            "src.evaluate.replay_case",
+            "prwarden.evaluate.replay_case",
             side_effect=[spent, {}],
         ) as replay_case_mock, patch(
-            "src.evaluate.reviewer_provenance", return_value={}
+            "prwarden.evaluate.reviewer_provenance", return_value={}
         ), patch(
-            "src.evaluate.cases_fingerprint", return_value="f"
+            "prwarden.evaluate.cases_fingerprint", return_value="f"
         ), patch(
             "sys.stdout", new_callable=StringIO
         ):
@@ -954,7 +958,7 @@ class ReplayResilienceTests(unittest.TestCase):
     def test_a_workspace_that_cannot_be_prepared_fails_one_case(self) -> None:
         """One git fetch that timed out ended a two-pass run nine cases in."""
 
-        from src.workspace import WorkspaceError
+        from prwarden.workspace import WorkspaceError
 
         cases = (
             ReplayCase("owner/app", 1, "a" * 40, "b" * 40),
@@ -966,13 +970,13 @@ class ReplayResilienceTests(unittest.TestCase):
         metrics.document.return_value = document
         lost = WorkspaceError("Cannot prepare PR head: Command timed out after 180s")
         with patch(
-            "src.evaluate.replay_case", side_effect=[lost, {}, lost]
+            "prwarden.evaluate.replay_case", side_effect=[lost, {}, lost]
         ) as replay_case_mock, patch(
-            "src.evaluate.ReviewMetrics", return_value=metrics
+            "prwarden.evaluate.ReviewMetrics", return_value=metrics
         ), patch(
-            "src.evaluate.reviewer_provenance", return_value={}
+            "prwarden.evaluate.reviewer_provenance", return_value={}
         ), patch(
-            "src.evaluate.cases_fingerprint", return_value="f"
+            "prwarden.evaluate.cases_fingerprint", return_value="f"
         ), patch(
             "sys.stdout", new_callable=StringIO
         ), patch(
@@ -1008,14 +1012,14 @@ class ReplayResilienceTests(unittest.TestCase):
         metrics = Mock()
         metrics.document.return_value = document
         with patch(
-            "src.evaluate.replay_case",
+            "prwarden.evaluate.replay_case",
             side_effect=[interrupted, {}, {}],
         ) as replay_case_mock, patch(
-            "src.evaluate.ReviewMetrics", return_value=metrics
+            "prwarden.evaluate.ReviewMetrics", return_value=metrics
         ), patch(
-            "src.evaluate.reviewer_provenance", return_value={}
+            "prwarden.evaluate.reviewer_provenance", return_value={}
         ), patch(
-            "src.evaluate.cases_fingerprint", return_value="f"
+            "prwarden.evaluate.cases_fingerprint", return_value="f"
         ), patch(
             "sys.stdout", new_callable=StringIO
         ):
@@ -1045,13 +1049,13 @@ class ReplayResilienceTests(unittest.TestCase):
         metrics = Mock()
         metrics.document.return_value = document
         with patch(
-            "src.evaluate.replay_case", side_effect=[{}, spent]
+            "prwarden.evaluate.replay_case", side_effect=[{}, spent]
         ), patch(
-            "src.evaluate.ReviewMetrics", return_value=metrics
+            "prwarden.evaluate.ReviewMetrics", return_value=metrics
         ), patch(
-            "src.evaluate.reviewer_provenance", return_value={}
+            "prwarden.evaluate.reviewer_provenance", return_value={}
         ), patch(
-            "src.evaluate.cases_fingerprint", return_value="f"
+            "prwarden.evaluate.cases_fingerprint", return_value="f"
         ), patch(
             "sys.stdout", new_callable=StringIO
         ):
@@ -1138,7 +1142,9 @@ class VerifyNarrowingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             self._corpus(directory)
             args = self._args(directory)
-            with patch("src.evaluate.replay", return_value=0) as replay_mock, patch(
+            with patch(
+                "prwarden.evaluate.replay", return_value=0
+            ) as replay_mock, patch(
                 "sys.stdout", new_callable=StringIO
             ) as out:
                 evaluate._run_command(args, Mock(review_engine="kiro"))
@@ -1222,12 +1228,12 @@ class MeasuredProvenanceTests(unittest.TestCase):
         document: dict = {"summary": {}}
         metrics = Mock()
         metrics.document.return_value = document
-        with patch("src.evaluate.replay_case", return_value={}), patch(
-            "src.evaluate.ReviewMetrics", return_value=metrics
-        ), patch("src.evaluate.reviewer_provenance", return_value={}), patch(
-            "src.evaluate.cases_fingerprint", return_value="f"
+        with patch("prwarden.evaluate.replay_case", return_value={}), patch(
+            "prwarden.evaluate.ReviewMetrics", return_value=metrics
+        ), patch("prwarden.evaluate.reviewer_provenance", return_value={}), patch(
+            "prwarden.evaluate.cases_fingerprint", return_value="f"
         ), patch(
-            "src.evaluate.candidates_for", return_value=([], "Reviewed by X")
+            "prwarden.evaluate.candidates_for", return_value=([], "Reviewed by X")
         ), patch(
             "sys.stdout", new_callable=StringIO
         ):
@@ -1275,24 +1281,26 @@ class ReplayEvidenceTests(unittest.TestCase):
         finding = Mock(
             severity="medium", path="app.py", line=7, title="Stale value kept"
         )
-        with patch("src.evaluate._repository_for") as repository_for, patch(
-            "src.evaluate.changed_files", return_value=[{"filename": "app.py"}]
+        with patch("prwarden.evaluate._repository_for") as repository_for, patch(
+            "prwarden.evaluate.changed_files", return_value=[{"filename": "app.py"}]
         ), patch(
-            "src.cli._bundled_material", return_value=(Mock(), ())
-        ), patch("src.cli.create_review_engine"), patch(
-            "src.cli._create_verification_pass"
-        ), patch("src.cli._create_fallback_reviewer", return_value=None), patch(
-            "src.cli.review_workspace"
+            "prwarden.cli._bundled_material", return_value=(Mock(), ())
+        ), patch("prwarden.cli.create_review_engine"), patch(
+            "prwarden.cli._create_verification_pass"
+        ), patch("prwarden.cli._create_fallback_reviewer", return_value=None), patch(
+            "prwarden.cli.review_workspace"
         ) as workspace, patch(
-            "src.evaluate.read_background", return_value=""
-        ), patch("src.cli._design_level"), patch("src.cli._docs_level"), patch(
-            "src.cli._report_diff_budget"
+            "prwarden.evaluate.read_background", return_value=""
+        ), patch("prwarden.cli._design_level"), patch(
+            "prwarden.cli._docs_level"
         ), patch(
-            "src.cli._review_with_engine_fallback"
+            "prwarden.cli._report_diff_budget"
+        ), patch(
+            "prwarden.cli._review_with_engine_fallback"
         ) as review, patch(
-            "src.cli._verify_code_candidates"
+            "prwarden.cli._verify_code_candidates"
         ) as verify, patch(
-            "src.evaluate.replace", side_effect=lambda material, **kw: material
+            "prwarden.evaluate.replace", side_effect=lambda material, **kw: material
         ), patch(
             "sys.stdout", new_callable=StringIO
         ) as output:
@@ -1357,7 +1365,7 @@ class PassStabilityTests(unittest.TestCase):
                 max_review_bundles=1,
             )
             with patch(
-                "src.evaluate.replay_case",
+                "prwarden.evaluate.replay_case",
                 return_value={
                     "acted_on": 1,
                     "reproduced": 1,
@@ -1367,8 +1375,8 @@ class PassStabilityTests(unittest.TestCase):
                     "anchors": ["a.py:1"],
                     "reproduced_anchors": ["a.py:1"],
                 },
-            ), patch("src.evaluate.reviewer_provenance", return_value={}), patch(
-                "src.evaluate.cases_fingerprint", return_value="f"
+            ), patch("prwarden.evaluate.reviewer_provenance", return_value={}), patch(
+                "prwarden.evaluate.cases_fingerprint", return_value="f"
             ), patch("sys.stdout", new_callable=StringIO) as output:
                 replay(
                     settings,
@@ -1395,7 +1403,7 @@ class PassStabilityTests(unittest.TestCase):
                 ReplayCase("owner/app", 2, "c" * 40, "d" * 40),
             )
             with patch(
-                "src.evaluate.replay_case",
+                "prwarden.evaluate.replay_case",
                 return_value={
                     "acted_on": 1,
                     "reproduced": 0,
@@ -1406,8 +1414,8 @@ class PassStabilityTests(unittest.TestCase):
                     "reproduced_anchors": [],
                 },
             ) as replay_case_mock, patch(
-                "src.evaluate.reviewer_provenance", return_value={}
-            ), patch("src.evaluate.cases_fingerprint", return_value="f"), patch(
+                "prwarden.evaluate.reviewer_provenance", return_value={}
+            ), patch("prwarden.evaluate.cases_fingerprint", return_value="f"), patch(
                 "sys.stdout", new_callable=StringIO
             ) as output:
                 replay(settings, cases, BASELINE_ARM, None, {}, 3)
@@ -1463,9 +1471,9 @@ class ParallelReplayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             destination = root / "measurement.json"
-            with patch("src.evaluate.replay_case", side_effect=self.score), patch(
-                "src.evaluate.reviewer_provenance", return_value={}
-            ), patch("src.evaluate.cases_fingerprint", return_value="f"), patch(
+            with patch("prwarden.evaluate.replay_case", side_effect=self.score), patch(
+                "prwarden.evaluate.reviewer_provenance", return_value={}
+            ), patch("prwarden.evaluate.cases_fingerprint", return_value="f"), patch(
                 "sys.stdout", new_callable=StringIO
             ) as output:
                 replay(
@@ -1610,26 +1618,26 @@ class RecordedCandidateTests(unittest.TestCase):
             design_level=True,
             docs_level=True,
         )
-        with patch("src.evaluate._repository_for") as repository_for, patch(
-            "src.evaluate.changed_files", return_value=[{"filename": "app.py"}]
+        with patch("prwarden.evaluate._repository_for") as repository_for, patch(
+            "prwarden.evaluate.changed_files", return_value=[{"filename": "app.py"}]
         ), patch(
-            "src.cli._bundled_material", return_value=(Mock(), ())
-        ), patch("src.cli.create_review_engine"), patch(
-            "src.cli._create_verification_pass"
-        ), patch("src.cli._create_fallback_reviewer", return_value=None), patch(
-            "src.cli.review_workspace"
+            "prwarden.cli._bundled_material", return_value=(Mock(), ())
+        ), patch("prwarden.cli.create_review_engine"), patch(
+            "prwarden.cli._create_verification_pass"
+        ), patch("prwarden.cli._create_fallback_reviewer", return_value=None), patch(
+            "prwarden.cli.review_workspace"
         ) as workspace, patch(
-            "src.evaluate.read_background", return_value=""
-        ), patch("src.cli._design_level") as design, patch(
-            "src.cli._docs_level"
+            "prwarden.evaluate.read_background", return_value=""
+        ), patch("prwarden.cli._design_level") as design, patch(
+            "prwarden.cli._docs_level"
         ) as docs, patch(
-            "src.cli._report_diff_budget"
+            "prwarden.cli._report_diff_budget"
         ), patch(
-            "src.cli._review_with_engine_fallback"
+            "prwarden.cli._review_with_engine_fallback"
         ) as review, patch(
-            "src.cli._verify_code_candidates"
+            "prwarden.cli._verify_code_candidates"
         ) as verify, patch(
-            "src.evaluate.replace", side_effect=lambda material, **kw: material
+            "prwarden.evaluate.replace", side_effect=lambda material, **kw: material
         ), patch("sys.stdout", new_callable=StringIO) as output:
             repository_for.return_value = Repository("app", "owner/app", Path("/tmp"))
             workspace.return_value.__enter__.return_value = repository_for.return_value
@@ -1685,7 +1693,7 @@ class HarnessTranscriptTests(unittest.TestCase):
 
     def setUp(self) -> None:
         # Pinning asks the real GitHub CLI for a stored login, which no test has.
-        pinning = patch("src.evaluate.pin_github_account")
+        pinning = patch("prwarden.evaluate.pin_github_account")
         pinning.start()
         self.addCleanup(pinning.stop)
 
@@ -1714,9 +1722,9 @@ class HarnessTranscriptTests(unittest.TestCase):
                 run_log_retention_days=7,
                 repositories=(),
             )
-            with patch("src.evaluate.load_settings", return_value=settings), patch(
-                "src.evaluate.load_cases", return_value=()
-            ), patch("src.evaluate.replay") as replay_call:
+            with patch("prwarden.evaluate.load_settings", return_value=settings), patch(
+                "prwarden.evaluate.load_cases", return_value=()
+            ), patch("prwarden.evaluate.replay") as replay_call:
                 replay_call.side_effect = lambda *a, **k: (
                     print("      -> Rejected candidate [HIGH] app.py:4 Something"),
                     0,
@@ -1744,8 +1752,8 @@ class HarnessTranscriptTests(unittest.TestCase):
                 run_log_retention_days=7,
                 repositories=(),
             )
-            with patch("src.evaluate.load_settings", return_value=settings), patch(
-                "src.evaluate._run_command", side_effect=KeyboardInterrupt
+            with patch("prwarden.evaluate.load_settings", return_value=settings), patch(
+                "prwarden.evaluate._run_command", side_effect=KeyboardInterrupt
             ):
                 self.assertEqual(main(["capture"]), 130)
 
@@ -1761,9 +1769,9 @@ class HarnessTranscriptTests(unittest.TestCase):
                 reviewer_username="reviewer",
             )
             refusal = CommandError("GitHub CLI has no login for reviewer", command="gh")
-            with patch("src.evaluate.load_settings", return_value=settings), patch(
-                "src.evaluate.pin_github_account", side_effect=refusal
-            ) as pin, patch("src.evaluate._run_command") as command, patch(
+            with patch("prwarden.evaluate.load_settings", return_value=settings), patch(
+                "prwarden.evaluate.pin_github_account", side_effect=refusal
+            ) as pin, patch("prwarden.evaluate._run_command") as command, patch(
                 "sys.stderr", new_callable=StringIO
             ) as errors:
                 self.assertEqual(main(["label"]), 1)
@@ -1823,7 +1831,7 @@ class ScopedMiningTests(unittest.TestCase):
                 state_file=root / "state.json",
             )
             with patch(
-                "src.github.list_review_comments_by_reviewer", return_value=()
+                "prwarden.github.list_review_comments_by_reviewer", return_value=()
             ):
                 mine_labels(settings, cases_path, labels_path, ["owner/app"])
 
@@ -1858,11 +1866,12 @@ class ScopedMiningTests(unittest.TestCase):
                 "merged": True,
             }
             with patch(
-                "src.github.list_review_comments_by_reviewer", return_value=[comment]
-            ), patch("src.evaluate._ensure_object", return_value=True), patch(
-                "src.evaluate.merge_base", return_value="c" * 40
+                "prwarden.github.list_review_comments_by_reviewer",
+                return_value=[comment],
+            ), patch("prwarden.evaluate._ensure_object", return_value=True), patch(
+                "prwarden.evaluate.merge_base", return_value="c" * 40
             ) as merge, patch(
-                "src.evaluate._git", return_value=""
+                "prwarden.evaluate._git", return_value=""
             ):
                 mine_labels(
                     Mock(
@@ -1894,11 +1903,12 @@ class ScopedMiningTests(unittest.TestCase):
                 "merged": True,
             }
             with patch(
-                "src.github.list_review_comments_by_reviewer", return_value=[comment]
-            ), patch("src.evaluate._ensure_object", return_value=True), patch(
-                "src.evaluate.merge_base", return_value="a" * 40
+                "prwarden.github.list_review_comments_by_reviewer",
+                return_value=[comment],
+            ), patch("prwarden.evaluate._ensure_object", return_value=True), patch(
+                "prwarden.evaluate.merge_base", return_value="a" * 40
             ), patch(
-                "src.evaluate._git", return_value=""
+                "prwarden.evaluate._git", return_value=""
             ):
                 result = mine_labels(
                     Mock(
@@ -2105,24 +2115,24 @@ class ReplayDecisionTests(unittest.TestCase):
         )
         bundles = (second,) if bundled else ()
         output = StringIO()
-        with patch("src.evaluate._repository_for", return_value=repository), patch(
-            "src.evaluate.changed_files", return_value=[{"filename": "a.py"}]
+        with patch("prwarden.evaluate._repository_for", return_value=repository), patch(
+            "prwarden.evaluate.changed_files", return_value=[{"filename": "a.py"}]
         ), patch(
-            "src.cli._bundled_material", return_value=(primary, bundles)
+            "prwarden.cli._bundled_material", return_value=(primary, bundles)
         ), patch(
-            "src.cli._bundle_material_from", return_value=second
-        ), patch("src.cli.create_review_engine"), patch(
-            "src.cli._create_verification_pass"
-        ), patch("src.cli._create_fallback_reviewer", return_value=None), patch(
-            "src.cli.review_workspace"
+            "prwarden.cli._bundle_material_from", return_value=second
+        ), patch("prwarden.cli.create_review_engine"), patch(
+            "prwarden.cli._create_verification_pass"
+        ), patch("prwarden.cli._create_fallback_reviewer", return_value=None), patch(
+            "prwarden.cli.review_workspace"
         ) as workspace, patch(
-            "src.evaluate.read_background", return_value=""
-        ), patch("src.cli._report_diff_budget"), patch(
-            "src.cli._review_with_engine_fallback", side_effect=reviews
+            "prwarden.evaluate.read_background", return_value=""
+        ), patch("prwarden.cli._report_diff_budget"), patch(
+            "prwarden.cli._review_with_engine_fallback", side_effect=reviews
         ) as review_call, patch(
-            "src.cli._verify_code_candidates", side_effect=list(verifications)
+            "prwarden.cli._verify_code_candidates", side_effect=list(verifications)
         ), patch(
-            "src.evaluate.replace", side_effect=lambda material, **kw: material
+            "prwarden.evaluate.replace", side_effect=lambda material, **kw: material
         ), patch(
             "sys.stdout", output
         ):
@@ -2231,10 +2241,10 @@ class ControlScoringTests(unittest.TestCase):
         metrics = Mock()
         metrics.document.return_value = document
         output = StringIO()
-        with patch("src.evaluate.replay_case", side_effect=scores), patch(
-            "src.evaluate.ReviewMetrics", return_value=metrics
-        ), patch("src.evaluate.reviewer_provenance", return_value={}), patch(
-            "src.evaluate.cases_fingerprint", return_value="f"
+        with patch("prwarden.evaluate.replay_case", side_effect=scores), patch(
+            "prwarden.evaluate.ReviewMetrics", return_value=metrics
+        ), patch("prwarden.evaluate.reviewer_provenance", return_value={}), patch(
+            "prwarden.evaluate.cases_fingerprint", return_value="f"
         ), patch(
             "sys.stdout", output
         ):
@@ -2279,10 +2289,10 @@ class ControlScoringTests(unittest.TestCase):
         settings = Mock(review_engine="kiro", review_model="m", max_review_bundles=1)
         metrics = Mock()
         metrics.document.return_value = {"summary": {}}
-        with patch("src.evaluate.replay_case", return_value={}) as replayed, patch(
-            "src.evaluate.ReviewMetrics", return_value=metrics
-        ), patch("src.evaluate.reviewer_provenance", return_value={}), patch(
-            "src.evaluate.cases_fingerprint", return_value="f"
+        with patch("prwarden.evaluate.replay_case", return_value={}) as replayed, patch(
+            "prwarden.evaluate.ReviewMetrics", return_value=metrics
+        ), patch("prwarden.evaluate.reviewer_provenance", return_value={}), patch(
+            "prwarden.evaluate.cases_fingerprint", return_value="f"
         ), patch(
             "sys.stdout", new_callable=StringIO
         ):
@@ -2452,13 +2462,13 @@ class ControlMiningTests(unittest.TestCase):
                 ]
 
             with patch(
-                "src.github.get_pull_request_refs", side_effect=refs
+                "prwarden.github.get_pull_request_refs", side_effect=refs
             ) as refs_call, patch(
-                "src.github.list_reviews", side_effect=reviews
+                "prwarden.github.list_reviews", side_effect=reviews
             ), patch(
-                "src.evaluate._ensure_object", return_value=True
+                "prwarden.evaluate._ensure_object", return_value=True
             ), patch(
-                "src.evaluate.merge_base", return_value="e" * 40
+                "prwarden.evaluate.merge_base", return_value="e" * 40
             ), patch(
                 "sys.stdout", new_callable=StringIO
             ):
@@ -2511,8 +2521,8 @@ class ControlMiningTests(unittest.TestCase):
                 },
             )
             with patch(
-                "src.github.list_review_comments_by_reviewer", return_value=()
-            ), patch("src.evaluate.mine_controls", return_value=[control]), patch(
+                "prwarden.github.list_review_comments_by_reviewer", return_value=()
+            ), patch("prwarden.evaluate.mine_controls", return_value=[control]), patch(
                 "sys.stdout", new_callable=StringIO
             ):
                 result = mine_labels(
@@ -2552,13 +2562,14 @@ class MinedDescriptionTests(unittest.TestCase):
                 "pr_body": "Stop client-side trimming.",
             }
             with patch(
-                "src.github.list_review_comments_by_reviewer", return_value=[comment]
-            ), patch("src.evaluate._ensure_object", return_value=True), patch(
-                "src.evaluate.merge_base", return_value="c" * 40
+                "prwarden.github.list_review_comments_by_reviewer",
+                return_value=[comment],
+            ), patch("prwarden.evaluate._ensure_object", return_value=True), patch(
+                "prwarden.evaluate.merge_base", return_value="c" * 40
             ), patch(
-                "src.evaluate._git", return_value=""
+                "prwarden.evaluate._git", return_value=""
             ), patch(
-                "src.evaluate.mine_controls", return_value=[]
+                "prwarden.evaluate.mine_controls", return_value=[]
             ), patch(
                 "sys.stdout", new_callable=StringIO
             ):
@@ -2712,7 +2723,7 @@ class AdHocCaseTests(unittest.TestCase):
 
     def resolve(self, root: Path, clone: Path, spec: str, refs: "dict[str, Any]"):
         settings = make_settings(root, Repository("app", "owner/app", clone))
-        with patch("src.github.get_pull_request_refs", return_value=refs):
+        with patch("prwarden.github.get_pull_request_refs", return_value=refs):
             return case_for_pull_request(settings, spec)
 
     def refs(self, history: "dict[str, Any]", **overrides) -> "dict[str, Any]":
@@ -2803,15 +2814,17 @@ class AdHocCaseTests(unittest.TestCase):
 class BaselineEngineTests(unittest.TestCase):
     """A verifier prompt from another commit is judged beside today's."""
 
-    def repository(self, directory: str) -> "tuple[Path, str]":
+    def repository(
+        self, directory: str, folder: str = "prwarden"
+    ) -> "tuple[Path, str]":
         root = Path(directory)
         git(root, "init", "-q", "-b", "main")
         git(root, "config", "user.name", "Replay Test")
         git(root, "config", "user.email", "replay@example.invalid")
-        (root / "src").mkdir()
-        (root / "src" / "__init__.py").write_text("", encoding="utf-8")
-        (root / "src" / "models.py").write_text("VALUE = 'old'\n", encoding="utf-8")
-        (root / "src" / "engine.py").write_text(
+        (root / folder).mkdir()
+        (root / folder / "__init__.py").write_text("", encoding="utf-8")
+        (root / folder / "models.py").write_text("VALUE = 'old'\n", encoding="utf-8")
+        (root / folder / "engine.py").write_text(
             "from .models import VALUE\n\n\n"
             "def build_docs_verification_prompt(repository, pull_request, material):\n"
             "    return 'baseline ' + VALUE\n",
@@ -2820,7 +2833,7 @@ class BaselineEngineTests(unittest.TestCase):
         git(root, "add", "-A")
         git(root, "commit", "-q", "-m", "baseline")
         commit = git(root, "rev-parse", "HEAD").strip()
-        (root / "src" / "models.py").write_text("VALUE = 'new'\n", encoding="utf-8")
+        (root / folder / "models.py").write_text("VALUE = 'new'\n", encoding="utf-8")
         return root, commit
 
     def docs_material(self) -> ReviewMaterial:
@@ -2889,6 +2902,20 @@ class BaselineEngineTests(unittest.TestCase):
                     with verification_prompts_from(module, DESIGN_LEVEL):
                         pass
 
+    def test_a_baseline_from_before_the_package_was_renamed_still_loads(
+        self,
+    ) -> None:
+        """Commits before 2.0.0 keep the package in `src/`, not `prwarden/`."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root, commit = self.repository(directory, folder="src")
+
+            with baseline_engine("HEAD", root) as (module, resolved):
+                built = module.build_docs_verification_prompt(None, None, None)
+
+        self.assertEqual(built, "baseline old")
+        self.assertEqual(resolved, commit)
+
 
 def docs_finding(title: str, category: str = "missing_list_entry") -> DocsFinding:
     return DocsFinding(
@@ -2940,15 +2967,15 @@ class AdvisoryCaseTests(unittest.TestCase):
         context = Mock()
         context.__enter__ = Mock(return_value=prepared)
         context.__exit__ = Mock(return_value=False)
-        with patch("src.evaluate._prepared_case", return_value=context), patch(
-            "src.cli.create_review_engine"
+        with patch("prwarden.evaluate._prepared_case", return_value=context), patch(
+            "prwarden.cli.create_review_engine"
         ), patch(
-            "src.cli._create_verification_pass",
+            "prwarden.cli._create_verification_pass",
             return_value=VerificationPass(engine=verifier, settings=settings),
-        ), patch("src.cli._create_fallback_reviewer", return_value=None), patch(
-            "src.cli._MeasuredEngine", side_effect=lambda inner, *args: inner
-        ), patch("src.cli._docs_level", side_effect=docs_level), patch(
-            "src.evaluate.verification_prompts_from"
+        ), patch("prwarden.cli._create_fallback_reviewer", return_value=None), patch(
+            "prwarden.cli._MeasuredEngine", side_effect=lambda inner, *args: inner
+        ), patch("prwarden.cli._docs_level", side_effect=docs_level), patch(
+            "prwarden.evaluate.verification_prompts_from"
         ), patch("sys.stdout", new_callable=StringIO) as output:
             record = advisory_case(
                 settings, case, DOCS_LEVEL, ReviewMetrics(), baseline
@@ -3039,12 +3066,14 @@ class AdvisoryCaseTests(unittest.TestCase):
             )
         )
         context.__exit__ = Mock(return_value=False)
-        with patch("src.evaluate._prepared_case", return_value=context), patch(
-            "src.cli.create_review_engine"
-        ), patch("src.cli._create_verification_pass", return_value=None), patch(
-            "src.cli._create_fallback_reviewer", return_value=None
-        ), patch("src.cli._MeasuredEngine", side_effect=lambda inner, *a: inner), patch(
-            "src.cli._design_level", side_effect=ReviewError("no usable response")
+        with patch("prwarden.evaluate._prepared_case", return_value=context), patch(
+            "prwarden.cli.create_review_engine"
+        ), patch("prwarden.cli._create_verification_pass", return_value=None), patch(
+            "prwarden.cli._create_fallback_reviewer", return_value=None
+        ), patch(
+            "prwarden.cli._MeasuredEngine", side_effect=lambda inner, *a: inner
+        ), patch(
+            "prwarden.cli._design_level", side_effect=ReviewError("no usable response")
         ), patch("sys.stdout", new_callable=StringIO):
             record = advisory_case(
                 Mock(state_file=Path("/tmp/s.json")),
@@ -3059,7 +3088,7 @@ class AdvisoryCaseTests(unittest.TestCase):
 
 class AdvisoryCommandTests(unittest.TestCase):
     def setUp(self) -> None:
-        pinning = patch("src.evaluate.pin_github_account")
+        pinning = patch("prwarden.evaluate.pin_github_account")
         pinning.start()
         self.addCleanup(pinning.stop)
 
@@ -3069,17 +3098,17 @@ class AdvisoryCommandTests(unittest.TestCase):
             run_log_retention_days=7,
             reviewer_username="reviewer",
         )
-        with patch("src.evaluate.load_settings", return_value=settings), patch(
-            "src.evaluate.case_for_pull_request",
+        with patch("prwarden.evaluate.load_settings", return_value=settings), patch(
+            "prwarden.evaluate.case_for_pull_request",
             side_effect=lambda settings, spec: ReplayCase(
                 "owner/app", 1, "a" * 40, "b" * 40
             ),
         ) as resolve, patch(
-            "src.evaluate.advisory_case",
+            "prwarden.evaluate.advisory_case",
             return_value=record or {"case": "c", "proposals": []},
         ) as run_case, patch(
-            "src.evaluate.measured_engine", return_value=("kiro", "m")
-        ), patch("src.evaluate.reviewer_provenance", return_value={}), patch(
+            "prwarden.evaluate.measured_engine", return_value=("kiro", "m")
+        ), patch("prwarden.evaluate.reviewer_provenance", return_value={}), patch(
             "sys.stdout", new_callable=StringIO
         ) as output, patch("sys.stderr", new_callable=StringIO) as errors:
             code = main(argv)

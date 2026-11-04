@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
-from src.commands import CommandError
-from src.models import DependencyLink, PullRequest, Repository
-from src.workspace import WorkspaceError, review_workspace
+from prwarden.commands import CommandError
+from prwarden.models import DependencyLink, PullRequest, Repository
+from prwarden.workspace import WorkspaceError, review_workspace
 
 
 class ReviewWorkspaceTests(unittest.TestCase):
@@ -45,7 +45,7 @@ class ReviewWorkspaceTests(unittest.TestCase):
                     shutil.rmtree(command[-1])
                 return ""
 
-            with patch("src.workspace.run_cmd", side_effect=run):
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
                 with review_workspace(
                     repository,
                     pull_request,
@@ -87,7 +87,7 @@ class ReviewWorkspaceTests(unittest.TestCase):
                     shutil.rmtree(command[-1])
                 return ""
 
-            with patch("src.workspace.run_cmd", side_effect=run):
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
                 with self.assertRaisesRegex(RuntimeError, "review failed"):
                     with review_workspace(
                         repository,
@@ -120,7 +120,7 @@ class ReviewWorkspaceTests(unittest.TestCase):
                     raise CommandError("Directory not empty")
                 return ""
 
-            with patch("src.workspace.run_cmd", side_effect=run):
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
                 with review_workspace(
                     repository,
                     pull_request,
@@ -143,7 +143,7 @@ class ReviewWorkspaceTests(unittest.TestCase):
                     return "true"
                 return "git@github.com:different/repository.git"
 
-            with patch("src.workspace.run_cmd", side_effect=run):
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
                 with self.assertRaisesRegex(WorkspaceError, "does not match"):
                     with review_workspace(
                         repository,
@@ -166,7 +166,7 @@ class ReviewWorkspaceTests(unittest.TestCase):
                     raise CommandError("fetch failed")
                 return ""
 
-            with patch("src.workspace.run_cmd", side_effect=run):
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
                 with self.assertRaisesRegex(WorkspaceError, "Cannot prepare PR head"):
                     with review_workspace(
                         repository,
@@ -263,7 +263,7 @@ class DependencyLinkTests(unittest.TestCase):
             workspace = review_workspace(
                 repository, pull_request, Path(directory) / "worktrees"
             )
-            with patch("src.workspace.run_cmd", side_effect=run):
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
                 with workspace as exact_repository:
                     modules = exact_repository.path / "node_modules"
                     self.assertFalse(modules.is_symlink())
@@ -311,7 +311,7 @@ class DependencyLinkTests(unittest.TestCase):
             workspace = review_workspace(
                 repository, pull_request, Path(directory) / "worktrees"
             )
-            with patch("src.workspace.run_cmd", side_effect=run):
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
                 with workspace as exact_repository:
                     modules = exact_repository.path / "node_modules"
                     self.assertTrue((modules / "react").is_symlink())
@@ -330,7 +330,7 @@ class DependencyLinkTests(unittest.TestCase):
             workspace = review_workspace(
                 repository, pull_request, Path(directory) / "worktrees"
             )
-            with patch("src.workspace.run_cmd", side_effect=run):
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
                 with workspace:
                     self.assertEqual(workspace.dependency_links, ())
                     self.assertEqual(
@@ -347,7 +347,7 @@ class DependencyLinkTests(unittest.TestCase):
             workspace = review_workspace(
                 repository, pull_request, Path(directory) / "worktrees"
             )
-            with patch("src.workspace.run_cmd", side_effect=run):
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
                 with workspace:
                     self.assertEqual(
                         workspace.dependency_notes,
@@ -363,7 +363,7 @@ class DependencyLinkTests(unittest.TestCase):
                 Path(directory) / "worktrees",
             )
 
-            with patch("src.workspace.run_cmd", side_effect=run):
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
                 with workspace as exact_repository:
                     link = exact_repository.path / "node_modules"
                     self.assertTrue(link.is_symlink())
@@ -403,7 +403,7 @@ class DependencyLinkTests(unittest.TestCase):
                 Path(directory) / "worktrees",
             )
 
-            with patch("src.workspace.run_cmd", side_effect=run):
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
                 with workspace as exact_repository:
                     self.assertFalse((exact_repository.path / "node_modules").exists())
                     self.assertEqual(workspace.dependency_links, ())
@@ -420,7 +420,7 @@ class DependencyLinkTests(unittest.TestCase):
                 Path(directory) / "worktrees",
             )
 
-            with patch("src.workspace.run_cmd", side_effect=run):
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
                 with workspace as exact_repository:
                     self.assertFalse((exact_repository.path / "node_modules").exists())
                     self.assertEqual(workspace.dependency_links, ())
@@ -437,7 +437,7 @@ class DependencyLinkTests(unittest.TestCase):
                 Path(directory) / "worktrees",
             )
 
-            with patch("src.workspace.run_cmd", side_effect=run):
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
                 with workspace as exact_repository:
                     self.assertFalse((exact_repository.path / "node_modules").exists())
                     self.assertEqual(workspace.dependency_links, ())
@@ -454,7 +454,7 @@ class DependencyLinkTests(unittest.TestCase):
                 Path(directory) / "worktrees",
             )
 
-            with patch("src.workspace.run_cmd", side_effect=run):
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
                 with workspace as exact_repository:
                     self.assertFalse((exact_repository.path / "node_modules").exists())
                     self.assertEqual(workspace.dependency_links, ())

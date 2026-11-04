@@ -7,11 +7,11 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from src import cli
-from src.commands import CommandError
-from src.config import Settings
-from src.models import PullRequest, PullRequestSnapshot, Repository
-from src.state import JsonStateStore
+from prwarden import cli
+from prwarden.commands import CommandError
+from prwarden.config import Settings
+from prwarden.models import PullRequest, PullRequestSnapshot, Repository
+from prwarden.state import JsonStateStore
 
 
 CONFLICTED_SNAPSHOT = PullRequestSnapshot(
@@ -73,25 +73,25 @@ class MergeConflictStateTests(unittest.TestCase):
         def read_snapshot(*_args):
             return remaining.pop(0) if len(remaining) > 1 else remaining[0]
 
-        with patch("src.cli.has_current_review", return_value=False), patch(
-            "src.cli.list_prior_review_comments", return_value=()
+        with patch("prwarden.cli.has_current_review", return_value=False), patch(
+            "prwarden.cli.list_prior_review_comments", return_value=()
         ), patch(
-            "src.cli.list_changed_files",
+            "prwarden.cli.list_changed_files",
             return_value=[
                 {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
             ],
         ), patch(
-            "src.cli.list_pull_request_checks", return_value=()
+            "prwarden.cli.list_pull_request_checks", return_value=()
         ), patch(
-            "src.cli.get_pull_request_snapshot", side_effect=read_snapshot
+            "prwarden.cli.get_pull_request_snapshot", side_effect=read_snapshot
         ) as snapshot, patch(
-            "src.cli.time.sleep"
+            "prwarden.cli.time.sleep"
         ) as sleep, patch(
-            "src.cli.get_branch_head_sha"
+            "prwarden.cli.get_branch_head_sha"
         ) as branch_head, patch(
-            "src.cli.review_workspace"
+            "prwarden.cli.review_workspace"
         ) as workspace, patch(
-            "src.cli.submit_approval", return_value="approval-1"
+            "prwarden.cli.submit_approval", return_value="approval-1"
         ) as approval, patch(
             "sys.stdout", new_callable=StringIO
         ) as output:

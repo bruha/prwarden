@@ -3,7 +3,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from src.github_status import (
+from prwarden.github_status import (
     STATUS_SUMMARY_URL,
     describe_github_incident,
     summarize_status_payload,
@@ -146,7 +146,7 @@ class StatusLookupTests(unittest.TestCase):
                 return False
 
         with patch(
-            "src.github_status.urllib.request.urlopen", return_value=_Response()
+            "prwarden.github_status.urllib.request.urlopen", return_value=_Response()
         ) as urlopen:
             note = describe_github_incident()
 
@@ -166,7 +166,7 @@ class StatusLookupTests(unittest.TestCase):
         for failure in failures:
             with self.subTest(failure=type(failure).__name__):
                 with patch(
-                    "src.github_status.urllib.request.urlopen", side_effect=failure
+                    "prwarden.github_status.urllib.request.urlopen", side_effect=failure
                 ):
                     self.assertIsNone(describe_github_incident())
 
@@ -181,7 +181,9 @@ class StatusLookupTests(unittest.TestCase):
             def __exit__(self, *_exc_info):
                 return False
 
-        with patch("src.github_status.urllib.request.urlopen", return_value=_Response()):
+        with patch(
+            "prwarden.github_status.urllib.request.urlopen", return_value=_Response()
+        ):
             self.assertIsNone(describe_github_incident())
 
 

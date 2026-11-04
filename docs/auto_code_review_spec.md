@@ -74,7 +74,7 @@ are still reviewed. A repository whose account was never pinned is refused rathe
 than read as the reviewer. Authors are compared with the account without regard to
 case, as GitHub compares logins, so a case slip in the entry cannot turn the
 account's own pull request into a teammate's, which is the route that approves.
-`python3 -m src.public_safety refresh-terms` reads such a repository as its account
+`python3 -m prwarden.public_safety refresh-terms` reads such a repository as its account
 too, because the active login cannot list it.
 
 ## Review Scheduling
@@ -477,7 +477,7 @@ engine object, because one engine serves every parallel review at once.
 level, wall-clock, credits when the engine reported them, verdict, candidate count, what
 verification confirmed and rejected
 with its classes, whether the invocation was a correction retry the controller asked
-for, and the failure when one happened. `python3 -m src.compare_metrics before after`
+for, and the failure when one happened. `python3 -m prwarden.compare_metrics before after`
 reports what moved.
 
 Recorded from the engine wrapper rather than from each level, because every level's
@@ -493,7 +493,7 @@ cannot be written reports the reason and leaves the run's exit code alone.
 
 ### Replaying pinned work
 
-`python3 -m src.evaluate` pins pull requests and reviews them again, so a change to
+`python3 -m prwarden.evaluate` pins pull requests and reviews them again, so a change to
 the reviewer can be attributed to the reviewer. A case records the slug, the number,
 the head, and the merge base that head was reviewed against; pinning the merge base
 rather than the base branch is what keeps a case the same case after the base moves.
@@ -597,7 +597,8 @@ and capture rewrite.
 
 `--baseline-verifier REF` has the same engine judge the same proposals a second time,
 under the verifier prompt committed at REF, before today's verifier judges them. REF's
-`src` package is imported from that commit's files under a name of its own, and its
+package, `prwarden` from 2.0.0 and `src` before it, is imported from that commit's
+files under a name of its own, and its
 verification prompt builder is swapped into `engine` for that one call: every adapter
 renders its prompt through `engine.build_prompt`, which looks the builder up when it
 runs, so the adapter, schema, model, workspace, and proposals stay today's and only the
@@ -609,7 +610,7 @@ fails makes the run exit 1.
 
 ### Repository background
 
-Every level is given the reviewed head's own `.ai-code-review/background.md` when it
+Every level is given the reviewed head's own `.prwarden/background.md` when it
 exists: what the product is, what its units mean, what everybody on the team already
 knows and no diff states. Alibaba's reviewer asks the calling agent to summarise
 business context and pass it in on every invocation; the same context committed to

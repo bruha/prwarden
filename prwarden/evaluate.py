@@ -1,10 +1,10 @@
 """Replay recorded pull requests so a change to the reviewer can be measured.
 
-    python3 -m src.evaluate capture              # pin the open pull requests
-    python3 -m src.evaluate replay --metrics before.json
+    python3 -m prwarden.evaluate capture              # pin the open pull requests
+    python3 -m prwarden.evaluate replay --metrics before.json
     # change a prompt, or pick another arm
-    python3 -m src.evaluate replay --arm claude --metrics after.json
-    python3 -m src.compare_metrics before.json after.json
+    python3 -m prwarden.evaluate replay --arm claude --metrics after.json
+    python3 -m prwarden.compare_metrics before.json after.json
 
 `--metrics` on a normal run measures what that run decided, but it cannot compare the
 same work twice: pull requests merge, heads move, and a set of open pull requests
@@ -70,6 +70,9 @@ DEFAULT_CASES_FILE = Path("evals/cases.json")
 DEFAULT_ARMS_FILE = Path("evals/arms.json")
 DEFAULT_LABELS_FILE = Path("evals/labels.json")
 DEFAULT_CANDIDATES_FILE = Path("evals/candidates.json")
+# Where this reviewer's own package lives in a commit: prwarden/ from 2.0.0, src/
+# before it.
+PACKAGE_FOLDERS = ("prwarden", "src")
 # Each pass is another full set of model invocations, and one pass of seventeen cases
 # already spends about a provider quota window.
 MAX_REPLAY_PASSES = 5
@@ -2083,15 +2086,23 @@ def baseline_engine(
         ) from error
     package = f"_baseline_{commit[:12]}"
     with tempfile.TemporaryDirectory(prefix="baseline-verifier-") as directory:
-        for name in git("ls-tree", "-r", "--name-only", commit, "--", "src").split(
-            "\n"
-        ):
-            if not name.endswith(".py"):
-                continue
+        # The package lives in prwarden/ from 2.0.0 on and in src/ before it, and a
+        # baseline worth comparing against is as likely to be either.
+        for folder in PACKAGE_FOLDERS:
+            names = [
+                name
+                for name in git(
+                    "ls-tree", "-r", "--name-only", commit, "--", folder
+                ).split("\n")
+                if name.endswith(".py")
+            ]
+            if names:
+                break
+        for name in names:
             target = Path(directory, name)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(git("show", f"{commit}:{name}"), encoding="utf-8")
-        source = Path(directory, "src")
+        source = Path(directory, folder)
         spec = importlib.util.spec_from_file_location(
             package, source / "__init__.py", submodule_search_locations=[str(source)]
         )
@@ -2434,7 +2445,7 @@ def _run_advisory(args: argparse.Namespace, settings: Settings) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python3 -m src.evaluate",
+        prog="python3 -m prwarden.evaluate",
         description="Replay recorded pull requests to measure a change to the reviewer",
     )
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)

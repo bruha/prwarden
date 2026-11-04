@@ -9,13 +9,13 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import Mock, patch
 
-import src.cli as cli
-import src.github as github
-from src.commands import CommandError
-from src.config import ConfigError, load_repositories
-from src.models import PullRequest, Repository
-from src.public_safety import refresh_terms
-from src.state import JsonStateStore
+import prwarden.cli as cli
+import prwarden.github as github
+from prwarden.commands import CommandError
+from prwarden.config import ConfigError, load_repositories
+from prwarden.models import PullRequest, Repository
+from prwarden.public_safety import refresh_terms
+from prwarden.state import JsonStateStore
 from tests.test_slack_scope import APPROVING, READY_SNAPSHOT, settings_for
 
 
@@ -78,7 +78,7 @@ class RepositoryAccountTokenTests(unittest.TestCase):
         return (run.call_args.kwargs.get("environment") or {}).get("GH_TOKEN")
 
     def test_a_repository_is_read_as_its_account_and_the_rest_as_the_reviewer(self):
-        with patch("src.github.commands.run_cmd", side_effect=tokens) as run:
+        with patch("prwarden.github.commands.run_cmd", side_effect=tokens) as run:
             github.pin_github_account("reviewer", [SHARED, PERSONAL])
 
             self.assertEqual(self.token_used(run, PERSONAL), "token-owner")
@@ -89,16 +89,16 @@ class RepositoryAccountTokenTests(unittest.TestCase):
         a name that cannot see the repository."""
 
         pull_request = PullRequest(1, "Title", "", "owner", SHA, "url")
-        with patch("src.github.commands.run_cmd", side_effect=tokens):
+        with patch("prwarden.github.commands.run_cmd", side_effect=tokens):
             github.pin_github_account("reviewer", [PERSONAL])
-        with patch("src.github.commands.run_cmd", return_value='{"id": 7}') as run:
+        with patch("prwarden.github.commands.run_cmd", return_value='{"id": 7}') as run:
             github.submit_lgtm_comment(PERSONAL, pull_request, "body")
 
         self.assertEqual(run.call_args.kwargs["environment"]["GH_TOKEN"], "token-owner")
 
     def test_an_operator_token_does_not_override_a_repositorys_own_account(self):
         os.environ["GH_TOKEN"] = "operator-token"
-        with patch("src.github.commands.run_cmd", side_effect=tokens) as run:
+        with patch("prwarden.github.commands.run_cmd", side_effect=tokens) as run:
             github.pin_github_account("reviewer", [SHARED, PERSONAL])
 
             self.assertEqual(self.token_used(run, PERSONAL), "token-owner")
@@ -106,7 +106,7 @@ class RepositoryAccountTokenTests(unittest.TestCase):
 
     def test_logins_that_differ_only_in_case_are_one_account(self):
         loud = Repository("loud", "owner/loud", Path("."), github_account="OWNER")
-        with patch("src.github.commands.run_cmd", side_effect=tokens) as run:
+        with patch("prwarden.github.commands.run_cmd", side_effect=tokens) as run:
             github.pin_github_account("reviewer", [PERSONAL, loud])
 
             logins = [
@@ -123,7 +123,9 @@ class RepositoryAccountTokenTests(unittest.TestCase):
                 raise CommandError("gh exited with 1: no oauth token found")
             return tokens(args, **options)
 
-        with patch("src.github.commands.run_cmd", side_effect=no_owner_login) as run:
+        with patch(
+            "prwarden.github.commands.run_cmd", side_effect=no_owner_login
+        ) as run:
             github.pin_github_account("reviewer", [SHARED, PERSONAL])
             calls_after_pinning = run.call_count
 
@@ -138,7 +140,7 @@ class RepositoryAccountTokenTests(unittest.TestCase):
         self.assertIn("no oauth token found", message)
 
     def test_an_account_that_was_never_pinned_is_not_read_as_the_reviewer(self):
-        with patch("src.github.commands.run_cmd", side_effect=tokens) as run:
+        with patch("prwarden.github.commands.run_cmd", side_effect=tokens) as run:
             github.pin_github_account("reviewer", [SHARED])
             calls_after_pinning = run.call_count
 
@@ -148,7 +150,7 @@ class RepositoryAccountTokenTests(unittest.TestCase):
         self.assertEqual(run.call_count, calls_after_pinning)
 
     def test_pinning_again_forgets_the_previous_accounts(self):
-        with patch("src.github.commands.run_cmd", side_effect=tokens):
+        with patch("prwarden.github.commands.run_cmd", side_effect=tokens):
             github.pin_github_account("reviewer", [PERSONAL])
             github.pin_github_account("reviewer", [SHARED])
 
@@ -175,23 +177,23 @@ class RepositoryAccountReviewTests(unittest.TestCase):
             engine = Mock()
             engine.review.side_effect = [APPROVING]
             with patch(
-                "src.cli.has_current_review", return_value=False
+                "prwarden.cli.has_current_review", return_value=False
             ) as current, patch(
-                "src.cli.list_prior_review_comments", return_value=()
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ) as prior, patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
-            ), patch("src.cli.list_pull_request_checks", return_value=()), patch(
-                "src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
-            ), patch("src.cli.review_workspace") as workspace, patch(
-                "src.cli.submit_approval", return_value="approval-1"
+            ), patch("prwarden.cli.list_pull_request_checks", return_value=()), patch(
+                "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.submit_approval", return_value="approval-1"
             ) as approval, patch(
-                "src.cli.submit_lgtm_comment", return_value="comment-1"
+                "prwarden.cli.submit_lgtm_comment", return_value="comment-1"
             ) as lgtm, patch(
-                "src.cli.hide_earlier_lgtm_comments", return_value=0
-            ), patch("src.cli.send_slack_message") as slack_message, patch(
+                "prwarden.cli.hide_earlier_lgtm_comments", return_value=0
+            ), patch("prwarden.cli.send_slack_message") as slack_message, patch(
                 "sys.stdout", new_callable=StringIO
             ) as output:
                 workspace.return_value.__enter__.return_value = repository
@@ -274,7 +276,7 @@ class RepositoryAccountWordListTests(unittest.TestCase):
                     return ""
                 raise AssertionError(args)
 
-            with patch("src.public_safety._git", return_value=""):
+            with patch("prwarden.public_safety._git", return_value=""):
                 refresh_terms(root, root / "repositories.json", run)
 
         self.assertEqual(seen, [("team/app", None), ("owner/own", "token-owner")])

@@ -8,9 +8,9 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from src.commands import CommandError
-from src.config import Settings
-from src.engine import (
+from prwarden.commands import CommandError
+from prwarden.config import Settings
+from prwarden.engine import (
     PROMPT_DATA_TAGS,
     UNTRUSTED_TAG_NOTICE,
     contain_untrusted,
@@ -36,18 +36,18 @@ from src.engine import (
     take_invocation_credits,
     verification_engine_settings,
 )
-import src.engine_antigravity as engine_antigravity
-from src.engine_antigravity import AntigravityEngine
-from src.engine_claude import ClaudeEngine
-from src.engine_codex import CodexEngine
-from src.engine_command import CommandEngine
-from src.engine_kiro import (
+import prwarden.engine_antigravity as engine_antigravity
+from prwarden.engine_antigravity import AntigravityEngine
+from prwarden.engine_claude import ClaudeEngine
+from prwarden.engine_codex import CodexEngine
+from prwarden.engine_command import CommandEngine
+from prwarden.engine_kiro import (
     KIRO_WORKSPACE_FILES,
     KiroEngine,
     parse_kiro_credits,
     parse_kiro_output,
 )
-from src.models import (
+from prwarden.models import (
     DocumentationFile,
     DependencyLink,
     Finding,
@@ -163,7 +163,7 @@ class ExhaustedQuotaTests(unittest.TestCase):
         """Three attempts of 2m30s each cost 8m34s per pull request on 2026-09-22,
         because the CLI retries inside itself before reporting the refusal."""
 
-        from src.engine_antigravity import _is_retryable_antigravity_failure
+        from prwarden.engine_antigravity import _is_retryable_antigravity_failure
 
         spent = (
             "RESOURCE_EXHAUSTED (code 429): Individual quota reached. "
@@ -262,7 +262,7 @@ class ReviewEngineTests(unittest.TestCase):
                     (root / relative).write_text(content)
                 repository = Repository("app", "owner/app", root)
                 settings = self.settings(directory, repository)
-                with patch("src.engine_antigravity.run_cmd_streams") as run:
+                with patch("prwarden.engine_antigravity.run_cmd_streams") as run:
                     with self.assertRaisesRegex(
                         EngineError, "Antigravity does not review this head"
                     ):
@@ -286,7 +286,7 @@ class ReviewEngineTests(unittest.TestCase):
             settings = self.settings(directory, repository)
             envelope = {"status": "SUCCESS", "structured_output": {"findings": []}}
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(json.dumps(envelope)),
             ) as run:
                 output = AntigravityEngine(settings).review(*self.input(repository))
@@ -302,7 +302,7 @@ class ReviewEngineTests(unittest.TestCase):
                 "structured_output": {"findings": []},
             }
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(json.dumps(envelope)),
             ) as run:
                 output = AntigravityEngine(settings).review(*self.input(repository))
@@ -403,7 +403,7 @@ class ReviewEngineTests(unittest.TestCase):
             envelope = {"status": "SUCCESS", "structured_output": {"findings": []}}
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(json.dumps(envelope)),
             ) as run:
                 AntigravityEngine(settings).review(repo, pull_request, material)
@@ -450,7 +450,10 @@ class ReviewEngineTests(unittest.TestCase):
             def review() -> None:
                 AntigravityEngine(settings).review(*self.input(repository))
 
-            with patch("src.engine_antigravity.run_cmd_streams", side_effect=as_streams(run_and_record)):
+            with patch(
+                "prwarden.engine_antigravity.run_cmd_streams",
+                side_effect=as_streams(run_and_record),
+            ):
                 threads = [
                     threading.Thread(target=review, name=f"review-{index}")
                     for index in range(2)
@@ -479,7 +482,7 @@ class ReviewEngineTests(unittest.TestCase):
             )
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(envelope),
             ):
                 for _ in range(3):
@@ -509,7 +512,7 @@ class ReviewEngineTests(unittest.TestCase):
                 "structured_output": {"findings": []},
             }
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(json.dumps(envelope)),
             ):
                 AntigravityEngine(settings).review(*self.input(repository))
@@ -536,7 +539,7 @@ class ReviewEngineTests(unittest.TestCase):
                 "response": '{"findings": []}\n',
             }
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(json.dumps(envelope)),
             ):
                 output = AntigravityEngine(settings).review(*self.input(repository))
@@ -548,7 +551,7 @@ class ReviewEngineTests(unittest.TestCase):
             settings = self.settings(directory, repository)
             envelope = {"status": "SUCCESS", "response": ""}
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(json.dumps(envelope)),
             ):
                 with self.assertRaisesRegex(EngineError, "empty response"):
@@ -580,9 +583,9 @@ class ReviewEngineTests(unittest.TestCase):
                 return json.dumps(envelope)
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(run_with_transient_failure),
-            ) as run, patch("src.engine_antigravity.time.sleep") as sleep:
+            ) as run, patch("prwarden.engine_antigravity.time.sleep") as sleep:
                 output = AntigravityEngine(settings).review(*self.input(repository))
 
             self.assertEqual(output, {"findings": []})
@@ -603,9 +606,9 @@ class ReviewEngineTests(unittest.TestCase):
                 raise CommandError("agy exited with 1: no error output")
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(run_with_permanent_failure),
-            ) as run, patch("src.engine_antigravity.time.sleep") as sleep:
+            ) as run, patch("prwarden.engine_antigravity.time.sleep") as sleep:
                 with self.assertRaisesRegex(
                     EngineError,
                     "PERMISSION_DENIED.*Account is not authorized",
@@ -633,9 +636,9 @@ class ReviewEngineTests(unittest.TestCase):
                 )
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(run_with_json_failure),
-            ) as run, patch("src.engine_antigravity.time.sleep") as sleep:
+            ) as run, patch("prwarden.engine_antigravity.time.sleep") as sleep:
                 with self.assertRaisesRegex(
                     EngineError,
                     "PERMISSION_DENIED: Account is not authorized",
@@ -666,9 +669,9 @@ class ReviewEngineTests(unittest.TestCase):
                 return json.dumps(envelope)
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(run_with_warning_only_failure),
-            ) as run, patch("src.engine_antigravity.time.sleep") as sleep:
+            ) as run, patch("prwarden.engine_antigravity.time.sleep") as sleep:
                 output = AntigravityEngine(settings).review(*self.input(repository))
 
             self.assertEqual(output, {"findings": []})
@@ -686,7 +689,7 @@ class ReviewEngineTests(unittest.TestCase):
                 raise CommandError("agy exited with 1: no error output")
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(run_with_unparsed_failure),
             ):
                 with self.assertRaisesRegex(
@@ -743,9 +746,9 @@ class ReviewEngineTests(unittest.TestCase):
             ]
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=lambda *a, **k: outputs.pop(0),
-            ) as run, patch("src.engine_antigravity.time.sleep"):
+            ) as run, patch("prwarden.engine_antigravity.time.sleep"):
                 output = AntigravityEngine(settings).review(*self.input(repository))
 
             self.assertEqual(output, {"findings": []})
@@ -773,7 +776,7 @@ class ReviewEngineTests(unittest.TestCase):
             settings = self.settings(directory, repository)
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 return_value=(
                     json.dumps(
                         {"status": "SUCCESS", "structured_output": {"findings": []}}
@@ -811,9 +814,9 @@ class ReviewEngineTests(unittest.TestCase):
             ]
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=lambda *a, **k: outputs.pop(0),
-            ) as run, patch("src.engine_antigravity.time.sleep") as sleep:
+            ) as run, patch("prwarden.engine_antigravity.time.sleep") as sleep:
                 output = AntigravityEngine(settings).review(*self.input(repository))
 
             self.assertEqual(output, {"findings": []})
@@ -839,12 +842,12 @@ class ReviewEngineTests(unittest.TestCase):
             settings = self.settings(directory, repository)
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=lambda *a, **k: (
                     self.EMPTY_SUCCESS_ENVELOPE,
                     self.HEADLESS_DENIAL_STDERR,
                 ),
-            ), patch("src.engine_antigravity.time.sleep"):
+            ), patch("prwarden.engine_antigravity.time.sleep"):
                 with self.assertRaisesRegex(
                     EngineError, "abandoned the review over a tool call"
                 ):
@@ -868,9 +871,9 @@ class ReviewEngineTests(unittest.TestCase):
                 return self.EMPTY_SUCCESS_ENVELOPE, ""
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=run_with_denial_in_the_log,
-            ), patch("src.engine_antigravity.time.sleep"):
+            ), patch("prwarden.engine_antigravity.time.sleep"):
                 with self.assertRaisesRegex(EngineError, "ListDir.*at step 13"):
                     AntigravityEngine(settings).review(*self.input(repository))
 
@@ -882,7 +885,7 @@ class ReviewEngineTests(unittest.TestCase):
             settings = self.settings(directory, repository)
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(self.EMPTY_SUCCESS_ENVELOPE),
             ):
                 with self.assertRaisesRegex(EngineError, "empty response"):
@@ -905,7 +908,7 @@ class ReviewEngineTests(unittest.TestCase):
             )
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(
                     json.dumps(
                         {"status": "SUCCESS", "structured_output": {"findings": []}}
@@ -926,7 +929,7 @@ class ReviewEngineTests(unittest.TestCase):
             settings = self.settings(directory, repository)
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(
                     json.dumps(
                         {"status": "SUCCESS", "structured_output": {"findings": []}}
@@ -973,9 +976,9 @@ class ReviewEngineTests(unittest.TestCase):
                 return outputs.pop(0)
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(run_with_denial_then_success),
-            ) as run, patch("src.engine_antigravity.time.sleep") as sleep:
+            ) as run, patch("prwarden.engine_antigravity.time.sleep") as sleep:
                 output = AntigravityEngine(settings).review(*self.input(repository))
 
             self.assertEqual(output, {"findings": []})
@@ -1016,7 +1019,7 @@ class ReviewEngineTests(unittest.TestCase):
             ]
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(lambda *a, **k: outputs.pop(0)),
             ) as run:
                 output = AntigravityEngine(settings).review(*self.input(repository))
@@ -1052,9 +1055,9 @@ class ReviewEngineTests(unittest.TestCase):
             ]
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(lambda *a, **k: outputs.pop(0)),
-            ) as run, patch("src.engine_antigravity.time.sleep") as sleep:
+            ) as run, patch("prwarden.engine_antigravity.time.sleep") as sleep:
                 output = AntigravityEngine(settings).review(*self.input(repository))
 
             self.assertEqual(output, {"findings": []})
@@ -1081,7 +1084,7 @@ class ReviewEngineTests(unittest.TestCase):
                 return json.dumps({"status": "ERROR", "error": "quota exhausted"})
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(run_with_unfixable_error),
             ) as run:
                 with self.assertRaisesRegex(EngineError, "quota exhausted"):
@@ -1102,7 +1105,7 @@ class ReviewEngineTests(unittest.TestCase):
                 )
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(run_with_repeated_denial),
             ) as run:
                 with self.assertRaisesRegex(
@@ -1182,7 +1185,7 @@ class ReviewEngineTests(unittest.TestCase):
                 )
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(run_with_error_envelope),
             ):
                 with self.assertRaisesRegex(
@@ -1201,7 +1204,7 @@ class ReviewEngineTests(unittest.TestCase):
             settings = self.settings(directory, repository)
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(json.dumps({"status": "ERROR"})),
             ):
                 with self.assertRaisesRegex(
@@ -1225,7 +1228,7 @@ class ReviewEngineTests(unittest.TestCase):
                 )
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(run_with_success),
             ):
                 output = AntigravityEngine(settings).review(*self.input(repository))
@@ -1254,7 +1257,7 @@ class ReviewEngineTests(unittest.TestCase):
                 raise CommandError("agy exited with 1: no error output")
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(run_with_print_timeout),
             ) as run:
                 with self.assertRaisesRegex(
@@ -1287,9 +1290,9 @@ class ReviewEngineTests(unittest.TestCase):
                 raise CommandError("agy exited with 1: no error output")
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(run_with_transport_failure),
-            ) as run, patch("src.engine_antigravity.time.sleep") as sleep:
+            ) as run, patch("prwarden.engine_antigravity.time.sleep") as sleep:
                 with self.assertRaisesRegex(EngineError, "no route to host$") as raised:
                     AntigravityEngine(settings).review(*self.input(repository))
 
@@ -1304,12 +1307,12 @@ class ReviewEngineTests(unittest.TestCase):
             settings = self.settings(directory, repository)
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=CommandError(
                     "agy exited with 1: warning: --mode plan has no effect while "
                     "slash command expansion is disabled."
                 ),
-            ) as run, patch("src.engine_antigravity.time.sleep"):
+            ) as run, patch("prwarden.engine_antigravity.time.sleep"):
                 with self.assertRaisesRegex(
                     EngineError,
                     "exited without a usable provider diagnostic$",
@@ -1333,9 +1336,9 @@ class ReviewEngineTests(unittest.TestCase):
                 raise CommandError("agy exited with 1: no error output")
 
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(run_with_transient_failure),
-            ) as run, patch("src.engine_antigravity.time.sleep") as sleep:
+            ) as run, patch("prwarden.engine_antigravity.time.sleep") as sleep:
                 with self.assertRaisesRegex(
                     EngineError,
                     "UNAVAILABLE.*Service temporarily unavailable",
@@ -1530,7 +1533,7 @@ class ReviewEngineTests(unittest.TestCase):
                 command=("review-wrapper", "--structured"),
             )
             with patch(
-                "src.engine_command.run_cmd",
+                "prwarden.engine_command.run_cmd",
                 return_value='{"findings": []}',
             ) as run:
                 output = CommandEngine(settings).review(*self.input(repository))
@@ -1555,7 +1558,7 @@ class ReviewEngineTests(unittest.TestCase):
                 directory, repository, engine="codex", command=("codex",)
             )
             with patch(
-                "src.engine_codex.run_cmd", return_value='{"findings": []}'
+                "prwarden.engine_codex.run_cmd", return_value='{"findings": []}'
             ) as run:
                 output = CodexEngine(settings).review(*self.input(repository))
 
@@ -1581,7 +1584,7 @@ class ReviewEngineTests(unittest.TestCase):
             )
             envelope = {"subtype": "success", "structured_output": {"findings": []}}
             with patch(
-                "src.engine_claude.run_cmd", return_value=json.dumps(envelope)
+                "prwarden.engine_claude.run_cmd", return_value=json.dumps(envelope)
             ) as run:
                 output = ClaudeEngine(settings).review(*self.input(repository))
 
@@ -1612,7 +1615,7 @@ class ReviewEngineTests(unittest.TestCase):
             )
             envelope = {"subtype": "success", "structured_output": {"findings": []}}
             with patch(
-                "src.engine_claude.run_cmd", return_value=json.dumps(envelope)
+                "prwarden.engine_claude.run_cmd", return_value=json.dumps(envelope)
             ) as run:
                 ClaudeEngine(settings).review(*self.input(repository))
 
@@ -1631,7 +1634,9 @@ class ReviewEngineTests(unittest.TestCase):
                 "is_error": True,
                 "result": "quota exhausted",
             }
-            with patch("src.engine_claude.run_cmd", return_value=json.dumps(envelope)):
+            with patch(
+                "prwarden.engine_claude.run_cmd", return_value=json.dumps(envelope)
+            ):
                 with self.assertRaisesRegex(EngineError, "quota exhausted"):
                     ClaudeEngine(settings).review(*self.input(repository))
 
@@ -1642,7 +1647,7 @@ class ReviewEngineTests(unittest.TestCase):
                 directory, repository, engine="kiro", command=("kiro-cli",)
             )
             with patch(
-                "src.engine_kiro.run_cmd_streams",
+                "prwarden.engine_kiro.run_cmd_streams",
                 return_value=('```json\n{"verdict":"approve","findings":[]}\n```', ""),
             ) as run:
                 output = KiroEngine(settings).review(*self.input(repository))
@@ -1664,7 +1669,7 @@ class ReviewEngineTests(unittest.TestCase):
             )
             for _ in range(2):
                 with patch(
-                    "src.engine_kiro.run_cmd_streams",
+                    "prwarden.engine_kiro.run_cmd_streams",
                     return_value=('{"verdict":"approve","findings":[]}', ""),
                 ) as run:
                     KiroEngine(settings).review(*self.input(repository))
@@ -1707,7 +1712,7 @@ class ReviewEngineTests(unittest.TestCase):
                 directory, repository, engine="kiro", command=("kiro-cli",)
             )
 
-            with patch("src.engine_kiro.run_cmd_streams") as run:
+            with patch("prwarden.engine_kiro.run_cmd_streams") as run:
                 with self.assertRaisesRegex(
                     EngineError, r"\.kiro/settings/lsp\.json"
                 ):
@@ -1754,7 +1759,9 @@ class ReviewEngineTests(unittest.TestCase):
                 ("a file, then a failed call", writes_file_and_fails, True),
             ):
                 with self.subTest(label):
-                    with patch("src.engine_kiro.run_cmd_streams", side_effect=call):
+                    with patch(
+                        "prwarden.engine_kiro.run_cmd_streams", side_effect=call
+                    ):
                         if fails:
                             with self.assertRaisesRegex(
                                 EngineError, "model unavailable"
@@ -1765,7 +1772,7 @@ class ReviewEngineTests(unittest.TestCase):
                     self.assertFalse(lsp.is_symlink() or lsp.exists())
                     # The next call in the same worktree is not refused.
                     with patch(
-                        "src.engine_kiro.run_cmd_streams", return_value=answer
+                        "prwarden.engine_kiro.run_cmd_streams", return_value=answer
                     ) as run:
                         KiroEngine(settings).review(*self.input(repository))
                     run.assert_called_once()
@@ -1816,7 +1823,7 @@ class ReviewEngineTests(unittest.TestCase):
                 settings = self.settings(
                     directory, repository, engine="kiro", command=("kiro-cli",)
                 )
-                with patch("src.engine_kiro.run_cmd_streams") as run:
+                with patch("prwarden.engine_kiro.run_cmd_streams") as run:
                     with self.assertRaisesRegex(EngineError, "Kiro does not review"):
                         KiroEngine(settings).review(*self.input(repository))
                 run.assert_not_called()
@@ -1840,7 +1847,7 @@ class ReviewEngineTests(unittest.TestCase):
             )
             for _ in range(2):
                 with patch(
-                    "src.engine_kiro.run_cmd_streams",
+                    "prwarden.engine_kiro.run_cmd_streams",
                     return_value=('{"verdict":"approve","findings":[]}', ""),
                 ) as run:
                     KiroEngine(settings).review(*self.input(repository))
@@ -1872,7 +1879,7 @@ class ReviewEngineTests(unittest.TestCase):
                     settings = self.settings(
                         directory, repository, engine="kiro", command=("kiro-cli",)
                     )
-                    with patch("src.engine_kiro.run_cmd_streams") as run:
+                    with patch("prwarden.engine_kiro.run_cmd_streams") as run:
                         with self.assertRaisesRegex(
                             EngineError, f"at {linked}/.*Kiro does not review"
                         ):
@@ -1893,7 +1900,7 @@ class ReviewEngineTests(unittest.TestCase):
             settings = self.settings(
                 directory, repository, engine="kiro", command=("kiro-cli",)
             )
-            with patch("src.engine_kiro.run_cmd_streams") as run:
+            with patch("prwarden.engine_kiro.run_cmd_streams") as run:
                 with self.assertRaisesRegex(EngineError, "Kiro does not review"):
                     KiroEngine(settings).review(*self.input(repository))
             run.assert_not_called()
@@ -1907,7 +1914,7 @@ class ReviewEngineTests(unittest.TestCase):
                 directory, repository, engine="kiro", command=("kiro-cli",)
             )
             with patch(
-                "src.engine_kiro.run_cmd_streams",
+                "prwarden.engine_kiro.run_cmd_streams",
                 return_value=('```json\n{"verdict":"approve","findings":[]}\n```', ""),
             ) as run:
                 KiroEngine(settings).review(
@@ -1916,7 +1923,7 @@ class ReviewEngineTests(unittest.TestCase):
             self.assertEqual(run.call_args.kwargs["timeout_seconds"], 1440)
 
             with patch(
-                "src.engine_kiro.run_cmd_streams",
+                "prwarden.engine_kiro.run_cmd_streams",
                 return_value=('```json\n{"verdict":"approve","findings":[]}\n```', ""),
             ) as run:
                 KiroEngine(settings).review(*self.input(repository))
@@ -2186,7 +2193,7 @@ class ReviewEngineTests(unittest.TestCase):
             )
 
             with patch(
-                "src.engine_claude.run_cmd",
+                "prwarden.engine_claude.run_cmd",
                 side_effect=CommandError(
                     "claude exited with 1: no error output",
                     command="claude",
@@ -2505,12 +2512,13 @@ class AntigravityReviewBudgetTests(unittest.TestCase):
     def setUp(self) -> None:
         self.clock = [1000.0]
         patcher = patch(
-            "src.engine_antigravity.time.monotonic", side_effect=lambda: self.clock[0]
+            "prwarden.engine_antigravity.time.monotonic",
+            side_effect=lambda: self.clock[0],
         )
         patcher.start()
         self.addCleanup(patcher.stop)
         sleeper = patch(
-            "src.engine_antigravity.time.sleep", side_effect=self.advance
+            "prwarden.engine_antigravity.time.sleep", side_effect=self.advance
         )
         self.sleep = sleeper.start()
         self.addCleanup(sleeper.stop)
@@ -2523,7 +2531,7 @@ class AntigravityReviewBudgetTests(unittest.TestCase):
             repository = Repository("app", "owner/app", Path(directory))
             settings = ReviewEngineTests.settings(self, directory, repository)
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(runner),
             ) as run:
                 try:
@@ -2689,9 +2697,9 @@ class AntigravityModelSelectionTests(unittest.TestCase):
             repository = Repository("app", "owner/app", Path(directory))
             settings = ReviewEngineTests.settings(self, directory, repository)
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(refuse),
-            ) as run, patch("src.engine_antigravity.time.sleep") as sleep:
+            ) as run, patch("prwarden.engine_antigravity.time.sleep") as sleep:
                 with self.assertRaises(EngineError) as raised:
                     AntigravityEngine(settings).review(
                         *ReviewEngineTests.input(repository)
@@ -2813,7 +2821,7 @@ class EffortTests(unittest.TestCase):
             repository = Repository("app", "owner/app", Path(directory))
             settings = self.settings(directory, repository)
             with patch(
-                "src.engine_kiro.run_cmd_streams",
+                "prwarden.engine_kiro.run_cmd_streams",
                 return_value=('```json\n{"verdict":"approve","findings":[]}\n```', ""),
             ) as run:
                 KiroEngine(settings).review(*ReviewEngineTests.input(repository))
@@ -2831,7 +2839,7 @@ class EffortTests(unittest.TestCase):
                 directory, repository, review_effort=None, review_code_effort=None
             )
             with patch(
-                "src.engine_kiro.run_cmd_streams",
+                "prwarden.engine_kiro.run_cmd_streams",
                 return_value=('```json\n{"verdict":"approve","findings":[]}\n```', ""),
             ) as run:
                 KiroEngine(settings).review(*ReviewEngineTests.input(repository))
@@ -2845,7 +2853,7 @@ class EffortTests(unittest.TestCase):
             settings = self.settings(directory, repository)
             take_invocation_credits()
             with patch(
-                "src.engine_kiro.run_cmd_streams",
+                "prwarden.engine_kiro.run_cmd_streams",
                 return_value=(
                     '```json\n{"verdict":"approve","findings":[]}\n```',
                     stderr,
@@ -2863,7 +2871,7 @@ class EffortTests(unittest.TestCase):
             repository = Repository("app", "owner/app", Path(directory))
             settings = self.settings(directory, repository)
             take_invocation_credits()
-            with patch("src.engine_kiro.run_cmd_streams", side_effect=refusal):
+            with patch("prwarden.engine_kiro.run_cmd_streams", side_effect=refusal):
                 with self.assertRaises(EngineError):
                     KiroEngine(settings).review(*ReviewEngineTests.input(repository))
 
@@ -2895,9 +2903,9 @@ class EffortTests(unittest.TestCase):
                 ),
             ]
             with patch(
-                "src.engine_antigravity.run_cmd_streams",
+                "prwarden.engine_antigravity.run_cmd_streams",
                 side_effect=as_streams(lambda *a, **k: outputs.pop(0)),
-            ) as run, patch("src.engine_antigravity.time.sleep"):
+            ) as run, patch("prwarden.engine_antigravity.time.sleep"):
                 AntigravityEngine(settings).review(
                     *ReviewEngineTests.input(repository)
                 )

@@ -8,8 +8,8 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import call, patch
 
-import src.release as release
-from src.release import ReleaseError, Version, apply_plan, create_plan
+import prwarden.release as release
+from prwarden.release import ReleaseError, Version, apply_plan, create_plan
 
 
 def git(root: Path, *args: str) -> str:
@@ -51,9 +51,9 @@ class ReleaseTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp(prefix="prwarden-release-test-"))
         self.addCleanup(remove_tree_with_retry, self.root)
-        (self.root / "src").mkdir()
+        (self.root / "prwarden").mkdir()
         (self.root / "VERSION").write_text("1.2.3\n", encoding="utf-8")
-        (self.root / "src" / "__init__.py").write_text(
+        (self.root / "prwarden" / "__init__.py").write_text(
             '"""Package."""\n\n__version__ = "1.2.3"\n',
             encoding="utf-8",
         )
@@ -190,7 +190,7 @@ class ReleaseTests(unittest.TestCase):
         )
         self.assertIn(
             '__version__ = "1.3.0"',
-            (self.root / "src" / "__init__.py").read_text(encoding="utf-8"),
+            (self.root / "prwarden" / "__init__.py").read_text(encoding="utf-8"),
         )
 
     def test_changelog_baseline_is_used_before_first_version_tag(self) -> None:

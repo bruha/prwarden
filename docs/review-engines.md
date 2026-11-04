@@ -5,10 +5,10 @@ and Kiro CLI. Select a persistent default with `REVIEW_ENGINE` or override it
 for one invocation with `--engine`.
 
 ```sh
-python3 -m src.prwarden --engine codex
-python3 -m src.prwarden --engine claude
-python3 -m src.prwarden --engine kiro
-python3 -m src.prwarden --engine antigravity
+python3 -m prwarden --engine codex
+python3 -m prwarden --engine claude
+python3 -m prwarden --engine kiro
+python3 -m prwarden --engine antigravity
 ```
 
 The override uses the built-in executable name. Do not set
@@ -18,7 +18,7 @@ the command and engine together for that run:
 
 ```sh
 REVIEW_ENGINE=codex REVIEW_ENGINE_COMMAND='["/absolute/path/to/codex"]' \
-  python3 -m src.prwarden
+  python3 -m prwarden
 ```
 
 ## Codex
@@ -28,7 +28,7 @@ Install Codex CLI and authenticate it, then verify both before reviewing:
 ```sh
 codex --version
 codex login status
-python3 -m src.prwarden --engine codex --repo owner/repository --pr 123
+python3 -m prwarden --engine codex --repo owner/repository --pr 123
 ```
 
 The adapter uses non-interactive `codex exec`, an ephemeral session, a read-only
@@ -62,7 +62,7 @@ view:
 
 ```sh
 REVIEW_ENGINE=claude REVIEW_MODEL=sonnet \
-  python3 -m src.prwarden --repo your-org/example-app --pr 123
+  python3 -m prwarden --repo your-org/example-app --pr 123
 ```
 
 ## Claude Code
@@ -72,7 +72,7 @@ Install Claude Code and authenticate it, then verify both before reviewing:
 ```sh
 claude --version
 claude auth status
-python3 -m src.prwarden --engine claude --repo owner/repository --pr 123
+python3 -m prwarden --engine claude --repo owner/repository --pr 123
 ```
 
 The adapter uses print mode, safe mode, plan permissions, only the built-in
@@ -96,7 +96,7 @@ targeted dry review:
 ```sh
 kiro-cli --version
 kiro-cli whoami
-python3 -m src.prwarden --engine kiro --repo owner/repository --pr 123
+python3 -m prwarden --engine kiro --repo owner/repository --pr 123
 ```
 
 The adapter uses headless mode and trusts only Kiro's read and grep tool
@@ -138,7 +138,7 @@ Install and authenticate Antigravity CLI, then verify it:
 ```sh
 agy --version
 agy models
-python3 -m src.prwarden --engine antigravity --repo owner/repository --pr 123
+python3 -m prwarden --engine antigravity --repo owner/repository --pr 123
 ```
 
 The adapter uses sandboxing, disabled slash-command expansion, and JSON-schema
@@ -310,7 +310,7 @@ REVIEW_VERIFY_MODEL=gpt-5.6-terra
 Verify the pairing on one pull request before scheduling it:
 
 ```sh
-python3 -m src.prwarden --repo owner/repository --pr 123
+python3 -m prwarden --repo owner/repository --pr 123
 ```
 
 ## Fallback engine
@@ -356,7 +356,7 @@ the review:
 
 ```sh
 REVIEW_ENGINE=command REVIEW_ENGINE_COMMAND='["false"]' \
-  python3 -m src.prwarden --repo owner/repository --pr 123
+  python3 -m prwarden --repo owner/repository --pr 123
 ```
 
 ## Verification fallback
@@ -449,4 +449,4 @@ are not inherited by default. The wrapper contract is:
 - Nonzero exit: review failure; output is not treated as no findings.
 
 Another CLI can be integrated through this wrapper contract or with a new
-`src/engine_<provider>.py` adapter registered by `create_review_engine`.
+`prwarden/engine_<provider>.py` adapter registered by `create_review_engine`.

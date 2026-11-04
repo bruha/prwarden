@@ -5,16 +5,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from src import github
-from src.comment_template import (
+from prwarden import github
+from prwarden.comment_template import (
     DEFAULT_GITHUB_COMMENT_TAGS_FILE,
     DEFAULT_GITHUB_COMMENT_TEMPLATE_FILE,
     load_comment_template,
 )
-from src.commands import CommandError
-from src.config import Settings
-from src.engine import build_engine_environment
-from src.github import (
+from prwarden.commands import CommandError
+from prwarden.config import Settings
+from prwarden.engine import build_engine_environment
+from prwarden.github import (
     DOCS_COMMENT_MARKER,
     LGTM_COMMENT_MARKER,
     delivered_review_findings_resolved,
@@ -29,14 +29,14 @@ from src.github import (
     submit_approval,
     submit_review,
 )
-from src.models import Finding, FindingEvidence, PullRequest, Repository
+from prwarden.models import Finding, FindingEvidence, PullRequest, Repository
 
 
 class ObjectNameValidationTests(unittest.TestCase):
     """Every commit from GitHub is handed to git as a revision expression."""
 
     def test_a_commit_name_passes(self) -> None:
-        from src.github import validate_object_name
+        from prwarden.github import validate_object_name
 
         name = "0123456789ab" + "0" * 28
 
@@ -45,21 +45,21 @@ class ObjectNameValidationTests(unittest.TestCase):
     def test_a_sha256_object_name_passes(self) -> None:
         """A repository can be SHA-256, and refusing it would break that."""
 
-        from src.github import validate_object_name
+        from prwarden.github import validate_object_name
 
         self.assertEqual(len(validate_object_name("a" * 64, "head")), 64)
 
     def test_a_revision_expression_is_refused(self) -> None:
         """`HEAD` and `main@{1}` resolve to something, just not to what was meant."""
 
-        from src.github import validate_object_name
+        from prwarden.github import validate_object_name
 
         for value in ("HEAD", "main@{1}", "HEAD~3", "refs/heads/main"):
             with self.assertRaisesRegex(CommandError, "not a Git object name"):
                 validate_object_name(value, "head")
 
     def test_an_option_and_a_path_are_refused(self) -> None:
-        from src.github import validate_object_name
+        from prwarden.github import validate_object_name
 
         for value in ("--upload-pack=touch /tmp/x", "../../etc/passwd", "a" * 39):
             with self.assertRaisesRegex(CommandError, "not a Git object name"):
@@ -68,7 +68,7 @@ class ObjectNameValidationTests(unittest.TestCase):
     def test_an_abbreviated_or_uppercase_name_is_refused(self) -> None:
         """Git accepts both, but nothing here should be producing them."""
 
-        from src.github import validate_object_name
+        from prwarden.github import validate_object_name
 
         for value in ("a3c4ff1", ("A" * 40)):
             with self.assertRaisesRegex(CommandError, "not a Git object name"):
@@ -89,7 +89,7 @@ class ObjectNameValidationTests(unittest.TestCase):
         pull_request = PullRequest(
             7, "Title", "", "author", "b" * 40, "url"
         )
-        with patch("src.github.run_cmd", return_value=response):
+        with patch("prwarden.github.run_cmd", return_value=response):
             with self.assertRaisesRegex(CommandError, "not a Git object name"):
                 get_pull_request_snapshot(Repository("app", "owner/app"), pull_request)
 
@@ -105,7 +105,10 @@ class ReviewerCommentMiningTests(unittest.TestCase):
         from this history.
         """
 
-        from src.github import REVIEW_COMMENT_MARKER, list_review_comments_by_reviewer
+        from prwarden.github import (
+            REVIEW_COMMENT_MARKER,
+            list_review_comments_by_reviewer,
+        )
 
         record = {
             "comment_id": 1,
@@ -120,7 +123,7 @@ class ReviewerCommentMiningTests(unittest.TestCase):
                 f"{REVIEW_COMMENT_MARKER}"
             ),
         }
-        with patch("src.github.run_cmd") as run_cmd:
+        with patch("prwarden.github.run_cmd") as run_cmd:
             run_cmd.side_effect = [
                 json.dumps(record),
                 json.dumps(
@@ -207,7 +210,7 @@ class GitHubFeedbackTests(unittest.TestCase):
                 }
             ),
         ]
-        with patch("src.github.run_cmd", side_effect=responses):
+        with patch("prwarden.github.run_cmd", side_effect=responses):
             resolved = delivered_review_findings_resolved(
                 repository,
                 pull_request,
@@ -261,7 +264,7 @@ class GitHubFeedbackTests(unittest.TestCase):
                 }
             ),
         ]
-        with patch("src.github.run_cmd", side_effect=responses):
+        with patch("prwarden.github.run_cmd", side_effect=responses):
             resolved = delivered_review_findings_resolved(
                 repository,
                 pull_request,
@@ -274,7 +277,7 @@ class GitHubFeedbackTests(unittest.TestCase):
         repository = Repository("app", "owner/app")
         pull_request = PullRequest(7, "Title", "", "author", "sha", "url")
         with patch(
-            "src.github.run_cmd",
+            "prwarden.github.run_cmd",
             return_value=json.dumps({"id": 99, "state": "APPROVED"}),
         ) as run:
             resolved = delivered_review_findings_resolved(
@@ -301,7 +304,7 @@ class GitHubFeedbackTests(unittest.TestCase):
                 "base": {"ref": "develop"},
             }
         )
-        with patch("src.github.run_cmd", return_value=response):
+        with patch("prwarden.github.run_cmd", return_value=response):
             snapshot = get_pull_request_snapshot(repository, pull_request)
 
         self.assertEqual(snapshot.head_sha, head)
@@ -314,7 +317,7 @@ class GitHubFeedbackTests(unittest.TestCase):
         repository = Repository("app", "owner/app")
         pull_request = PullRequest(7, "Title", "", "author", "sha", "url")
 
-        with patch("src.github.run_cmd") as run:
+        with patch("prwarden.github.run_cmd") as run:
             with self.assertRaisesRegex(CommandError, "3,000-file API limit"):
                 list_changed_files(repository, pull_request, 3001)
             run.assert_not_called()
@@ -322,7 +325,7 @@ class GitHubFeedbackTests(unittest.TestCase):
         response = json.dumps(
             [[{"filename": "one.py", "patch": "@@ -0,0 +1 @@\n+one"}]]
         )
-        with patch("src.github.run_cmd", return_value=response):
+        with patch("prwarden.github.run_cmd", return_value=response):
             with self.assertRaisesRegex(CommandError, "refusing a partial review"):
                 list_changed_files(repository, pull_request, 2)
 
@@ -362,7 +365,7 @@ class GitHubFeedbackTests(unittest.TestCase):
                 },
             ]
         )
-        with patch("src.github.run_cmd", return_value=response) as run:
+        with patch("prwarden.github.run_cmd", return_value=response) as run:
             pull_requests = list_open_prs(
                 repository,
                 frozenset({"in progress"}),
@@ -397,7 +400,7 @@ class GitHubFeedbackTests(unittest.TestCase):
             counterevidence_reason="No targeted test covers an empty identifier.",
         )
         with patch(
-            "src.github.run_cmd",
+            "prwarden.github.run_cmd",
             side_effect=['{"id": 99}', '{"id": 99}'],
         ) as run:
             receipt = submit_review(
@@ -484,7 +487,7 @@ class GitHubFeedbackTests(unittest.TestCase):
         )
 
         with patch(
-            "src.github.run_cmd",
+            "prwarden.github.run_cmd",
             side_effect=['{"id": 99}', '{"id": 99}'],
         ) as run:
             submit_review(
@@ -575,7 +578,7 @@ class GitHubFeedbackTests(unittest.TestCase):
     def test_submits_bodyless_approval_for_exact_head(self):
         repository = Repository("app", "owner/app")
         pull_request = PullRequest(7, "Title", "", "author", "sha", "url")
-        with patch("src.github.run_cmd", return_value='{"id": 99}') as run:
+        with patch("prwarden.github.run_cmd", return_value='{"id": 99}') as run:
             receipt = submit_approval(repository, pull_request)
 
         self.assertEqual(receipt, "99")
@@ -669,7 +672,7 @@ class GitHubFeedbackTests(unittest.TestCase):
                 ]
             ),
         ]
-        with patch("src.github.run_cmd", side_effect=responses) as run:
+        with patch("prwarden.github.run_cmd", side_effect=responses) as run:
             comments = list_prior_review_comments(repository, pull_request, "reviewer")
 
         self.assertEqual(
@@ -706,7 +709,7 @@ class GitHubFeedbackTests(unittest.TestCase):
                 ]
             ]
         )
-        with patch("src.github.run_cmd", return_value=response) as run:
+        with patch("prwarden.github.run_cmd", return_value=response) as run:
             notes = list_own_advisory_notes(
                 repository, pull_request, "reviewer", marker
             )
@@ -732,7 +735,7 @@ class GitHubFeedbackTests(unittest.TestCase):
                 ]
             ]
         )
-        with patch("src.github.run_cmd", return_value=response):
+        with patch("prwarden.github.run_cmd", return_value=response):
             notes = list_own_advisory_notes(
                 Repository("app", "owner/app"),
                 PullRequest(7, "Title", "", "author", "sha", "url"),
@@ -747,7 +750,7 @@ class GitHubFeedbackTests(unittest.TestCase):
         response = json.dumps(
             [[{"user": {"login": "reviewer"}, "body": f"Note\n{marker}"}]]
         )
-        with patch("src.github.run_cmd", return_value=response):
+        with patch("prwarden.github.run_cmd", return_value=response):
             with self.assertRaisesRegex(CommandError, "without an ID"):
                 list_own_advisory_notes(
                     Repository("app", "owner/app"),
@@ -803,7 +806,7 @@ class GitHubFeedbackTests(unittest.TestCase):
             self.assertTrue(kwargs.get("retry_transient"))
             return pages.pop(0)
 
-        with patch("src.github.run_cmd", side_effect=run):
+        with patch("prwarden.github.run_cmd", side_effect=run):
             count = hide_earlier_lgtm_comments(
                 Repository("app", "owner/app"),
                 PullRequest(7, "Title", "", "reviewer", "head9", "url"),
@@ -873,7 +876,7 @@ class GitHubFeedbackTests(unittest.TestCase):
                 }
             ]
         )
-        with patch("src.github.run_cmd", return_value=response) as run:
+        with patch("prwarden.github.run_cmd", return_value=response) as run:
             checks = list_pull_request_checks(repository, pull_request)
 
         self.assertEqual(checks[0].name, "Build and typecheck")
@@ -900,7 +903,7 @@ class GitHubAccountPinningTests(unittest.TestCase):
         github.get_branch_head_sha(Repository("app", "owner/app", Path(".")), "main")
 
     def test_every_call_carries_the_reviewers_own_token(self) -> None:
-        with patch("src.github.commands.run_cmd", return_value="token-1") as run:
+        with patch("prwarden.github.commands.run_cmd", return_value="token-1") as run:
             github.pin_github_account("reviewer")
             run.assert_called_once_with(
                 ["gh", "auth", "token", "--user", "reviewer"], timeout_seconds=30
@@ -913,7 +916,7 @@ class GitHubAccountPinningTests(unittest.TestCase):
         self.assertTrue(options["retry_transient"])
 
     def test_an_environment_a_call_names_is_kept(self) -> None:
-        with patch("src.github.commands.run_cmd", return_value="token-1") as run:
+        with patch("prwarden.github.commands.run_cmd", return_value="token-1") as run:
             github.pin_github_account("reviewer")
             github.run_cmd(["gh", "api", "user"], environment={"GH_HOST": "example"})
 
@@ -926,7 +929,7 @@ class GitHubAccountPinningTests(unittest.TestCase):
         refusal = CommandError(
             "gh exited with 1: no oauth token found for github.com account reviewer"
         )
-        with patch("src.github.commands.run_cmd", side_effect=refusal):
+        with patch("prwarden.github.commands.run_cmd", side_effect=refusal):
             with self.assertRaises(CommandError) as raised:
                 github.pin_github_account("reviewer")
 
@@ -937,7 +940,7 @@ class GitHubAccountPinningTests(unittest.TestCase):
         self.assertEqual(raised.exception.command, "gh")
 
     def test_an_empty_token_is_refused_rather_than_pinned(self) -> None:
-        with patch("src.github.commands.run_cmd", return_value=""):
+        with patch("prwarden.github.commands.run_cmd", return_value=""):
             with self.assertRaises(CommandError):
                 github.pin_github_account("reviewer")
 
@@ -945,7 +948,7 @@ class GitHubAccountPinningTests(unittest.TestCase):
 
     def test_a_token_the_operator_set_is_left_to_decide(self) -> None:
         os.environ["GH_TOKEN"] = "operator-token"
-        with patch("src.github.commands.run_cmd") as run:
+        with patch("prwarden.github.commands.run_cmd") as run:
             github.pin_github_account("reviewer")
             self.branch_tip(run)
 
@@ -956,7 +959,7 @@ class GitHubAccountPinningTests(unittest.TestCase):
         """An engine reads untrusted content, so it must not hold a write token,
         even when an allowlist names the variable the token travels in."""
 
-        with patch("src.github.commands.run_cmd", return_value="token-1"):
+        with patch("prwarden.github.commands.run_cmd", return_value="token-1"):
             github.pin_github_account("reviewer")
         settings = Settings(
             reviewer_username="reviewer",

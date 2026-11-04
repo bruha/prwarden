@@ -6,10 +6,10 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from src import cli
-from src.config import Settings
-from src.delivery import format_design_slack_message
-from src.engine import (
+from prwarden import cli
+from prwarden.config import Settings
+from prwarden.delivery import format_design_slack_message
+from prwarden.engine import (
     DESIGN_FIELD_LIMITS,
     DESIGN_LEVEL,
     build_design_verification_schema,
@@ -17,10 +17,10 @@ from src.engine import (
     build_schema,
     design_candidate_refs,
 )
-from src.engine import EngineError, response_discriminator_keys
-from src.engine_kiro import KiroEngine, parse_kiro_output
-from src.github import DESIGN_COMMENT_MARKER, format_design_comment
-from src.models import (
+from prwarden.engine import EngineError, response_discriminator_keys
+from prwarden.engine_kiro import KiroEngine, parse_kiro_output
+from prwarden.github import DESIGN_COMMENT_MARKER, format_design_comment
+from prwarden.models import (
     DesignAssessment,
     DesignFinding,
     FindingEvidence,
@@ -31,12 +31,12 @@ from src.models import (
     Repository,
     ReviewMaterial,
 )
-from src.review import (
+from prwarden.review import (
     ReviewError,
     validate_design_findings,
     validate_design_judgments,
 )
-from src.state import JsonStateStore
+from prwarden.state import JsonStateStore
 
 
 READY_SNAPSHOT = PullRequestSnapshot(
@@ -509,7 +509,7 @@ class DesignAdapterContractTests(unittest.TestCase):
             )
 
             with patch(
-                "src.engine_kiro.run_cmd_streams", return_value=(transcript, "")
+                "prwarden.engine_kiro.run_cmd_streams", return_value=(transcript, "")
             ):
                 parsed = KiroEngine(settings).review(
                     repository,
@@ -679,34 +679,34 @@ class DesignOrchestrationTests(unittest.TestCase):
             else {"return_value": tuple(own_notes)}
         )
 
-        with patch("src.cli.has_current_review", return_value=False), patch(
-            "src.cli.list_prior_review_comments", return_value=()
+        with patch("prwarden.cli.has_current_review", return_value=False), patch(
+            "prwarden.cli.list_prior_review_comments", return_value=()
         ), patch(
-            "src.cli.list_own_advisory_notes", **lookup
+            "prwarden.cli.list_own_advisory_notes", **lookup
         ) as own_lookup, patch(
-            "src.cli.list_changed_files",
+            "prwarden.cli.list_changed_files",
             return_value=[
                 {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
             ]
             + list(extra_files or ()),
         ), patch(
-            "src.cli.list_pull_request_checks", return_value=()
+            "prwarden.cli.list_pull_request_checks", return_value=()
         ), patch(
-            "src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
+            "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
         ), patch(
-            "src.cli.review_workspace"
+            "prwarden.cli.review_workspace"
         ) as workspace, patch(
-            "src.cli.submit_design_notes", return_value=receipts[0]
+            "prwarden.cli.submit_design_notes", return_value=receipts[0]
         ) as design_notes, patch(
-            "src.cli.submit_approval", return_value=receipts[1]
+            "prwarden.cli.submit_approval", return_value=receipts[1]
         ) as approval, patch(
-            "src.cli.submit_review", return_value="review-1"
+            "prwarden.cli.submit_review", return_value="review-1"
         ) as review, patch(
-            "src.cli.send_slack_message", return_value="http-200"
+            "prwarden.cli.send_slack_message", return_value="http-200"
         ) as slack, patch(
-            "src.cli.submit_lgtm_comment", return_value="lgtm-comment-1"
+            "prwarden.cli.submit_lgtm_comment", return_value="lgtm-comment-1"
         ) as lgtm, patch(
-            "src.cli.hide_earlier_lgtm_comments", return_value=0
+            "prwarden.cli.hide_earlier_lgtm_comments", return_value=0
         ), patch(
             "sys.stdout", new_callable=StringIO
         ) as output:

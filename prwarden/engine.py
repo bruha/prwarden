@@ -244,7 +244,7 @@ CODE_LEVEL = "code"
 DESIGN_LEVEL = "design"
 DOCS_LEVEL = "docs"
 
-BACKGROUND_FILE_LABEL = ".ai-code-review/background.md"
+BACKGROUND_FILE_LABEL = ".prwarden/background.md"
 
 DESIGN_CATEGORIES = (
     "duplicates_existing_capability",

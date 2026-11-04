@@ -12,16 +12,16 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import src.cli as cli
-import src.progress as progress_module
-from src.commands import CommandError
-from src.config import ConfigError, Settings
-from src.engine import (
+import prwarden.cli as cli
+import prwarden.progress as progress_module
+from prwarden.commands import CommandError
+from prwarden.config import ConfigError, Settings
+from prwarden.engine import (
     EngineError,
     fallback_engine_settings,
     verification_engine_settings,
 )
-from src.models import (
+from prwarden.models import (
     DocumentationFile,
     DependencyLink,
     Finding,
@@ -31,8 +31,8 @@ from src.models import (
     Repository,
     ReviewMaterial,
 )
-from src.review import CandidateRejection, ReviewError
-from src.state import JsonStateStore, StateError, StateLockedError
+from prwarden.review import CandidateRejection, ReviewError
+from prwarden.state import JsonStateStore, StateError, StateLockedError
 
 
 READY_SNAPSHOT = PullRequestSnapshot(
@@ -96,11 +96,11 @@ CONFIRMED_JUDGMENT = {
 
 class OrchestrationTests(unittest.TestCase):
     def setUp(self) -> None:
-        checks = patch("src.cli.list_pull_request_checks", return_value=())
+        checks = patch("prwarden.cli.list_pull_request_checks", return_value=())
         checks.start()
         self.addCleanup(checks.stop)
         # Pinning asks the real GitHub CLI for a stored login, which no test has.
-        pinning = patch("src.cli.pin_github_account")
+        pinning = patch("prwarden.cli.pin_github_account")
         pinning.start()
         self.addCleanup(pinning.stop)
 
@@ -262,7 +262,7 @@ class OrchestrationTests(unittest.TestCase):
         )
         stream = StringIO()
         with patch("sys.stdout", stream), patch(
-            "src.cli._review_with_validation_retry"
+            "prwarden.cli._review_with_validation_retry"
         ) as review:
             review.side_effect = [exhausted, ({}, [], True, "", ())]
             cli._review_with_engine_fallback(
@@ -296,7 +296,7 @@ class OrchestrationTests(unittest.TestCase):
         fallback = Mock()
         fallback.settings = Mock(review_engine="kiro", review_model="claude-opus-5")
         with patch("sys.stdout", new_callable=StringIO), patch(
-            "src.cli._review_with_validation_retry"
+            "prwarden.cli._review_with_validation_retry"
         ) as review:
             review.side_effect = [
                 EngineError("UNAVAILABLE: service temporarily unavailable"),
@@ -346,7 +346,7 @@ class OrchestrationTests(unittest.TestCase):
             engine = Mock()
             engine.review.side_effect = exhausted
             with patch("sys.stdout", new_callable=StringIO), patch(
-                "src.cli.discover_documentation",
+                "prwarden.cli.discover_documentation",
                 return_value=(DocumentationFile("README.md", 1200, "human"),),
             ):
                 with self.assertRaises(EngineError):
@@ -376,7 +376,7 @@ class OrchestrationTests(unittest.TestCase):
             max_docs_findings=3,
             review_timeout_seconds=900,
         )
-        with patch("src.cli._review_with_validation_retry") as review:
+        with patch("prwarden.cli._review_with_validation_retry") as review:
             for level in (cli._design_level, cli._docs_level):
                 with self.assertRaisesRegex(EngineError, "out of quota for this run"):
                     level(settings, Mock(), Mock(), Mock(), Mock(), Mock())
@@ -461,7 +461,7 @@ class OrchestrationTests(unittest.TestCase):
         stream = StringIO()
         progress = cli._ElapsedProgressLine("Review", 10.0, stream, highlight_width=4)
 
-        with patch("src.cli.time.monotonic", return_value=96.2):
+        with patch("prwarden.cli.time.monotonic", return_value=96.2):
             progress._display_frame(5)
         progress._clear()
 
@@ -480,7 +480,7 @@ class OrchestrationTests(unittest.TestCase):
         """
 
         progress = cli._ElapsedProgressLine("Review", 10.0, StringIO())
-        with patch("src.cli.time.monotonic", return_value=96.2):
+        with patch("prwarden.cli.time.monotonic", return_value=96.2):
             for step in range(0, 60):
                 progress.stream = StringIO()
                 progress._display_frame(step)
@@ -494,7 +494,7 @@ class OrchestrationTests(unittest.TestCase):
         line = "Review in progress \u2014 1m26s elapsed"
         starts = []
 
-        with patch("src.cli.time.monotonic", return_value=96.2):
+        with patch("prwarden.cli.time.monotonic", return_value=96.2):
             for step in range(5, 12):
                 progress.stream = StringIO()
                 progress._display_frame(step)
@@ -511,7 +511,7 @@ class OrchestrationTests(unittest.TestCase):
         progress = cli._ElapsedProgressLine("Review", 10.0, StringIO())
         widths = set()
 
-        with patch("src.cli.time.monotonic", return_value=96.2):
+        with patch("prwarden.cli.time.monotonic", return_value=96.2):
             for step in range(0, 120):
                 progress.stream = StringIO()
                 progress._display_frame(step)
@@ -529,7 +529,7 @@ class OrchestrationTests(unittest.TestCase):
         stream = StringIO()
         progress = cli._ElapsedProgressLine("Review", 10.0, stream)
 
-        with patch("src.cli.time.monotonic", return_value=96.2):
+        with patch("prwarden.cli.time.monotonic", return_value=96.2):
             progress._display_frame(6)
 
         visible = re.sub(r"\033\[[0-9;]*[A-Za-z]", "", stream.getvalue()).strip("\r")
@@ -538,7 +538,7 @@ class OrchestrationTests(unittest.TestCase):
     def test_progress_line_stays_disabled_for_redirected_output(self) -> None:
         progress = cli._ElapsedProgressLine("Review", 10.0, StringIO())
 
-        with patch("src.cli.threading.Thread") as thread:
+        with patch("prwarden.cli.threading.Thread") as thread:
             with progress:
                 pass
 
@@ -551,7 +551,7 @@ class OrchestrationTests(unittest.TestCase):
         progress._stop.wait.side_effect = [False, True]
         progress._stop.is_set.return_value = False
 
-        with patch("src.cli.time.monotonic", return_value=15.0):
+        with patch("prwarden.cli.time.monotonic", return_value=15.0):
             progress._animate()
 
         self.assertEqual(progress._stop.wait.call_args_list[0].args, (5.0,))
@@ -570,7 +570,7 @@ class OrchestrationTests(unittest.TestCase):
         progress_module.set_active(line)
         self.addCleanup(progress_module.release_active, line)
 
-        with patch("src.cli.time.monotonic", return_value=96.2):
+        with patch("prwarden.cli.time.monotonic", return_value=96.2):
             line._display_frame(6)
         progress_module.notify("Transient failure; retrying in 15s", stream=err)
 
@@ -584,7 +584,7 @@ class OrchestrationTests(unittest.TestCase):
         progress_module.set_active(line)
         self.addCleanup(progress_module.release_active, line)
 
-        with patch("src.cli.time.monotonic", return_value=96.2):
+        with patch("prwarden.cli.time.monotonic", return_value=96.2):
             line._display_frame(6)
             progress_module.notify("interrupted", stream=StringIO())
             self.assertFalse(line._displayed)
@@ -650,7 +650,7 @@ class OrchestrationTests(unittest.TestCase):
         failure = CommandError("gh exited with 1: HTTP 503", command="gh")
 
         with patch(
-            "src.cli.describe_github_incident",
+            "prwarden.cli.describe_github_incident",
             return_value="GitHub status: Partial System Outage",
         ) as describe, patch("sys.stderr", new_callable=StringIO) as errors:
             notice.report(failure)
@@ -666,7 +666,7 @@ class OrchestrationTests(unittest.TestCase):
     def test_github_incident_notice_ignores_non_github_failures(self) -> None:
         notice = cli._GithubIncidentNotice()
 
-        with patch("src.cli.describe_github_incident") as describe:
+        with patch("prwarden.cli.describe_github_incident") as describe:
             notice.report(CommandError("git exited with 1: no such ref", command="git"))
             notice.report(CommandError("Invalid GitHub repository slug: bad"))
             notice.report(ReviewError("Pull request contains no reviewable files"))
@@ -678,7 +678,7 @@ class OrchestrationTests(unittest.TestCase):
         notice = cli._GithubIncidentNotice()
 
         with patch(
-            "src.cli.describe_github_incident", return_value=None
+            "prwarden.cli.describe_github_incident", return_value=None
         ) as describe, patch("sys.stderr", new_callable=StringIO) as errors:
             notice.report(CommandError("gh exited with 1: HTTP 503", command="gh"))
 
@@ -716,14 +716,14 @@ class OrchestrationTests(unittest.TestCase):
             7, "feat: add a feature", "", "author", "head", "https://example.invalid/7"
         )
 
-        with patch("src.cli.load_settings", return_value=settings), patch(
-            "src.cli.create_review_engine"
-        ), patch("src.cli.create_verification_engine"), patch(
-            "src.cli.list_open_prs", return_value=[pull_request]
+        with patch("prwarden.cli.load_settings", return_value=settings), patch(
+            "prwarden.cli.create_review_engine"
+        ), patch("prwarden.cli.create_verification_engine"), patch(
+            "prwarden.cli.list_open_prs", return_value=[pull_request]
         ), patch(
-            "src.cli._process_pull_request_with_head_restarts", side_effect=process
+            "prwarden.cli._process_pull_request_with_head_restarts", side_effect=process
         ), patch(
-            "src.cli.send_slack_message", return_value="http-200"
+            "prwarden.cli.send_slack_message", return_value="http-200"
         ) as send, patch(
             "sys.stdout", new_callable=StringIO
         ), patch(
@@ -780,11 +780,11 @@ class OrchestrationTests(unittest.TestCase):
             engine=None,
         )
 
-        with patch("src.cli.load_settings", return_value=settings), patch(
-            "src.cli.create_review_engine"
-        ), patch("src.cli.create_verification_engine"), patch(
-            "src.cli.create_fallback_engine"
-        ), patch("src.cli.list_open_prs", return_value=[]), patch(
+        with patch("prwarden.cli.load_settings", return_value=settings), patch(
+            "prwarden.cli.create_review_engine"
+        ), patch("prwarden.cli.create_verification_engine"), patch(
+            "prwarden.cli.create_fallback_engine"
+        ), patch("prwarden.cli.list_open_prs", return_value=[]), patch(
             "sys.stdout", new_callable=StringIO
         ) as output:
             self.assertEqual(cli.run(args), 0)
@@ -935,7 +935,8 @@ class OrchestrationTests(unittest.TestCase):
                 key = store.key(repository.slug, 7, "head", "github")
                 store.set_status(key, "delivered", receipt_id="42")
                 with patch(
-                    "src.cli.delivered_review_findings_resolved", return_value=False
+                    "prwarden.cli.delivered_review_findings_resolved",
+                    return_value=False,
                 ), patch("sys.stdout", new_callable=StringIO) as output:
                     cli._process_pull_request(
                         settings,
@@ -973,7 +974,7 @@ class OrchestrationTests(unittest.TestCase):
                     feedback_fingerprint=cli._feedback_fingerprint((comment,)),
                 )
                 with patch(
-                    "src.cli.list_prior_review_comments", return_value=(comment,)
+                    "prwarden.cli.list_prior_review_comments", return_value=(comment,)
                 ):
                     cli._process_pull_request(
                         settings,
@@ -1016,10 +1017,10 @@ class OrchestrationTests(unittest.TestCase):
                     feedback_fingerprint=cli._feedback_fingerprint((old_comment,)),
                 )
                 with patch(
-                    "src.cli.list_prior_review_comments",
+                    "prwarden.cli.list_prior_review_comments",
                     side_effect=[(), ()],
-                ), patch("src.cli.has_current_review", return_value=False), patch(
-                    "src.cli.list_changed_files",
+                ), patch("prwarden.cli.has_current_review", return_value=False), patch(
+                    "prwarden.cli.list_changed_files",
                     return_value=[
                         {
                             "filename": "app.py",
@@ -1027,12 +1028,12 @@ class OrchestrationTests(unittest.TestCase):
                         }
                     ],
                 ), patch(
-                    "src.cli.get_pull_request_snapshot",
+                    "prwarden.cli.get_pull_request_snapshot",
                     side_effect=[READY_SNAPSHOT, READY_SNAPSHOT],
                 ), patch(
-                    "src.cli.review_workspace"
+                    "prwarden.cli.review_workspace"
                 ) as workspace, patch(
-                    "src.cli.submit_approval", return_value="approval-10"
+                    "prwarden.cli.submit_approval", return_value="approval-10"
                 ):
                     workspace.return_value.__enter__.return_value = repository
                     cli._process_pull_request(
@@ -1101,10 +1102,10 @@ class OrchestrationTests(unittest.TestCase):
                     state_fields["blocking_comment_ids"] = blocking_comment_ids
                 store.set_status(key, "approval_withheld", **state_fields)
                 with patch(
-                    "src.cli.list_prior_review_comments",
+                    "prwarden.cli.list_prior_review_comments",
                     side_effect=[(comment,), (comment,)],
-                ), patch("src.cli.has_current_review", return_value=False), patch(
-                    "src.cli.list_changed_files",
+                ), patch("prwarden.cli.has_current_review", return_value=False), patch(
+                    "prwarden.cli.list_changed_files",
                     return_value=[
                         {
                             "filename": "app.py",
@@ -1112,10 +1113,10 @@ class OrchestrationTests(unittest.TestCase):
                         }
                     ],
                 ), patch(
-                    "src.cli.get_pull_request_snapshot",
+                    "prwarden.cli.get_pull_request_snapshot",
                     side_effect=[READY_SNAPSHOT, READY_SNAPSHOT],
-                ), patch("src.cli.review_workspace") as workspace, patch(
-                    "src.cli.submit_approval", return_value="approval-recovered"
+                ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                    "prwarden.cli.submit_approval", return_value="approval-recovered"
                 ):
                     workspace.return_value.__enter__.return_value = repository
                     cli._process_pull_request(
@@ -1201,16 +1202,16 @@ class OrchestrationTests(unittest.TestCase):
                 "blocking_comment_ids": ["C1"],
                 "findings": [],
             }
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=(unresolved,)
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=(unresolved,)
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
-            ), patch("src.cli.review_workspace") as workspace:
+                "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
+            ), patch("prwarden.cli.review_workspace") as workspace:
                 workspace.return_value.__enter__.return_value = repository
                 with JsonStateStore(settings.state_file) as store:
                     cli._process_pull_request(
@@ -1243,15 +1244,15 @@ class OrchestrationTests(unittest.TestCase):
                 key = store.key(repository.slug, 1, "head", "github")
                 store.set_status(key, "delivered", receipt_id="99")
                 with patch(
-                    "src.cli.delivered_review_findings_resolved",
+                    "prwarden.cli.delivered_review_findings_resolved",
                     return_value=True,
                 ), patch(
-                    "src.cli.has_current_review"
+                    "prwarden.cli.has_current_review"
                 ) as has_current_review, patch(
-                    "src.cli.list_prior_review_comments",
+                    "prwarden.cli.list_prior_review_comments",
                     side_effect=[(), ()],
                 ), patch(
-                    "src.cli.list_changed_files",
+                    "prwarden.cli.list_changed_files",
                     return_value=[
                         {
                             "filename": "app.py",
@@ -1259,12 +1260,12 @@ class OrchestrationTests(unittest.TestCase):
                         }
                     ],
                 ), patch(
-                    "src.cli.get_pull_request_snapshot",
+                    "prwarden.cli.get_pull_request_snapshot",
                     side_effect=[READY_SNAPSHOT, READY_SNAPSHOT],
                 ), patch(
-                    "src.cli.review_workspace"
+                    "prwarden.cli.review_workspace"
                 ) as workspace, patch(
-                    "src.cli.submit_approval", return_value="approval-11"
+                    "prwarden.cli.submit_approval", return_value="approval-11"
                 ):
                     workspace.return_value.__enter__.return_value = repository
                     cli._process_pull_request(
@@ -1307,17 +1308,20 @@ class OrchestrationTests(unittest.TestCase):
                 key = store.key(repository.slug, 1, "head", "github")
                 store.set_status(key, "failed", error="verification was rejected")
                 self.assertFalse(store.is_terminal(key))
-                with patch("src.cli.has_current_review", return_value=False), patch(
-                    "src.cli.list_prior_review_comments", return_value=()
+                with patch(
+                    "prwarden.cli.has_current_review", return_value=False
                 ), patch(
-                    "src.cli.list_changed_files",
+                    "prwarden.cli.list_prior_review_comments", return_value=()
+                ), patch(
+                    "prwarden.cli.list_changed_files",
                     return_value=[
                         {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                     ],
                 ), patch(
-                    "src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
-                ), patch("src.cli.review_workspace") as workspace, patch(
-                    "src.cli.submit_approval", return_value="approval-1"
+                    "prwarden.cli.get_pull_request_snapshot",
+                    return_value=READY_SNAPSHOT,
+                ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                    "prwarden.cli.submit_approval", return_value="approval-1"
                 ) as submit_approval, patch("sys.stdout", new_callable=StringIO):
                     workspace.return_value.__enter__.return_value = repository
                     workspace.return_value.dependency_links = ()
@@ -1375,7 +1379,7 @@ class OrchestrationTests(unittest.TestCase):
                 key = store.key(repository.slug, 1, "head", "github")
                 store.set_status(key, "delivered", receipt_id="99")
                 with patch(
-                    "src.cli.delivered_review_findings_resolved",
+                    "prwarden.cli.delivered_review_findings_resolved",
                     return_value=False,
                 ):
                     cli._process_pull_request(
@@ -1450,18 +1454,18 @@ class OrchestrationTests(unittest.TestCase):
                 settings=verification_engine_settings(settings),
             )
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", side_effect=[(), ()]
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", side_effect=[(), ()]
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot",
+                "prwarden.cli.get_pull_request_snapshot",
                 side_effect=[READY_SNAPSHOT, READY_SNAPSHOT],
-            ), patch("src.cli.review_workspace") as workspace, patch(
-                "src.cli.submit_approval", return_value="approval-13"
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.submit_approval", return_value="approval-13"
             ), patch(
                 "sys.stdout", new_callable=StringIO
             ) as output:
@@ -1546,7 +1550,7 @@ class OrchestrationTests(unittest.TestCase):
                 verify_engine_command=("kiro-cli",),
                 verify_model="claude-opus-5",
             )
-            with patch("src.cli.create_verification_engine") as create:
+            with patch("prwarden.cli.create_verification_engine") as create:
                 verification = cli._create_verification_pass(configured, primary)
 
             self.assertIsNotNone(verification)
@@ -1601,18 +1605,18 @@ class OrchestrationTests(unittest.TestCase):
             engine = Mock()
             engine.review.side_effect = [candidate, verified]
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", side_effect=[(), ()]
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", side_effect=[(), ()]
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot",
+                "prwarden.cli.get_pull_request_snapshot",
                 side_effect=[READY_SNAPSHOT, READY_SNAPSHOT],
-            ), patch("src.cli.review_workspace") as workspace, patch(
-                "src.cli.submit_approval", return_value="approval-12"
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.submit_approval", return_value="approval-12"
             ) as submit_approval:
                 workspace.return_value.__enter__.return_value = repository
                 with JsonStateStore(settings.state_file) as store:
@@ -1674,18 +1678,18 @@ class OrchestrationTests(unittest.TestCase):
             engine = Mock()
             engine.review.side_effect = [invalid, corrected]
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", side_effect=[(), ()]
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", side_effect=[(), ()]
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot",
+                "prwarden.cli.get_pull_request_snapshot",
                 side_effect=[READY_SNAPSHOT, READY_SNAPSHOT],
-            ), patch("src.cli.review_workspace") as workspace, patch(
-                "src.cli.submit_approval", return_value="approval-13"
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.submit_approval", return_value="approval-13"
             ) as submit_approval:
                 workspace.return_value.__enter__.return_value = repository
                 with JsonStateStore(settings.state_file) as store:
@@ -1770,18 +1774,18 @@ class OrchestrationTests(unittest.TestCase):
                 corrected_verification,
             ]
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", side_effect=[(), ()]
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", side_effect=[(), ()]
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot",
+                "prwarden.cli.get_pull_request_snapshot",
                 side_effect=[READY_SNAPSHOT, READY_SNAPSHOT],
-            ), patch("src.cli.review_workspace") as workspace, patch(
-                "src.cli.submit_approval", return_value="approval-14"
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.submit_approval", return_value="approval-14"
             ) as submit_approval:
                 workspace.return_value.__enter__.return_value = repository
                 with JsonStateStore(settings.state_file) as store:
@@ -1801,12 +1805,12 @@ class OrchestrationTests(unittest.TestCase):
             self.assertEqual(len(retry_material.verification_candidates), 1)
             submit_approval.assert_called_once()
 
-    @patch("src.cli.submit_approval")
-    @patch("src.cli.send_slack_message")
-    @patch("src.cli.submit_review")
-    @patch("src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT)
-    @patch("src.cli.list_prior_review_comments", return_value=())
-    @patch("src.cli.list_changed_files")
+    @patch("prwarden.cli.submit_approval")
+    @patch("prwarden.cli.send_slack_message")
+    @patch("prwarden.cli.submit_review")
+    @patch("prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT)
+    @patch("prwarden.cli.list_prior_review_comments", return_value=())
+    @patch("prwarden.cli.list_changed_files")
     def test_no_findings_on_own_pr_sends_lgtm_to_slack(
         self,
         changed_files: Mock,
@@ -1834,7 +1838,7 @@ class OrchestrationTests(unittest.TestCase):
             exact_repository = Repository(
                 "app", "owner/app", Path(directory) / "worktree"
             )
-            with patch("src.cli.review_workspace") as workspace:
+            with patch("prwarden.cli.review_workspace") as workspace:
                 workspace.return_value.__enter__.return_value = exact_repository
                 with JsonStateStore(settings.state_file) as store:
                     cli._process_pull_request(
@@ -1856,12 +1860,12 @@ class OrchestrationTests(unittest.TestCase):
         submit_review.assert_not_called()
         submit_approval.assert_not_called()
 
-    @patch("src.cli.submit_approval")
-    @patch("src.cli.send_slack_message")
-    @patch("src.cli.submit_review")
-    @patch("src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT)
-    @patch("src.cli.list_prior_review_comments", return_value=())
-    @patch("src.cli.list_changed_files")
+    @patch("prwarden.cli.submit_approval")
+    @patch("prwarden.cli.send_slack_message")
+    @patch("prwarden.cli.submit_review")
+    @patch("prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT)
+    @patch("prwarden.cli.list_prior_review_comments", return_value=())
+    @patch("prwarden.cli.list_changed_files")
     def test_lgtm_without_candidates_omits_the_unused_verifier(
         self,
         changed_files: Mock,
@@ -1893,7 +1897,7 @@ class OrchestrationTests(unittest.TestCase):
             exact_repository = Repository(
                 "app", "owner/app", Path(directory) / "worktree"
             )
-            with patch("src.cli.review_workspace") as workspace:
+            with patch("prwarden.cli.review_workspace") as workspace:
                 workspace.return_value.__enter__.return_value = exact_repository
                 with JsonStateStore(settings.state_file) as store:
                     cli._process_pull_request(
@@ -1914,12 +1918,12 @@ class OrchestrationTests(unittest.TestCase):
         self.assertFalse(activity.performed)
         verification.engine.review.assert_not_called()
 
-    @patch("src.cli.submit_approval")
-    @patch("src.cli.send_slack_message")
-    @patch("src.cli.submit_review")
-    @patch("src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT)
-    @patch("src.cli.list_prior_review_comments", return_value=())
-    @patch("src.cli.list_changed_files")
+    @patch("prwarden.cli.submit_approval")
+    @patch("prwarden.cli.send_slack_message")
+    @patch("prwarden.cli.submit_review")
+    @patch("prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT)
+    @patch("prwarden.cli.list_prior_review_comments", return_value=())
+    @patch("prwarden.cli.list_changed_files")
     def test_lgtm_reports_the_candidates_verification_rejected(
         self,
         changed_files: Mock,
@@ -1999,7 +2003,7 @@ class OrchestrationTests(unittest.TestCase):
 
             exact_repository = Repository("app", "owner/app", worktree)
             reported = StringIO()
-            with patch("src.cli.review_workspace") as workspace, patch(
+            with patch("prwarden.cli.review_workspace") as workspace, patch(
                 "sys.stdout", reported
             ):
                 workspace.return_value.__enter__.return_value = exact_repository
@@ -2037,12 +2041,12 @@ class OrchestrationTests(unittest.TestCase):
         self.assertNotIn("Rejected candidate", message)
         self.assertNotIn("Rejected because", message)
 
-    @patch("src.cli.submit_approval")
-    @patch("src.cli.send_slack_message")
-    @patch("src.cli.submit_review")
-    @patch("src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT)
-    @patch("src.cli.list_prior_review_comments", return_value=())
-    @patch("src.cli.list_changed_files")
+    @patch("prwarden.cli.submit_approval")
+    @patch("prwarden.cli.send_slack_message")
+    @patch("prwarden.cli.submit_review")
+    @patch("prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT)
+    @patch("prwarden.cli.list_prior_review_comments", return_value=())
+    @patch("prwarden.cli.list_changed_files")
     def test_verified_findings_name_the_verifier_in_delivery(
         self,
         changed_files: Mock,
@@ -2107,8 +2111,8 @@ class OrchestrationTests(unittest.TestCase):
             activity = cli._VerificationActivity()
             (Path(directory) / "app.py").write_text("value = 1\n", encoding="utf-8")
 
-            with patch("src.cli.review_workspace") as workspace, patch(
-                "src.cli.has_current_review", return_value=False
+            with patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.has_current_review", return_value=False
             ):
                 workspace.return_value.__enter__.return_value = repository
                 workspace.return_value.dependency_links = ()
@@ -2267,11 +2271,11 @@ class OrchestrationTests(unittest.TestCase):
                         self._fallback_material(directory),
                     )
 
-    @patch("src.cli.submit_approval")
-    @patch("src.cli.send_slack_message")
-    @patch("src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT)
-    @patch("src.cli.list_prior_review_comments", return_value=())
-    @patch("src.cli.list_changed_files")
+    @patch("prwarden.cli.submit_approval")
+    @patch("prwarden.cli.send_slack_message")
+    @patch("prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT)
+    @patch("prwarden.cli.list_prior_review_comments", return_value=())
+    @patch("prwarden.cli.list_changed_files")
     def test_fallback_review_is_attributed_to_the_engine_that_reviewed(
         self,
         changed_files: Mock,
@@ -2301,7 +2305,7 @@ class OrchestrationTests(unittest.TestCase):
                 settings=fallback_engine_settings(settings),
             )
 
-            with patch("src.cli.review_workspace") as workspace, patch(
+            with patch("prwarden.cli.review_workspace") as workspace, patch(
                 "sys.stdout", new_callable=StringIO
             ):
                 workspace.return_value.__enter__.return_value = repository
@@ -2337,18 +2341,20 @@ class OrchestrationTests(unittest.TestCase):
                 "head", "open", False, frozenset(), 1, False
             )
 
-            with patch("src.cli.list_prior_review_comments", return_value=()), patch(
-                "src.cli.list_changed_files",
+            with patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
+            ), patch(
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot",
+                "prwarden.cli.get_pull_request_snapshot",
                 side_effect=[READY_SNAPSHOT, conflicting],
             ), patch(
-                "src.cli.review_workspace"
+                "prwarden.cli.review_workspace"
             ) as workspace, patch(
-                "src.cli.send_slack_message"
+                "prwarden.cli.send_slack_message"
             ) as send_slack:
                 workspace.return_value.__enter__.return_value = repository
                 with JsonStateStore(settings.state_file) as store:
@@ -2366,15 +2372,15 @@ class OrchestrationTests(unittest.TestCase):
 
             send_slack.assert_not_called()
 
-    @patch("src.cli.send_slack_message")
+    @patch("prwarden.cli.send_slack_message")
     @patch(
-        "src.cli.get_pull_request_snapshot",
+        "prwarden.cli.get_pull_request_snapshot",
         return_value=PullRequestSnapshot(
             "new-head", "open", False, frozenset(), 1, True
         ),
     )
-    @patch("src.cli.list_prior_review_comments", return_value=())
-    @patch("src.cli.list_changed_files")
+    @patch("prwarden.cli.list_prior_review_comments", return_value=())
+    @patch("prwarden.cli.list_changed_files")
     def test_stale_head_stops_before_delivery(
         self,
         changed_files: Mock,
@@ -2396,7 +2402,7 @@ class OrchestrationTests(unittest.TestCase):
                 "findings": [],
             }
 
-            with patch("src.cli.review_workspace") as workspace:
+            with patch("prwarden.cli.review_workspace") as workspace:
                 workspace.return_value.__enter__.return_value = repository
                 with JsonStateStore(settings.state_file) as store:
                     with self.assertRaisesRegex(ReviewError, "head changed"):
@@ -2428,7 +2434,7 @@ class OrchestrationTests(unittest.TestCase):
             store = Mock()
             engine = Mock()
 
-            with patch("src.cli._process_pull_request") as process:
+            with patch("prwarden.cli._process_pull_request") as process:
                 process.side_effect = [
                     cli.PullRequestHeadChangedError("head-0", "head-1"),
                     None,
@@ -2468,7 +2474,7 @@ class OrchestrationTests(unittest.TestCase):
                 )
 
             with patch(
-                "src.cli._process_pull_request", side_effect=change_head
+                "prwarden.cli._process_pull_request", side_effect=change_head
             ) as process:
                 with self.assertRaisesRegex(
                     ReviewError,
@@ -2487,10 +2493,10 @@ class OrchestrationTests(unittest.TestCase):
             self.assertEqual(process.call_count, 6)
             self.assertEqual(process.call_args_list[-1].args[2].head_sha, "head-5")
 
-    @patch("src.cli.submit_review")
-    @patch("src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT)
-    @patch("src.cli.has_current_review", return_value=False)
-    @patch("src.cli.list_changed_files")
+    @patch("prwarden.cli.submit_review")
+    @patch("prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT)
+    @patch("prwarden.cli.has_current_review", return_value=False)
+    @patch("prwarden.cli.list_changed_files")
     def test_new_feedback_on_a_finding_line_stops_delivery(
         self,
         changed_files: Mock,
@@ -2543,10 +2549,10 @@ class OrchestrationTests(unittest.TestCase):
             engine.review.side_effect = [review_response, CONFIRMED_JUDGMENT]
 
             with patch(
-                "src.cli.list_prior_review_comments",
+                "prwarden.cli.list_prior_review_comments",
                 side_effect=[(), (new_comment,)],
-            ), patch("src.cli.review_workspace") as workspace, patch(
-                "src.cli.send_slack_message", return_value="http-200"
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.send_slack_message", return_value="http-200"
             ) as notify:
                 (Path(directory) / "app.py").write_text("value = 1\n")
                 workspace.return_value.__enter__.return_value = repository
@@ -2666,19 +2672,19 @@ class OrchestrationTests(unittest.TestCase):
                 CONFIRMED_JUDGMENT,
             ]
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments",
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments",
                 side_effect=[(), (new_comment,)],
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot",
+                "prwarden.cli.get_pull_request_snapshot",
                 side_effect=[READY_SNAPSHOT, READY_SNAPSHOT],
-            ), patch("src.cli.review_workspace") as workspace, patch(
-                "src.cli.submit_review", return_value="review-7"
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.submit_review", return_value="review-7"
             ) as submit_review:
                 (Path(directory) / "app.py").write_text("value = 1\n")
                 workspace.return_value.__enter__.return_value = repository
@@ -2725,19 +2731,19 @@ class OrchestrationTests(unittest.TestCase):
                 "findings": [],
             }
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments",
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments",
                 side_effect=[(before,), (after,)],
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot",
+                "prwarden.cli.get_pull_request_snapshot",
                 side_effect=[READY_SNAPSHOT, READY_SNAPSHOT],
-            ), patch("src.cli.review_workspace") as workspace, patch(
-                "src.cli.submit_approval", return_value="approval-9"
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.submit_approval", return_value="approval-9"
             ) as submit_approval:
                 (Path(directory) / "app.py").write_text("value = 1\n")
                 workspace.return_value.__enter__.return_value = repository
@@ -2780,20 +2786,20 @@ class OrchestrationTests(unittest.TestCase):
                 "findings": [],
             }
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments",
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments",
                 side_effect=[(before,), (after,)],
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot",
+                "prwarden.cli.get_pull_request_snapshot",
                 side_effect=[READY_SNAPSHOT, READY_SNAPSHOT],
-            ), patch("src.cli.review_workspace") as workspace, patch(
-                "src.cli.send_slack_message", return_value="http-200"
-            ), patch("src.cli.submit_approval") as submit_approval:
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.send_slack_message", return_value="http-200"
+            ), patch("prwarden.cli.submit_approval") as submit_approval:
                 (Path(directory) / "app.py").write_text("value = 1\n")
                 workspace.return_value.__enter__.return_value = repository
                 with JsonStateStore(settings.state_file) as store:
@@ -2828,22 +2834,22 @@ class OrchestrationTests(unittest.TestCase):
                 "app", "owner/app", Path(directory) / "worktree"
             )
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=()
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot",
+                "prwarden.cli.get_pull_request_snapshot",
                 side_effect=[READY_SNAPSHOT, READY_SNAPSHOT],
             ), patch(
-                "src.cli.review_workspace"
+                "prwarden.cli.review_workspace"
             ) as workspace, patch(
-                "src.cli.submit_approval", return_value="approval-9"
+                "prwarden.cli.submit_approval", return_value="approval-9"
             ) as submit_approval, patch(
-                "src.cli.submit_review"
+                "prwarden.cli.submit_review"
             ) as submit_review:
                 workspace.return_value.__enter__.return_value = exact_repository
                 with JsonStateStore(settings.state_file) as store:
@@ -2874,25 +2880,25 @@ class OrchestrationTests(unittest.TestCase):
                 "findings": [],
             }
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=()
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot",
+                "prwarden.cli.get_pull_request_snapshot",
                 side_effect=[
                     READY_SNAPSHOT,
                     PullRequestSnapshot("head", "open", False, frozenset(), 1, False),
                 ],
             ), patch(
-                "src.cli.review_workspace"
+                "prwarden.cli.review_workspace"
             ) as workspace, patch(
-                "src.cli._print_findings"
+                "prwarden.cli._print_findings"
             ) as print_findings, patch(
-                "src.cli.submit_approval"
+                "prwarden.cli.submit_approval"
             ) as submit_approval:
                 workspace.return_value.__enter__.return_value = repository
                 with JsonStateStore(settings.state_file) as store:
@@ -2971,17 +2977,17 @@ class OrchestrationTests(unittest.TestCase):
                 },
             ]
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=()
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
-            ), patch("src.cli.review_workspace") as workspace, patch(
-                "src.cli.submit_review", return_value="review-9"
+                "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.submit_review", return_value="review-9"
             ) as submit_review, patch(
                 "sys.stdout", new_callable=StringIO
             ):
@@ -3036,19 +3042,19 @@ class OrchestrationTests(unittest.TestCase):
                 unusable,
             ]
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=()
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
-            ), patch("src.cli.review_workspace") as workspace, patch(
-                "src.cli.submit_approval"
+                "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.submit_approval"
             ) as submit_approval, patch(
-                "src.cli.submit_review"
+                "prwarden.cli.submit_review"
             ) as submit_review, patch(
                 "sys.stdout", new_callable=StringIO
             ) as output:
@@ -3088,24 +3094,24 @@ class OrchestrationTests(unittest.TestCase):
             }
             pending = PullRequestSnapshot("head", "open", False, frozenset(), 1, None)
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=()
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot",
+                "prwarden.cli.get_pull_request_snapshot",
                 side_effect=[READY_SNAPSHOT, pending, pending, READY_SNAPSHOT],
             ) as snapshot, patch(
-                "src.cli.time.sleep"
+                "prwarden.cli.time.sleep"
             ) as sleep, patch(
-                "src.cli.review_workspace"
+                "prwarden.cli.review_workspace"
             ) as workspace, patch(
-                "src.cli._print_findings"
+                "prwarden.cli._print_findings"
             ), patch(
-                "src.cli.submit_approval", return_value="review-1"
+                "prwarden.cli.submit_approval", return_value="review-1"
             ) as submit_approval:
                 workspace.return_value.__enter__.return_value = repository
                 with JsonStateStore(settings.state_file) as store:
@@ -3141,21 +3147,21 @@ class OrchestrationTests(unittest.TestCase):
             }
             pending = PullRequestSnapshot("head", "open", False, frozenset(), 1, None)
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=()
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot", return_value=pending
+                "prwarden.cli.get_pull_request_snapshot", return_value=pending
             ), patch(
-                "src.cli.time.sleep"
+                "prwarden.cli.time.sleep"
             ), patch(
-                "src.cli.review_workspace"
+                "prwarden.cli.review_workspace"
             ) as workspace, patch(
-                "src.cli.submit_approval"
+                "prwarden.cli.submit_approval"
             ) as submit_approval:
                 workspace.return_value.__enter__.return_value = repository
                 with JsonStateStore(settings.state_file) as store:
@@ -3216,28 +3222,28 @@ class OrchestrationTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        with patch("src.cli.has_current_review", return_value=False), patch(
-            "src.cli.list_prior_review_comments", return_value=()
+        with patch("prwarden.cli.has_current_review", return_value=False), patch(
+            "prwarden.cli.list_prior_review_comments", return_value=()
         ), patch(
-            "src.cli.list_changed_files",
+            "prwarden.cli.list_changed_files",
             return_value=(
                 self.partially_reviewable_files()
                 if changed_files is None
                 else changed_files
             ),
         ), patch(
-            "src.cli.list_pull_request_checks", return_value=()
+            "prwarden.cli.list_pull_request_checks", return_value=()
         ), patch(
-            "src.cli.get_pull_request_snapshot",
+            "prwarden.cli.get_pull_request_snapshot",
             return_value=replace(READY_SNAPSHOT, head_sha=head),
         ), patch(
-            "src.cli.review_workspace"
+            "prwarden.cli.review_workspace"
         ) as workspace, patch(
-            "src.cli.submit_review", return_value="review-1"
+            "prwarden.cli.submit_review", return_value="review-1"
         ) as submit_review, patch(
-            "src.cli.submit_approval", return_value="approval-1"
+            "prwarden.cli.submit_approval", return_value="approval-1"
         ) as submit_approval, patch(
-            "src.cli.send_slack_message", return_value="http-200"
+            "prwarden.cli.send_slack_message", return_value="http-200"
         ) as send_slack, patch(
             "sys.stdout", new_callable=StringIO
         ) as output:
@@ -3361,10 +3367,10 @@ class OrchestrationTests(unittest.TestCase):
             }
             (Path(directory) / "app.py").write_text("value = 1\n")
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=()
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"},
                     {
@@ -3376,13 +3382,13 @@ class OrchestrationTests(unittest.TestCase):
                     },
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
-            ), patch("src.cli.review_workspace") as workspace, patch(
-                "src.cli.submit_review", return_value="review-1"
+                "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.submit_review", return_value="review-1"
             ), patch(
-                "src.cli.submit_approval"
+                "prwarden.cli.submit_approval"
             ) as submit_approval, patch(
-                "src.cli.send_slack_message", return_value="http-200"
+                "prwarden.cli.send_slack_message", return_value="http-200"
             ) as send_slack, patch(
                 "sys.stdout", new_callable=StringIO
             ) as output:
@@ -3475,10 +3481,10 @@ class OrchestrationTests(unittest.TestCase):
             settings = Settings(**{**settings.__dict__, "max_diff_bytes": 10})
             engine = Mock()
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=()
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {
                         "filename": "app.py",
@@ -3486,9 +3492,9 @@ class OrchestrationTests(unittest.TestCase):
                     }
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
+                "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
             ), patch(
-                "src.cli.send_slack_message", return_value="http-200"
+                "prwarden.cli.send_slack_message", return_value="http-200"
             ) as send_slack:
                 with JsonStateStore(settings.state_file) as store:
                     cli._process_pull_request(
@@ -3523,10 +3529,10 @@ class OrchestrationTests(unittest.TestCase):
             settings = Settings(**{**settings.__dict__, "max_diff_bytes": 10})
             engine = Mock()
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=()
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {
                         "filename": "app.py",
@@ -3534,12 +3540,12 @@ class OrchestrationTests(unittest.TestCase):
                     }
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot",
+                "prwarden.cli.get_pull_request_snapshot",
                 side_effect=lambda repo, pull: PullRequestSnapshot(
                     pull.head_sha, "open", False, frozenset(), 1, True
                 ),
             ), patch(
-                "src.cli.send_slack_message", return_value="http-200"
+                "prwarden.cli.send_slack_message", return_value="http-200"
             ) as send_slack:
                 with JsonStateStore(settings.state_file) as store:
                     for head in ("head-one", "head-two"):
@@ -3718,10 +3724,10 @@ class OrchestrationTests(unittest.TestCase):
             settings = Settings(**{**settings.__dict__, "max_diff_bytes": 10})
             engine = Mock()
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=()
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {
                         "filename": "app.py",
@@ -3729,9 +3735,9 @@ class OrchestrationTests(unittest.TestCase):
                     }
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
+                "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
             ), patch(
-                "src.cli.send_slack_message",
+                "prwarden.cli.send_slack_message",
                 side_effect=cli.DeliveryError("Slack rejected the message"),
             ):
                 with JsonStateStore(settings.state_file) as store:
@@ -3799,22 +3805,22 @@ class OrchestrationTests(unittest.TestCase):
         settings = self.settings(directory, repository)
         (Path(directory) / "app.py").write_text("value = 1\n", encoding="utf-8")
 
-        with patch("src.cli.has_current_review", return_value=False), patch(
-            "src.cli.list_prior_review_comments", return_value=()
+        with patch("prwarden.cli.has_current_review", return_value=False), patch(
+            "prwarden.cli.list_prior_review_comments", return_value=()
         ), patch(
-            "src.cli.list_changed_files",
+            "prwarden.cli.list_changed_files",
             return_value=[
                 {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
             ],
         ), patch(
-            "src.cli.get_pull_request_snapshot",
+            "prwarden.cli.get_pull_request_snapshot",
             side_effect=[READY_SNAPSHOT, final_snapshot],
         ), patch(
-            "src.cli.review_workspace"
+            "prwarden.cli.review_workspace"
         ) as workspace, patch(
-            "src.cli.submit_review", return_value="review-1"
+            "prwarden.cli.submit_review", return_value="review-1"
         ) as submit_review, patch(
-            "src.cli.submit_approval", return_value="approval-1"
+            "prwarden.cli.submit_approval", return_value="approval-1"
         ) as submit_approval, patch(
             "sys.stdout", new_callable=StringIO
         ) as output:
@@ -3943,19 +3949,19 @@ class OrchestrationTests(unittest.TestCase):
                 "head", "open", True, frozenset(), 1, True
             )
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=()
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.get_pull_request_snapshot",
+                "prwarden.cli.get_pull_request_snapshot",
                 side_effect=[READY_SNAPSHOT, draft_snapshot],
             ), patch(
-                "src.cli.review_workspace"
-            ) as workspace, patch("src.cli.submit_review") as submit_review:
+                "prwarden.cli.review_workspace"
+            ) as workspace, patch("prwarden.cli.submit_review") as submit_review:
                 (Path(directory) / "app.py").write_text("value = 1\n")
                 workspace.return_value.__enter__.return_value = repository
                 with JsonStateStore(settings.state_file) as store:
@@ -4017,9 +4023,9 @@ class OrchestrationTests(unittest.TestCase):
                 engine = Mock()
 
                 with patch(
-                    "src.cli.has_current_review", return_value=False
+                    "prwarden.cli.has_current_review", return_value=False
                 ), patch(
-                    "src.cli.get_pull_request_snapshot", return_value=snapshot
+                    "prwarden.cli.get_pull_request_snapshot", return_value=snapshot
                 ), patch("sys.stdout", new_callable=StringIO) as output:
                     with JsonStateStore(settings.state_file) as store:
                         cli._process_pull_request(
@@ -4063,10 +4069,10 @@ class OrchestrationTests(unittest.TestCase):
                 engine=None,
                 concurrency=1,
             )
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.create_review_engine"
-            ), patch("src.cli.list_open_prs", return_value=pull_requests), patch(
-                "src.cli._process_pull_request_with_head_restarts"
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.create_review_engine"
+            ), patch("prwarden.cli.list_open_prs", return_value=pull_requests), patch(
+                "prwarden.cli._process_pull_request_with_head_restarts"
             ) as process, patch("sys.stdout", new_callable=StringIO) as output:
                 process.side_effect = lambda *_, **__: print("    - PR entry")
                 self.assertEqual(cli.run(args), 0)
@@ -4150,10 +4156,10 @@ class OrchestrationTests(unittest.TestCase):
                     active -= 1
 
             args = self.parallel_run_args(directory, 2)
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.create_review_engine"
-            ), patch("src.cli.list_open_prs", return_value=pull_requests), patch(
-                "src.cli._process_pull_request_with_head_restarts",
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.create_review_engine"
+            ), patch("prwarden.cli.list_open_prs", return_value=pull_requests), patch(
+                "prwarden.cli._process_pull_request_with_head_restarts",
                 side_effect=fake_process,
             ), patch("sys.stdout", new_callable=StringIO):
                 self.assertEqual(cli.run(args), 0)
@@ -4178,10 +4184,10 @@ class OrchestrationTests(unittest.TestCase):
                 print(f"      -> Review completed for #{pull_request.number}")
 
             args = self.parallel_run_args(directory, 2)
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.create_review_engine"
-            ), patch("src.cli.list_open_prs", return_value=pull_requests), patch(
-                "src.cli._process_pull_request_with_head_restarts",
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.create_review_engine"
+            ), patch("prwarden.cli.list_open_prs", return_value=pull_requests), patch(
+                "prwarden.cli._process_pull_request_with_head_restarts",
                 side_effect=fake_process,
             ), patch("sys.stdout", new_callable=StringIO) as output:
                 self.assertEqual(cli.run(args), 0)
@@ -4224,10 +4230,10 @@ class OrchestrationTests(unittest.TestCase):
                 print(f"      -> step two for #{number}", file=sys.stderr)
 
             args = self.parallel_run_args(directory, 2)
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.create_review_engine"
-            ), patch("src.cli.list_open_prs", return_value=pull_requests), patch(
-                "src.cli._process_pull_request_with_head_restarts",
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.create_review_engine"
+            ), patch("prwarden.cli.list_open_prs", return_value=pull_requests), patch(
+                "prwarden.cli._process_pull_request_with_head_restarts",
                 side_effect=fake_process,
             ), patch("sys.stdout", new_callable=StringIO) as output, patch(
                 "sys.stderr", new_callable=StringIO
@@ -4257,10 +4263,10 @@ class OrchestrationTests(unittest.TestCase):
                 raise EngineError(f"engine failed for #{pull_request.number}")
 
             args = self.parallel_run_args(directory, 2)
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.create_review_engine"
-            ), patch("src.cli.list_open_prs", return_value=pull_requests), patch(
-                "src.cli._process_pull_request_with_head_restarts",
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.create_review_engine"
+            ), patch("prwarden.cli.list_open_prs", return_value=pull_requests), patch(
+                "prwarden.cli._process_pull_request_with_head_restarts",
                 side_effect=fake_process,
             ), patch("sys.stdout", new_callable=StringIO) as output, patch(
                 "sys.stderr", new_callable=StringIO
@@ -4290,13 +4296,13 @@ class OrchestrationTests(unittest.TestCase):
         args = Namespace(
             **{**vars(self.parallel_run_args(directory, concurrency)), "live": True}
         )
-        with patch("src.cli.load_settings", return_value=settings), patch(
-            "src.cli.create_review_engine"
-        ), patch("src.cli.list_open_prs", return_value=pull_requests), patch(
-            "src.cli._process_pull_request_with_head_restarts",
+        with patch("prwarden.cli.load_settings", return_value=settings), patch(
+            "prwarden.cli.create_review_engine"
+        ), patch("prwarden.cli.list_open_prs", return_value=pull_requests), patch(
+            "prwarden.cli._process_pull_request_with_head_restarts",
             side_effect=fake_process,
         ), patch(
-            "src.cli.send_slack_message", return_value="http-200"
+            "prwarden.cli.send_slack_message", return_value="http-200"
         ) as send, patch("sys.stdout", new_callable=StringIO) as output, patch(
             "sys.stderr", new_callable=StringIO
         ) as errors:
@@ -4350,13 +4356,13 @@ class OrchestrationTests(unittest.TestCase):
                 reviewed.append(f"{repository_.slug}#{pull_request.number}")
 
             args = self.parallel_run_args(directory, 1)
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.create_review_engine"
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.create_review_engine"
             ), patch(
-                "src.cli.list_open_prs",
+                "prwarden.cli.list_open_prs",
                 side_effect=lambda repository_, labels: listings[repository_.slug],
             ), patch(
-                "src.cli._process_pull_request_with_head_restarts",
+                "prwarden.cli._process_pull_request_with_head_restarts",
                 side_effect=fake_process,
             ), patch("sys.stdout", new_callable=StringIO) as output:
                 self.assertEqual(cli.run(args), 0)
@@ -4494,10 +4500,10 @@ class OrchestrationTests(unittest.TestCase):
                 print(f"      -> Reviewed #{pull_request.number}")
 
             out = StringIO()
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.create_review_engine"
-            ), patch("src.cli.list_open_prs", return_value=pull_requests), patch(
-                "src.cli._process_pull_request_with_head_restarts",
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.create_review_engine"
+            ), patch("prwarden.cli.list_open_prs", return_value=pull_requests), patch(
+                "prwarden.cli._process_pull_request_with_head_restarts",
                 side_effect=review,
             ), patch("sys.stdout", out):
                 with self.assertRaises(KeyboardInterrupt):
@@ -4511,8 +4517,8 @@ class OrchestrationTests(unittest.TestCase):
         """An interrupted run is stopped on purpose, not a failure to report."""
 
         err = StringIO()
-        with patch("src.cli.build_parser") as parser, \
-                patch("src.cli.run", side_effect=KeyboardInterrupt), \
+        with patch("prwarden.cli.build_parser") as parser, \
+                patch("prwarden.cli.run", side_effect=KeyboardInterrupt), \
                 patch("sys.stderr", err):
             parser.return_value.parse_args.return_value = Namespace()
             self.assertEqual(cli.main([]), cli.INTERRUPTED_EXIT_CODE)
@@ -4532,10 +4538,10 @@ class OrchestrationTests(unittest.TestCase):
             def review(settings_, repository_, pull_request, *args, **kwargs):
                 print("      -> Reviewed it")
 
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.create_review_engine"
-            ), patch("src.cli.list_open_prs", return_value=pull_requests), patch(
-                "src.cli._process_pull_request_with_head_restarts",
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.create_review_engine"
+            ), patch("prwarden.cli.list_open_prs", return_value=pull_requests), patch(
+                "prwarden.cli._process_pull_request_with_head_restarts",
                 side_effect=review,
             ), patch("sys.stdout", new_callable=StringIO):
                 self.assertEqual(cli.run(self.parallel_run_args(directory, 2)), 0)
@@ -4578,10 +4584,10 @@ class OrchestrationTests(unittest.TestCase):
                         return
                     time.sleep(0.02)
 
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.create_review_engine"
-            ), patch("src.cli.list_open_prs", return_value=pull_requests), patch(
-                "src.cli._process_pull_request_with_head_restarts",
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.create_review_engine"
+            ), patch("prwarden.cli.list_open_prs", return_value=pull_requests), patch(
+                "prwarden.cli._process_pull_request_with_head_restarts",
                 side_effect=review,
             ), patch("sys.stdout", new_callable=StringIO):
                 self.assertEqual(cli.run(self.parallel_run_args(directory, 2)), 0)
@@ -4643,9 +4649,9 @@ class OrchestrationTests(unittest.TestCase):
             settings = self.settings(directory, repository)
             settings = Settings(**{**settings.__dict__, "dry_run": True})
 
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.create_review_engine"
-            ), patch("src.cli.list_open_prs", return_value=[]), patch(
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.create_review_engine"
+            ), patch("prwarden.cli.list_open_prs", return_value=[]), patch(
                 "sys.stdout", new_callable=StringIO
             ):
                 cli.run(self.parallel_run_args(directory, 2))
@@ -4726,10 +4732,10 @@ class OrchestrationTests(unittest.TestCase):
                 **{**settings.__dict__, "dry_run": True, "run_log_retention_days": 3}
             )
 
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.create_review_engine"
-            ), patch("src.cli.list_open_prs", return_value=[]), patch(
-                "src.cli.progress.prune_transcripts"
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.create_review_engine"
+            ), patch("prwarden.cli.list_open_prs", return_value=[]), patch(
+                "prwarden.cli.progress.prune_transcripts"
             ) as prune, patch("sys.stdout", new_callable=StringIO):
                 cli.run(self.parallel_run_args(directory, 2))
 
@@ -4747,7 +4753,7 @@ class OrchestrationTests(unittest.TestCase):
                 )
             ]
 
-            with patch("src.cli.threading.Thread") as thread:
+            with patch("prwarden.cli.threading.Thread") as thread:
                 with cli._ReviewBoard(tasks, StringIO()):
                     pass
 
@@ -4768,7 +4774,7 @@ class OrchestrationTests(unittest.TestCase):
                 force=False,
                 engine=None,
             )
-            with patch("src.cli.load_settings", return_value=settings):
+            with patch("prwarden.cli.load_settings", return_value=settings):
                 with self.assertRaisesRegex(
                     ConfigError, "requires AUTO_REVIEW_DRY_RUN=0"
                 ):
@@ -4791,10 +4797,10 @@ class OrchestrationTests(unittest.TestCase):
                 engine=None,
             )
             refusal = CommandError("GitHub CLI has no login for reviewer", command="gh")
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.pin_github_account", side_effect=refusal
-            ) as pin, patch("src.cli.create_review_engine"), patch(
-                "src.cli.list_open_prs", return_value=[]
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.pin_github_account", side_effect=refusal
+            ) as pin, patch("prwarden.cli.create_review_engine"), patch(
+                "prwarden.cli.list_open_prs", return_value=[]
             ) as discover:
                 with self.assertRaises(CommandError):
                     cli.run(args)
@@ -4819,10 +4825,10 @@ class OrchestrationTests(unittest.TestCase):
                 force=False,
                 engine=None,
             )
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.JsonStateStore"
-            ) as state_store, patch("src.cli.create_review_engine"), patch(
-                "src.cli.list_open_prs", return_value=[]
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.JsonStateStore"
+            ) as state_store, patch("prwarden.cli.create_review_engine"), patch(
+                "prwarden.cli.list_open_prs", return_value=[]
             ):
                 state_store.return_value.__enter__.return_value = Mock()
                 self.assertEqual(cli.run(args), 0)
@@ -4842,20 +4848,20 @@ class OrchestrationTests(unittest.TestCase):
                 force=False,
                 engine=None,
             )
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.create_review_engine"
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.create_review_engine"
             ), patch(
-                "src.cli.list_open_prs",
+                "prwarden.cli.list_open_prs",
                 side_effect=CommandError(
                     "gh exited with 1: HTTP 503: No server is currently available",
                     command="gh",
                 ),
             ), patch(
-                "src.cli.describe_github_incident",
+                "prwarden.cli.describe_github_incident",
                 return_value="GitHub status: Partial System Outage | open incidents: "
                 "Incident with GitHub.com (investigating)",
             ) as describe, patch(
-                "src.cli.send_slack_message", return_value="http-200"
+                "prwarden.cli.send_slack_message", return_value="http-200"
             ) as send, patch(
                 "sys.stderr", new_callable=StringIO
             ) as terminal:
@@ -4888,13 +4894,13 @@ class OrchestrationTests(unittest.TestCase):
                 force=False,
                 engine=None,
             )
-            with patch("src.cli.load_settings", return_value=settings), patch(
-                "src.cli.create_review_engine"
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.create_review_engine"
             ), patch(
-                "src.cli.list_open_prs",
+                "prwarden.cli.list_open_prs",
                 side_effect=cli.CommandError("error connecting to api.github.com"),
             ), patch(
-                "src.cli.send_slack_message", return_value="http-200"
+                "prwarden.cli.send_slack_message", return_value="http-200"
             ) as send:
                 self.assertEqual(cli.run(args), 1)
 
@@ -4916,10 +4922,10 @@ class OrchestrationTests(unittest.TestCase):
             },
             clear=True,
         ), patch(
-            "src.cli.run",
+            "prwarden.cli.run",
             side_effect=ConfigError("Cannot resolve the current GitHub CLI user"),
         ), patch(
-            "src.cli.send_slack_message", return_value="http-200"
+            "prwarden.cli.send_slack_message", return_value="http-200"
         ) as send:
             self.assertEqual(cli.main(["--live"]), 2)
 
@@ -4943,8 +4949,8 @@ class OrchestrationTests(unittest.TestCase):
                 "SLACK_WEBHOOK_URL": "https://example.invalid/webhook",
             },
             clear=True,
-        ), patch("src.cli.run", side_effect=crash), patch(
-            "src.cli.send_slack_message", return_value="http-200"
+        ), patch("prwarden.cli.run", side_effect=crash), patch(
+            "prwarden.cli.send_slack_message", return_value="http-200"
         ) as send, patch("sys.stderr", new_callable=StringIO) as errors:
             self.assertEqual(cli.main(["--live"]), 1)
 
@@ -4961,8 +4967,8 @@ class OrchestrationTests(unittest.TestCase):
             "os.environ",
             {"SLACK_WEBHOOK_URL": "https://example.invalid/webhook"},
             clear=True,
-        ), patch("src.cli.run", side_effect=KeyError("x")), patch(
-            "src.cli.send_slack_message"
+        ), patch("prwarden.cli.run", side_effect=KeyError("x")), patch(
+            "prwarden.cli.send_slack_message"
         ) as send, patch("sys.stderr", new_callable=StringIO):
             self.assertEqual(cli.main([]), 1)
 
@@ -4984,12 +4990,12 @@ class OrchestrationTests(unittest.TestCase):
             },
             clear=True,
         ), patch(
-            "src.cli.run",
+            "prwarden.cli.run",
             side_effect=StateLockedError(
                 "Another reviewer process holds .state/review-state.json.lock"
             ),
         ), patch(
-            "src.cli.send_slack_message"
+            "prwarden.cli.send_slack_message"
         ) as send, patch(
             "sys.stdout", stream
         ):
@@ -5009,9 +5015,9 @@ class OrchestrationTests(unittest.TestCase):
             },
             clear=True,
         ), patch(
-            "src.cli.run", side_effect=StateError("Cannot write state file")
+            "prwarden.cli.run", side_effect=StateError("Cannot write state file")
         ), patch(
-            "src.cli.send_slack_message", return_value="http-200"
+            "prwarden.cli.send_slack_message", return_value="http-200"
         ) as send, patch(
             "sys.stderr", StringIO()
         ):
@@ -5021,9 +5027,9 @@ class OrchestrationTests(unittest.TestCase):
 
     def test_dry_run_failure_does_not_send_notification(self) -> None:
         with patch.dict("os.environ", {}, clear=True), patch(
-            "src.cli.run",
+            "prwarden.cli.run",
             side_effect=ConfigError("Cannot resolve the current GitHub CLI user"),
-        ), patch("src.cli.send_slack_message") as send:
+        ), patch("prwarden.cli.send_slack_message") as send:
             self.assertEqual(cli.main([]), 2)
 
         send.assert_not_called()

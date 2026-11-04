@@ -7,11 +7,11 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from src import cli
-from src.commands import CommandError
-from src.config import Settings
-from src.delivery import format_docs_slack_message
-from src.engine import (
+from prwarden import cli
+from prwarden.commands import CommandError
+from prwarden.config import Settings
+from prwarden.delivery import format_docs_slack_message
+from prwarden.engine import (
     DOCS_CATEGORIES,
     DOCS_LEVEL,
     DOCS_LIST_ENTRY_RULE,
@@ -22,12 +22,12 @@ from src.engine import (
     docs_candidate_refs,
     response_discriminator_keys,
 )
-from src.github import (
+from prwarden.github import (
     DOCS_COMMENT_MARKER,
     MAX_PRIOR_REVIEW_BYTES,
     format_docs_comment,
 )
-from src.models import (
+from prwarden.models import (
     DocsAssessment,
     DocsFinding,
     DocumentationFile,
@@ -40,7 +40,7 @@ from src.models import (
     Repository,
     ReviewMaterial,
 )
-from src.review import (
+from prwarden.review import (
     ReviewError,
     discover_documentation,
     documentation_change_fingerprint,
@@ -48,7 +48,7 @@ from src.review import (
     validate_docs_findings,
     validate_docs_judgments,
 )
-from src.state import JsonStateStore
+from prwarden.state import JsonStateStore
 
 
 READY_SNAPSHOT = PullRequestSnapshot(
@@ -1056,17 +1056,17 @@ class DocsOrchestrationTests(unittest.TestCase):
             else {"return_value": tuple(own_notes)}
         )
 
-        with patch("src.cli.has_current_review", return_value=False), patch(
-            "src.cli.list_prior_review_comments", return_value=()
+        with patch("prwarden.cli.has_current_review", return_value=False), patch(
+            "prwarden.cli.list_prior_review_comments", return_value=()
         ), patch(
-            "src.cli.list_own_advisory_notes", **lookup
+            "prwarden.cli.list_own_advisory_notes", **lookup
         ) as own_lookup, patch(
-            "src.cli.list_changed_files",
+            "prwarden.cli.list_changed_files",
             return_value=changed_files,
         ), patch(
-            "src.cli.list_pull_request_checks", return_value=()
+            "prwarden.cli.list_pull_request_checks", return_value=()
         ), patch(
-            "src.cli.get_pull_request_snapshot",
+            "prwarden.cli.get_pull_request_snapshot",
             return_value=PullRequestSnapshot(
                 head_sha=head,
                 state="open",
@@ -1076,21 +1076,21 @@ class DocsOrchestrationTests(unittest.TestCase):
                 mergeable=True,
             ),
         ), patch(
-            "src.cli.review_workspace"
+            "prwarden.cli.review_workspace"
         ) as workspace, patch(
-            "src.cli.submit_docs_notes", return_value="docs-comment-1"
+            "prwarden.cli.submit_docs_notes", return_value="docs-comment-1"
         ) as docs_notes, patch(
-            "src.cli.submit_design_notes", return_value="design-comment-1"
+            "prwarden.cli.submit_design_notes", return_value="design-comment-1"
         ) as design_notes, patch(
-            "src.cli.submit_approval", return_value="approval-1"
+            "prwarden.cli.submit_approval", return_value="approval-1"
         ) as approval, patch(
-            "src.cli.submit_review", return_value="review-1"
+            "prwarden.cli.submit_review", return_value="review-1"
         ) as review, patch(
-            "src.cli.send_slack_message", return_value="http-200"
+            "prwarden.cli.send_slack_message", return_value="http-200"
         ) as slack, patch(
-            "src.cli.submit_lgtm_comment", return_value="lgtm-comment-1"
+            "prwarden.cli.submit_lgtm_comment", return_value="lgtm-comment-1"
         ) as lgtm, patch(
-            "src.cli.hide_earlier_lgtm_comments", return_value=0
+            "prwarden.cli.hide_earlier_lgtm_comments", return_value=0
         ), patch(
             "sys.stdout", new_callable=StringIO
         ) as output:
@@ -1608,23 +1608,23 @@ class DocsOrchestrationTests(unittest.TestCase):
                 base_ref="main",
             )
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=()
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.list_pull_request_checks", return_value=()
+                "prwarden.cli.list_pull_request_checks", return_value=()
             ), patch(
-                "src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
+                "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
             ), patch(
-                "src.cli.review_workspace"
+                "prwarden.cli.review_workspace"
             ) as workspace, patch(
-                "src.cli.submit_docs_notes"
+                "prwarden.cli.submit_docs_notes"
             ) as docs_notes, patch(
-                "src.cli.submit_approval", return_value="approval-1"
+                "prwarden.cli.submit_approval", return_value="approval-1"
             ), patch(
                 "sys.stdout", new_callable=StringIO
             ) as output:

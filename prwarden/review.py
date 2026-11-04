@@ -724,7 +724,7 @@ MAX_DOCUMENTATION_FILES = 60
 MAX_DOCUMENTATION_FILE_BYTES = 200_000
 
 
-BACKGROUND_FILE = ".ai-code-review/background.md"
+BACKGROUND_FILE = ".prwarden/background.md"
 # The same ceiling the pull-request body gets in the prompt: this is context, and a
 # document long enough to compete with the diff would be answering a different
 # question than "what is this product for".

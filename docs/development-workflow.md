@@ -72,7 +72,7 @@ A real pull request worth citing, as the origin of a rule or a regression test, 
 cited by a reference instead of a link:
 
 ```sh
-python3 -m src.public_safety new-ref https://github.com/<org>/<repo>/pull/<n> \
+python3 -m prwarden.public_safety new-ref https://github.com/<org>/<repo>/pull/<n> \
   --note "what happened there"
 # prints [pr:xxxx]; write that in the comment, docstring, or document
 ```
@@ -85,8 +85,8 @@ A maintainer with access to the reviewed repositories sets up the check once per
 clone:
 
 ```sh
-python3 -m src.public_safety refresh-terms   # builds .private/terms.json from GitHub
-python3 -m src.public_safety install-hooks   # pre-commit and commit-msg hooks
+python3 -m prwarden.public_safety refresh-terms   # builds .private/terms.json from GitHub
+python3 -m prwarden.public_safety install-hooks   # pre-commit and commit-msg hooks
 ```
 
 `refresh-terms` reads `repositories.json` and collects each repository's owner and
@@ -99,7 +99,7 @@ refresh: `extra`, for names the reviewed repositories do not spell out, and
 The hooks then refuse a commit whose added lines, file names, or message contain
 any of those terms, a reference missing from the map, or a malformed one, and
 print where each one is. Check the whole tree with
-`python3 -m src.public_safety check --all`. Without the word list the check fails
+`python3 -m prwarden.public_safety check --all`. Without the word list the check fails
 rather than passing, because it has nothing to compare against.
 
 ## AI-assisted development process

@@ -7,8 +7,8 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from src.compare_metrics import main as compare_main
-from src.metrics import ReviewMetrics, compare, load
+from prwarden.compare_metrics import main as compare_main
+from prwarden.metrics import ReviewMetrics, compare, load
 
 
 def code_review(findings: int = 1) -> dict:
@@ -316,13 +316,13 @@ class RunWritingTests(unittest.TestCase):
 
     def setUp(self) -> None:
         # Pinning asks the real GitHub CLI for a stored login, which no test has.
-        pinning = patch("src.cli.pin_github_account")
+        pinning = patch("prwarden.cli.pin_github_account")
         pinning.start()
         self.addCleanup(pinning.stop)
 
     def settings(self, directory: str):
-        from src.config import Settings
-        from src.models import Repository
+        from prwarden.config import Settings
+        from prwarden.models import Repository
 
         repository = Repository("app", "owner/app", Path(directory))
         return Settings(
@@ -343,7 +343,7 @@ class RunWritingTests(unittest.TestCase):
     def run_with_metrics(self, directory: str, metrics_path):
         from argparse import Namespace
 
-        from src import cli
+        from prwarden import cli
 
         settings = self.settings(directory)
         args = Namespace(
@@ -357,9 +357,9 @@ class RunWritingTests(unittest.TestCase):
             engine=None,
             metrics=metrics_path,
         )
-        with patch("src.cli.load_settings", return_value=settings), patch(
-            "src.cli.create_review_engine"
-        ), patch("src.cli.list_open_prs", return_value=[]), patch(
+        with patch("prwarden.cli.load_settings", return_value=settings), patch(
+            "prwarden.cli.create_review_engine"
+        ), patch("prwarden.cli.list_open_prs", return_value=[]), patch(
             "sys.stdout", new_callable=StringIO
         ) as output:
             status = cli.run(args)

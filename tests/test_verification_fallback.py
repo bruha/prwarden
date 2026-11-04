@@ -7,11 +7,11 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from src import cli
-from src.config import Settings
-from src.engine import DESIGN_LEVEL, EngineError, design_candidate_ref
-from src.models import DesignAssessment, PullRequest, Repository, ReviewMaterial
-from src.review import ReviewError
+from prwarden import cli
+from prwarden.config import Settings
+from prwarden.engine import DESIGN_LEVEL, EngineError, design_candidate_ref
+from prwarden.models import DesignAssessment, PullRequest, Repository, ReviewMaterial
+from prwarden.review import ReviewError
 from tests.test_design_level import design_response
 
 
@@ -239,7 +239,7 @@ class VerificationFallbackUsageTests(unittest.TestCase):
             )
             received = []
             with patch(
-                "src.cli._review_with_head_restarts",
+                "prwarden.cli._review_with_head_restarts",
                 side_effect=lambda *args, **kwargs: received.append(
                     kwargs["verification"]
                 ),

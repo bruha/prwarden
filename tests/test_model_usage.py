@@ -6,10 +6,10 @@ import unittest
 from typing import Optional
 from unittest.mock import Mock
 
-from src.cli import _MeasuredEngine, _ModelUsage, _usage_label
-from src.engine import report_invocation_credits, take_invocation_credits
-from src.metrics import ReviewMetrics
-from src.models import PullRequest, Repository, ReviewMaterial
+from prwarden.cli import _MeasuredEngine, _ModelUsage, _usage_label
+from prwarden.engine import report_invocation_credits, take_invocation_credits
+from prwarden.metrics import ReviewMetrics
+from prwarden.models import PullRequest, Repository, ReviewMaterial
 from pathlib import Path
 
 
@@ -297,10 +297,10 @@ class UsageReportingTests(unittest.TestCase):
         from io import StringIO
         from unittest.mock import patch
 
-        from src import cli
-        from src.config import Settings
-        from src.models import PullRequestSnapshot
-        from src.state import JsonStateStore
+        from prwarden import cli
+        from prwarden.config import Settings
+        from prwarden.models import PullRequestSnapshot
+        from prwarden.state import JsonStateStore
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -330,17 +330,17 @@ class UsageReportingTests(unittest.TestCase):
             }
             run_usage = _ModelUsage()
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=()
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.list_pull_request_checks", return_value=()
+                "prwarden.cli.list_pull_request_checks", return_value=()
             ), patch(
-                "src.cli.get_pull_request_snapshot",
+                "prwarden.cli.get_pull_request_snapshot",
                 return_value=PullRequestSnapshot(
                     head_sha="head",
                     state="open",
@@ -350,7 +350,7 @@ class UsageReportingTests(unittest.TestCase):
                     mergeable=True,
                 ),
             ), patch(
-                "src.cli.review_workspace"
+                "prwarden.cli.review_workspace"
             ) as workspace, patch(
                 "sys.stdout", new_callable=StringIO
             ) as output:
@@ -381,9 +381,9 @@ class UsageReportingTests(unittest.TestCase):
         from io import StringIO
         from unittest.mock import patch
 
-        from src import cli
-        from src.config import Settings
-        from src.state import JsonStateStore
+        from prwarden import cli
+        from prwarden.config import Settings
+        from prwarden.state import JsonStateStore
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

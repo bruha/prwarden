@@ -42,7 +42,7 @@ Checkouts outside the protected folders avoid the question entirely.
 
 An interpreter denied that access does not wait: it fails at once, and because it
 cannot read the project it cannot report anything, so the only trace is `No module
-named 'src'` in the job's log. Check System Settings > Privacy & Security > Files &
+named 'prwarden'` in the job's log. Check System Settings > Privacy & Security > Files &
 Folders for the interpreter, which `/usr/bin/python3` lists as `python3`, and enable
 the folder there before switching the job to it.
 
@@ -98,7 +98,7 @@ following content. Substitute the exact Python, home, project, and log paths.
     <string>-s</string>
     <string>/opt/homebrew/bin/python3</string>
     <string>-m</string>
-    <string>src.prwarden</string>
+    <string>prwarden</string>
     <string>--live</string>
   </array>
 
@@ -202,13 +202,13 @@ environment needed by Python, GitHub CLI, and the selected authenticated review
 engine. Add this as one physical line after replacing all paths:
 
 ```cron
-0 8,12,16 * * 1-5 cd /Users/your-name/Documents/projects/prwarden && HOME=/Users/your-name PATH=/Users/your-name/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /usr/bin/caffeinate -i -s /opt/homebrew/bin/python3 -m src.prwarden --live >> /Users/your-name/Library/Logs/prwarden.log 2>&1 # PRWARDEN
+0 8,12,16 * * 1-5 cd /Users/your-name/Documents/projects/prwarden && HOME=/Users/your-name PATH=/Users/your-name/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /usr/bin/caffeinate -i -s /opt/homebrew/bin/python3 -m prwarden --live >> /Users/your-name/Library/Logs/prwarden.log 2>&1 # PRWARDEN
 ```
 
 Install it with `crontab -e`, or without opening an editor:
 
 ```sh
-CRON_LINE='0 8,12,16 * * 1-5 cd /Users/your-name/Documents/projects/prwarden && HOME=/Users/your-name PATH=/Users/your-name/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /usr/bin/caffeinate -i -s /opt/homebrew/bin/python3 -m src.prwarden --live >> /Users/your-name/Library/Logs/prwarden.log 2>&1 # PRWARDEN'
+CRON_LINE='0 8,12,16 * * 1-5 cd /Users/your-name/Documents/projects/prwarden && HOME=/Users/your-name PATH=/Users/your-name/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /usr/bin/caffeinate -i -s /opt/homebrew/bin/python3 -m prwarden --live >> /Users/your-name/Library/Logs/prwarden.log 2>&1 # PRWARDEN'
 
 (crontab -l 2>/dev/null | grep -v 'PRWARDEN'; printf '%s\n' "$CRON_LINE") | crontab -
 ```
@@ -256,7 +256,7 @@ deleted; it removes the entire crontab, not only this reviewer.
 - Confirm every repository path in `repositories.json` is accessible from the
   scheduled process. A run that started late after an interpreter upgrade was
   waiting for macOS to grant it `Documents`; a job log ending in `No module named
-  'src'` is an interpreter that was refused.
+  'prwarden'` is an interpreter that was refused.
 - Inspect the dedicated log and the scheduler's last exit status.
 - Check `.state/review-state.json.lock` only after confirming that no reviewer
   process is still running. Do not delete an active lock to force overlap.

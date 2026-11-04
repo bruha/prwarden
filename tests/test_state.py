@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.state import JsonStateStore, StateError
+from prwarden.state import JsonStateStore, StateError
 
 
 class JsonStateTests(unittest.TestCase):

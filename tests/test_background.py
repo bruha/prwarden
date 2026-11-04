@@ -6,21 +6,21 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from src import cli
-from src.config import Settings
-from src.engine import build_prompt
-from src.models import (
+from prwarden import cli
+from prwarden.config import Settings
+from prwarden.engine import build_prompt
+from prwarden.models import (
     PullRequest,
     PullRequestSnapshot,
     Repository,
     ReviewMaterial,
 )
-from src.review import (
+from prwarden.review import (
     BACKGROUND_FILE,
     MAX_BACKGROUND_BYTES,
     read_background,
 )
-from src.state import JsonStateStore
+from prwarden.state import JsonStateStore
 
 
 READY_SNAPSHOT = PullRequestSnapshot(
@@ -154,19 +154,19 @@ class BackgroundOrchestrationTests(unittest.TestCase):
                 "findings": [],
             }
 
-            with patch("src.cli.has_current_review", return_value=False), patch(
-                "src.cli.list_prior_review_comments", return_value=()
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch(
-                "src.cli.list_pull_request_checks", return_value=()
+                "prwarden.cli.list_pull_request_checks", return_value=()
             ), patch(
-                "src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
+                "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
             ), patch(
-                "src.cli.review_workspace"
+                "prwarden.cli.review_workspace"
             ) as workspace, patch(
                 "sys.stdout", new_callable=StringIO
             ) as output:

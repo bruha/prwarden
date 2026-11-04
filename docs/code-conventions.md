@@ -54,7 +54,7 @@ Local checks on a newer interpreter cannot detect a 3.9 syntax regression, so
 run the suite under `/usr/bin/python3` when changing syntax-sensitive code:
 
 ```sh
-/usr/bin/python3 -m compileall -q src tests
+/usr/bin/python3 -m compileall -q prwarden tests
 /usr/bin/python3 -m unittest discover -s tests
 ```
 

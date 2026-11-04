@@ -1,6 +1,6 @@
 """Compare two run measurements.
 
-    python3 -m src.compare_metrics before.json after.json
+    python3 -m prwarden.compare_metrics before.json after.json
 
 Produce the inputs with `--metrics PATH` on two runs over the same pull requests,
 one before a prompt, model, or setting change and one after. The numbers that moved

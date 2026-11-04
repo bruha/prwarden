@@ -6,11 +6,11 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import src.cli as cli
-from src.commands import CommandError
-from src.config import ConfigError, Settings, load_repositories
-from src.github import LGTM_COMMENT_MARKER, format_lgtm_comment
-from src.models import (
+import prwarden.cli as cli
+from prwarden.commands import CommandError
+from prwarden.config import ConfigError, Settings, load_repositories
+from prwarden.github import LGTM_COMMENT_MARKER, format_lgtm_comment
+from prwarden.models import (
     DiffBudget,
     DeferredFile,
     PriorReviewComment,
@@ -18,7 +18,7 @@ from src.models import (
     PullRequestSnapshot,
     Repository,
 )
-from src.state import JsonStateStore
+from prwarden.state import JsonStateStore
 
 
 READY_SNAPSHOT = PullRequestSnapshot(
@@ -145,26 +145,26 @@ class OwnPullRequestOutsideSlackTests(unittest.TestCase):
             if hide is not None:
                 calls.hide.side_effect = hide
             with patch(
-                "src.cli.has_current_review", return_value=False
+                "prwarden.cli.has_current_review", return_value=False
             ) as current, patch(
-                "src.cli.list_prior_review_comments", return_value=()
+                "prwarden.cli.list_prior_review_comments", return_value=()
             ), patch(
-                "src.cli.list_changed_files",
+                "prwarden.cli.list_changed_files",
                 return_value=[
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
-            ), patch("src.cli.list_pull_request_checks", return_value=()), patch(
-                "src.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
-            ), patch("src.cli.review_workspace") as workspace, patch(
-                "src.cli.submit_approval", return_value="approval-1"
+            ), patch("prwarden.cli.list_pull_request_checks", return_value=()), patch(
+                "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.submit_approval", return_value="approval-1"
             ) as approval, patch(
-                "src.cli.submit_review", calls.review
+                "prwarden.cli.submit_review", calls.review
             ) as review, patch(
-                "src.cli.submit_lgtm_comment", calls.post
+                "prwarden.cli.submit_lgtm_comment", calls.post
             ) as lgtm, patch(
-                "src.cli.hide_earlier_lgtm_comments", calls.hide
+                "prwarden.cli.hide_earlier_lgtm_comments", calls.hide
             ) as hidden, patch(
-                "src.cli.send_slack_message", return_value="http-200"
+                "prwarden.cli.send_slack_message", return_value="http-200"
             ) as slack_message, patch("sys.stdout", new_callable=StringIO) as output:
                 workspace.return_value.__enter__.return_value = repository
                 workspace.return_value.dependency_links = ()
@@ -219,7 +219,7 @@ class OwnPullRequestOutsideSlackTests(unittest.TestCase):
 
     def test_the_lgtm_names_the_configured_verifier_that_had_nothing_to_check(self):
         with patch(
-            "src.cli._verifier_identity", return_value=("kiro", "gpt-5.6-terra")
+            "prwarden.cli._verifier_identity", return_value=("kiro", "gpt-5.6-terra")
         ):
             result = self.review([APPROVING])
 
@@ -352,7 +352,7 @@ class NoticesOutsideSlackTests(unittest.TestCase):
                 reviewed_files=1,
                 deferred=(DeferredFile("big.py", 20),),
             )
-            with patch("src.cli.send_slack_message") as slack, patch(
+            with patch("prwarden.cli.send_slack_message") as slack, patch(
                 "sys.stdout", new_callable=StringIO
             ), JsonStateStore(settings.state_file) as store:
                 settled = cli._notify_manual_review(
@@ -378,7 +378,7 @@ class NoticesOutsideSlackTests(unittest.TestCase):
             objection = PriorReviewComment(
                 "inline:9", "inline", "teammate", "Please wait.", "app.py", 1
             )
-            with patch("src.cli.send_slack_message") as slack, patch(
+            with patch("prwarden.cli.send_slack_message") as slack, patch(
                 "sys.stdout", new_callable=StringIO
             ), JsonStateStore(settings.state_file) as store:
                 key = store.key("owner/app", 1, "head", "github")

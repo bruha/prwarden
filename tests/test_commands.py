@@ -2,7 +2,7 @@ import subprocess
 import unittest
 from unittest.mock import Mock, patch
 
-from src.commands import CommandError, run_cmd
+from prwarden.commands import CommandError, run_cmd
 
 
 class CommandRetryTests(unittest.TestCase):
@@ -15,9 +15,9 @@ class CommandRetryTests(unittest.TestCase):
         success = Mock(returncode=0, stderr="", stdout="reviewer\n")
 
         with patch(
-            "src.commands.subprocess.run",
+            "prwarden.commands.subprocess.run",
             side_effect=[failure, failure, success],
-        ) as subprocess_run, patch("src.commands.time.sleep") as sleep:
+        ) as subprocess_run, patch("prwarden.commands.time.sleep") as sleep:
             output = run_cmd(
                 ["gh", "api", "user"],
                 retry_transient=True,
@@ -33,9 +33,9 @@ class CommandRetryTests(unittest.TestCase):
         failure = Mock(returncode=1, stderr="HTTP 401: Bad credentials", stdout="")
 
         with patch(
-            "src.commands.subprocess.run",
+            "prwarden.commands.subprocess.run",
             return_value=failure,
-        ) as subprocess_run, patch("src.commands.time.sleep") as sleep:
+        ) as subprocess_run, patch("prwarden.commands.time.sleep") as sleep:
             with self.assertRaisesRegex(CommandError, "Bad credentials"):
                 run_cmd(["gh", "api", "user"], retry_transient=True)
 
@@ -66,7 +66,7 @@ class CommandRetryTests(unittest.TestCase):
         for name, result, failure, expected in cases:
             with self.subTest(case=name):
                 with patch(
-                    "src.commands.subprocess.run",
+                    "prwarden.commands.subprocess.run",
                     return_value=result,
                     side_effect=failure,
                 ):
@@ -84,9 +84,9 @@ class CommandRetryTests(unittest.TestCase):
         success = Mock(returncode=0, stderr="", stdout="reviewer")
 
         with patch(
-            "src.commands.subprocess.run",
+            "prwarden.commands.subprocess.run",
             side_effect=[timeout, success],
-        ), patch("src.commands.time.sleep") as sleep:
+        ), patch("prwarden.commands.time.sleep") as sleep:
             output = run_cmd(
                 ["gh", "api", "user"],
                 retry_transient=True,

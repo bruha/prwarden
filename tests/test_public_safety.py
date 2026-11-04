@@ -9,8 +9,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from src import public_safety
-from src.public_safety import (
+from prwarden import public_safety
+from prwarden.public_safety import (
     RepositorySource,
     SafetyError,
     Terms,
@@ -130,9 +130,9 @@ class ScanTests(unittest.TestCase):
     def test_only_this_module_may_spell_out_malformed_references(self) -> None:
         line = "acme-corp and [pr:c4]"
         for location, expected in (
-            ("src/public_safety.py:9", ["name"]),
+            ("prwarden/public_safety.py:9", ["name"]),
             ("tests/test_public_safety.py:9", ["name"]),
-            ("src/cli.py:9", ["name", "malformed reference"]),
+            ("prwarden/cli.py:9", ["name", "malformed reference"]),
         ):
             with self.subTest(location):
                 kinds = [f.kind for f in scan([(location, line)], terms(), {})]
@@ -219,7 +219,7 @@ class RepositoryTests(unittest.TestCase):
     def test_a_new_reference_skips_word_like_and_taken_ids(self) -> None:
         taken = new_ref(self.root, "https://example.invalid/pull/1")
         draws = iter("abcd" + taken + "k4m5")
-        with patch("src.public_safety.secrets.choice", lambda _: next(draws)):
+        with patch("prwarden.public_safety.secrets.choice", lambda _: next(draws)):
             ref = new_ref(self.root, "https://example.invalid/pull/2")
         self.assertEqual(ref, "k4m5")
 
@@ -230,7 +230,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(names, ["commit-msg", "pre-commit"])
         for path in written:
             self.assertTrue(os.access(path, os.X_OK))
-            self.assertIn("src.public_safety", path.read_text())
+            self.assertIn("prwarden.public_safety", path.read_text())
         install_hooks(self.root)
         foreign = self.root / ".git" / "hooks" / "pre-commit"
         foreign.write_text("#!/bin/sh\nexit 0\n")

@@ -6,7 +6,7 @@ narrow.
 ## Issues
 
 Open an issue for a bug, a question, or an idea. A useful bug report names the
-version (`python3 -m src.prwarden --version`), the review engine and its CLI
+version (`python3 -m prwarden --version`), the review engine and its CLI
 version, what you ran, and what happened. Report a vulnerability through
 [SECURITY.md](SECURITY.md) instead, never in a public issue.
 
@@ -34,7 +34,7 @@ A change follows [AGENTS.md](AGENTS.md) and the guides it links. In short:
 
 ```sh
 python3 -m unittest discover -s tests
-python3 -m compileall -q src tests
+python3 -m compileall -q prwarden tests
 git diff --check
 ```
 

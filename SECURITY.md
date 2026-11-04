@@ -18,7 +18,7 @@ asks for a private contact and contains no details.
 
 A useful report includes:
 
-- the version (`python3 -m src.prwarden --version`) and the review engine
+- the version (`python3 -m prwarden --version`) and the review engine
   and its CLI version;
 - what an attacker controls, such as the pull-request diff, title, body, branch
   name, comments, or files in the reviewed head;

@@ -144,7 +144,7 @@ bounded before a GitHub review request begins.
 Run a targeted dry review after editing either file:
 
 ```sh
-python3 -m src.prwarden --repo your-org/example-app --pr 123
+python3 -m prwarden --repo your-org/example-app --pr 123
 ```
 
 The command validates configuration without delivery, but it performs an actual
