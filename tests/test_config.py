@@ -6,6 +6,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import prwarden.config as config
+from prwarden.comment_template import (
+    DEFAULT_GITHUB_COMMENT_TAGS_FILE,
+    DEFAULT_GITHUB_COMMENT_TEMPLATE_FILE,
+)
 
 
 def write_private_env(path: Path, content: str) -> None:
@@ -1064,6 +1068,97 @@ class GithubUsernameResolutionTests(unittest.TestCase):
                 settings = config.load_settings(env_file, repositories_file)
             self.assertEqual(settings.reviewer_username, "configured-user")
             run_command.assert_not_called()
+
+
+class ConfigurationLocationTests(unittest.TestCase):
+    """Where an installed copy finds its configuration, since it has no checkout."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.home = Path(temporary.name).resolve()
+        (self.home / "repositories.json").write_text(
+            '[{"slug": "example/app", "path": "."}]', encoding="utf-8"
+        )
+        username = patch(
+            "prwarden.config.resolve_github_username", return_value="reviewer"
+        )
+        username.start()
+        self.addCleanup(username.stop)
+
+    def _load(self, env: str = "", **environ: str) -> config.Settings:
+        write_private_env(self.home / ".env", env)
+        with patch.dict(
+            os.environ, {"PRWARDEN_HOME": str(self.home), **environ}, clear=True
+        ):
+            return config.load_settings()
+
+    def test_everything_defaults_to_the_configured_home(self) -> None:
+        settings = self._load("AUTO_REVIEW_DRY_RUN=0\n")
+
+        self.assertFalse(settings.dry_run)
+        self.assertEqual(settings.repositories[0].path, self.home)
+        self.assertEqual(
+            settings.state_file, self.home / ".state" / "review-state.json"
+        )
+
+    def test_relative_settings_resolve_from_the_configuration_directory(
+        self,
+    ) -> None:
+        """Not from wherever the run started, which a scheduler does not choose."""
+
+        (self.home / "private").mkdir()
+        (self.home / "repositories.json").rename(
+            self.home / "private" / "repositories.json"
+        )
+
+        settings = self._load(
+            "REPOSITORIES_FILE=private/repositories.json\n"
+            "STATE_FILE=records/state.json\n"
+        )
+
+        self.assertEqual(settings.repositories[0].path, self.home / "private")
+        self.assertEqual(settings.state_file, self.home / "records" / "state.json")
+
+    def test_the_old_default_template_paths_still_mean_the_defaults(self) -> None:
+        """`.env.example` named them under templates/ until they moved."""
+
+        settings = self._load(
+            "GITHUB_COMMENT_TEMPLATE_FILE=templates/github-comment.md\n"
+            "GITHUB_COMMENT_TAGS_FILE=./templates/github-comment-tags.json\n"
+        )
+
+        self.assertEqual(
+            settings.github_comment_template.source,
+            DEFAULT_GITHUB_COMMENT_TEMPLATE_FILE,
+        )
+        self.assertEqual(
+            settings.github_comment_template.tags_source,
+            DEFAULT_GITHUB_COMMENT_TAGS_FILE,
+        )
+
+    def test_a_template_kept_in_the_configuration_directory_is_used(self) -> None:
+        (self.home / "templates").mkdir()
+        override = self.home / "templates" / "github-comment.md"
+        override.write_text(
+            DEFAULT_GITHUB_COMMENT_TEMPLATE_FILE.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+
+        settings = self._load(
+            "GITHUB_COMMENT_TEMPLATE_FILE=templates/github-comment.md\n"
+        )
+
+        self.assertEqual(settings.github_comment_template.source, override)
+
+    def test_a_missing_configured_template_is_still_an_error(self) -> None:
+        with self.assertRaises(config.ConfigError):
+            self._load("GITHUB_COMMENT_TEMPLATE_FILE=my-comment.md\n")
+
+    def test_a_relative_home_is_a_configuration_error(self) -> None:
+        with patch.dict(os.environ, {"PRWARDEN_HOME": "relative"}, clear=True):
+            with self.assertRaisesRegex(config.ConfigError, "PRWARDEN_HOME"):
+                config.load_settings()
 
 
 if __name__ == "__main__":

@@ -16,12 +16,9 @@ from .comment_template import (
 )
 from .commands import CommandError, run_cmd
 from .models import Repository
+from .paths import LocationError, Locations, resolve_locations
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_ENV_FILE = PROJECT_ROOT / ".env"
-DEFAULT_REPOSITORIES_FILE = PROJECT_ROOT / "repositories.json"
-DEFAULT_STATE_FILE = PROJECT_ROOT / ".state" / "review-state.json"
 MAX_REVIEW_BUNDLE_LIMIT = 8
 MAX_REVIEW_CONCURRENCY = 8
 MAX_RUN_LOG_RETENTION_DAYS = 365
@@ -213,8 +210,9 @@ def resolve_path(value: str, base_directory: Path) -> Path:
 def load_repositories(path: Path) -> list[Repository]:
     if not path.exists():
         raise ConfigError(
-            f"Repository configuration not found: {path}. "
-            "Copy repositories.example.json to repositories.json and edit it."
+            f"Repository configuration not found: {path}. Copy "
+            "repositories.example.json from the PR Warden repository there and "
+            "edit it."
         )
 
     try:
@@ -503,8 +501,36 @@ def _optional_engine(
     return engine, command, model, effort
 
 
+def default_locations() -> Locations:
+    """Return this run's configuration and state locations, as a ConfigError."""
+
+    try:
+        return resolve_locations()
+    except LocationError as error:
+        raise ConfigError(str(error)) from error
+
+
+# Until 2.1.0 the default comment files sat in a `templates/` directory beside the
+# package, and `.env.example` named them there. They now ship inside the package so
+# an installed copy has them too; a setting that still names the old place means the
+# default it always meant.
+LEGACY_TEMPLATE_DIRECTORY = Path("templates")
+
+
+def _comment_file(variable: str, default: Path, base_directory: Path) -> Path:
+    configured = os.getenv(variable, "").strip()
+    if not configured:
+        return default
+    resolved = resolve_path(configured, base_directory)
+    if not resolved.exists() and Path(configured) == (
+        LEGACY_TEMPLATE_DIRECTORY / default.name
+    ):
+        return default
+    return resolved
+
+
 def load_settings(
-    env_file: Path = DEFAULT_ENV_FILE,
+    env_file: Optional[Path] = None,
     repositories_file: Optional[Path] = None,
     state_file: Optional[Path] = None,
     review_engine_override: Optional[str] = None,
@@ -515,15 +541,19 @@ def load_settings(
     fallback_model_override: Optional[str] = None,
     fallback_disabled: bool = False,
 ) -> Settings:
-    declared = load_env_file(env_file)
+    locations = default_locations()
+    # Relative settings resolve against the configuration directory, which in a
+    # source checkout is the checkout root they always resolved against.
+    base_directory = locations.config_directory
+    declared = load_env_file(env_file if env_file is not None else locations.env_file)
 
     selected_repositories_file = repositories_file
     if selected_repositories_file is None:
         configured_value = os.getenv("REPOSITORIES_FILE")
         selected_repositories_file = (
-            resolve_path(configured_value, PROJECT_ROOT)
+            resolve_path(configured_value, base_directory)
             if configured_value
-            else DEFAULT_REPOSITORIES_FILE
+            else locations.repositories_file
         )
     elif not selected_repositories_file.is_absolute():
         selected_repositories_file = (Path.cwd() / selected_repositories_file).resolve()
@@ -532,30 +562,22 @@ def load_settings(
     if selected_state_file is None:
         configured_state = os.getenv("STATE_FILE")
         selected_state_file = (
-            resolve_path(configured_state, PROJECT_ROOT)
+            resolve_path(configured_state, base_directory)
             if configured_state
-            else DEFAULT_STATE_FILE
+            else locations.state_file
         )
     elif not selected_state_file.is_absolute():
         selected_state_file = (Path.cwd() / selected_state_file).resolve()
 
-    configured_comment_template = os.getenv(
+    comment_template_file = _comment_file(
         "GITHUB_COMMENT_TEMPLATE_FILE",
-        "",
-    ).strip()
-    comment_template_file = (
-        resolve_path(configured_comment_template, PROJECT_ROOT)
-        if configured_comment_template
-        else DEFAULT_GITHUB_COMMENT_TEMPLATE_FILE
+        DEFAULT_GITHUB_COMMENT_TEMPLATE_FILE,
+        base_directory,
     )
-    configured_comment_tags = os.getenv(
+    comment_tags_file = _comment_file(
         "GITHUB_COMMENT_TAGS_FILE",
-        "",
-    ).strip()
-    comment_tags_file = (
-        resolve_path(configured_comment_tags, PROJECT_ROOT)
-        if configured_comment_tags
-        else DEFAULT_GITHUB_COMMENT_TAGS_FILE
+        DEFAULT_GITHUB_COMMENT_TAGS_FILE,
+        base_directory,
     )
     try:
         github_comment_template = load_comment_template(

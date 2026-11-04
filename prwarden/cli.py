@@ -18,9 +18,7 @@ from . import __version__, progress
 from .comment_template import CommentTemplateError
 from .commands import CommandError
 from .config import (
-    DEFAULT_ENV_FILE,
     MAX_REVIEW_CONCURRENCY,
-    PROJECT_ROOT,
     ConfigError,
     Settings,
     load_settings,
@@ -89,6 +87,7 @@ from .models import (
     ReviewMaterial,
 )
 from .metrics import ReviewMetrics
+from .paths import PACKAGE_ROOT
 from .review import (
     build_bundled_review_material,
     BACKGROUND_FILE,
@@ -659,8 +658,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--env-file",
         type=Path,
-        default=DEFAULT_ENV_FILE,
-        help="dotenv file to load (default: .env in the project root)",
+        help=(
+            "dotenv file to load (default: .env in the configuration directory: "
+            "the checkout root, $PRWARDEN_HOME, or ~/.config/prwarden)"
+        ),
     )
     parser.add_argument(
         "--repositories-file",
@@ -1488,7 +1489,7 @@ def _crash_location(error: BaseException) -> str:
     frames = traceback.extract_tb(error.__traceback__)
     for frame in reversed(frames):
         try:
-            relative = Path(frame.filename).resolve().relative_to(PROJECT_ROOT)
+            relative = Path(frame.filename).resolve().relative_to(PACKAGE_ROOT)
         except ValueError:
             continue
         return f"{relative.as_posix()}:{frame.lineno} ({frame.name})"

@@ -42,6 +42,17 @@ Private configuration remains outside Git:
   to fetch immutable PR head commits.
 - `.state/review-state.json`: delivery idempotency records.
 
+These live in the configuration and state directories resolved at startup by
+`prwarden/paths.py`, before `.env` is read. `PRWARDEN_HOME`, when set, must be
+absolute and holds both, laid out as above. Otherwise a source checkout, recognised
+by `repositories.example.json` beside the package, keeps them in its own root as
+listed. An installed copy has no such root and uses `~/.config/prwarden` for
+configuration and `~/.local/state/prwarden` for state, or the absolute
+`XDG_CONFIG_HOME` and `XDG_STATE_HOME` directories when set; it never writes beside
+the installed package. Relative paths in `.env` resolve from the configuration
+directory. The default GitHub comment template ships in `prwarden/templates/`, and
+a setting that still names the pre-2.1.0 `templates/` defaults selects them.
+
 Safe templates are committed as `.env.example` and
 `repositories.example.json`. The configured reviewer identity is the current
 authenticated GitHub CLI user, resolved once at startup from

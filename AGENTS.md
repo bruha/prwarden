@@ -37,6 +37,8 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
 - `prwarden/review.py`: diff construction and semantic response validation.
 - `prwarden/delivery.py`: Slack message formatting and delivery helpers.
 - `prwarden/comment_template.py`: validated GitHub comment templates and tag aliases.
+- `prwarden/templates/`: public-safe default GitHub comment layout and tag registry,
+  shipped inside the package.
 - `prwarden/progress.py`: in-place progress line and per-thread output capture.
 - `prwarden/metrics.py`: structured measurement of what a run's reviews decided.
 - `prwarden/compare_metrics.py`: reports what moved between two measurements.
@@ -44,10 +46,10 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
 - `prwarden/public_safety.py`: keeps reviewed projects' names out of commits; the
   public-safety Git hooks and the private `[pr:xxxx]` reference map.
 - `prwarden/state.py`: atomic JSON state and the single-host process lock.
+- `prwarden/paths.py`: where configuration and state live, checkout or installed.
 - `prwarden/workspace.py`: immutable PR-head fetch, detached worktree lifecycle, and
   read-only installed-dependency links.
 - `tests/`: standard-library `unittest` suite mirroring application modules.
-- `templates/`: public-safe default GitHub comment layout and tag registry.
 - `evals/`: example replay cases and experiment arms; the real ones are ignored.
 - `VERSION`: canonical SemVer version, mirrored by `prwarden.__version__`.
 - `CHANGELOG.md`: Keep a Changelog-style release history.
@@ -135,7 +137,7 @@ in the current worktree.
   Code, TDD, error handling, and security.
 - [Testing and quality](docs/testing-and-quality.md): TDD workflow, test
   strategy, and gates.
-- [GitHub comment template how-to](templates/README.md): layout, complete tag
+- [GitHub comment template how-to](prwarden/templates/README.md): layout, complete tag
   reference, aliases, examples, local overrides, and validation.
 - [Development workflow](docs/development-workflow.md): branches, commits, PRs,
   user approval, and merge policy.

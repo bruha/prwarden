@@ -17,6 +17,8 @@ about losing work biases a verifier away from the judgment it was asked to make.
 Use these module responsibilities:
 
 - `config`: parse and validate untrusted local configuration.
+- `paths`: decide where configuration and state live, for a checkout or an
+  installed copy, before any of it is read.
 - `commands`: execute subprocesses and preserve failure output.
 - `github`: perform GitHub reads and writes through explicit operations.
 - `workspace`: create and clean exact detached PR-head worktrees.

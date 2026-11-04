@@ -7,13 +7,10 @@ from pathlib import Path
 from typing import Mapping
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_GITHUB_COMMENT_TEMPLATE_FILE = (
-    PROJECT_ROOT / "templates" / "github-comment.md"
-)
-DEFAULT_GITHUB_COMMENT_TAGS_FILE = (
-    PROJECT_ROOT / "templates" / "github-comment-tags.json"
-)
+# The defaults ship inside the package, so an installed copy carries them as well.
+TEMPLATE_DIRECTORY = Path(__file__).resolve().parent / "templates"
+DEFAULT_GITHUB_COMMENT_TEMPLATE_FILE = TEMPLATE_DIRECTORY / "github-comment.md"
+DEFAULT_GITHUB_COMMENT_TAGS_FILE = TEMPLATE_DIRECTORY / "github-comment-tags.json"
 MAX_TEMPLATE_BYTES = 100_000
 MAX_RENDERED_COMMENT_BYTES = 60_000
 TAG_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")

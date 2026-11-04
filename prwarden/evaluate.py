@@ -46,8 +46,6 @@ from typing import Any, Iterator, NamedTuple, Optional, Sequence
 
 from .commands import CommandError, run_cmd
 from .config import (
-    DEFAULT_ENV_FILE,
-    DEFAULT_REPOSITORIES_FILE,
     MAX_REVIEW_CONCURRENCY,
     ConfigError,
     Settings,
@@ -2448,10 +2446,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python3 -m prwarden.evaluate",
         description="Replay recorded pull requests to measure a change to the reviewer",
     )
-    parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
-    parser.add_argument(
-        "--repositories-file", type=Path, default=DEFAULT_REPOSITORIES_FILE
-    )
+    parser.add_argument("--env-file", type=Path)
+    parser.add_argument("--repositories-file", type=Path)
     parser.add_argument(
         "--cases",
         type=Path,

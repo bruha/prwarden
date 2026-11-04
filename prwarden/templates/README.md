@@ -117,22 +117,26 @@ the value can be validated and supplied safely.
 
 ## Keep personal formatting untracked
 
-Copy the committed defaults to the ignored root filenames:
+Copy the defaults into the configuration directory, which is the checkout root in a
+source checkout:
 
 ```sh
-cp templates/github-comment.md github-comment.md
-cp templates/github-comment-tags.json github-comment-tags.json
+cp prwarden/templates/github-comment.md github-comment.md
+cp prwarden/templates/github-comment-tags.json github-comment-tags.json
 ```
 
-Point `.env` at the copies:
+An installed copy keeps its configuration in `~/.config/prwarden` instead, or in
+`$PRWARDEN_HOME` when that is set; copy the defaults from the PR Warden repository
+there. Point `.env` at the copies:
 
 ```dotenv
 GITHUB_COMMENT_TEMPLATE_FILE=github-comment.md
 GITHUB_COMMENT_TAGS_FILE=github-comment-tags.json
 ```
 
-Relative paths resolve from the project root. These two root files are ignored
-by Git, so personal formatting does not modify the public defaults.
+Relative paths resolve from the configuration directory. In a checkout the two root
+files are ignored by Git, so personal formatting does not modify the public
+defaults.
 
 ## Validate a customization
 

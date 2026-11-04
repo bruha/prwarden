@@ -153,6 +153,20 @@ See [.env.example](.env.example) for every setting and
 [Review engine setup](docs/review-engines.md) for provider authentication and
 adapter-specific commands.
 
+### Where configuration and state live
+
+| Layout | Configuration (`.env`, `repositories.json`) | State, run logs, worktrees |
+| --- | --- | --- |
+| Source checkout | The checkout root | `.state/` in the checkout |
+| Installed copy | `~/.config/prwarden` | `~/.local/state/prwarden` |
+| `PRWARDEN_HOME` set | `$PRWARDEN_HOME` | `$PRWARDEN_HOME/.state` |
+
+`PRWARDEN_HOME` must be an absolute path set in the environment, not in `.env`,
+because it decides which `.env` is read. An installed copy honours
+`XDG_CONFIG_HOME` and `XDG_STATE_HOME`. Relative paths in `.env`, such as
+`REPOSITORIES_FILE`, resolve from the configuration directory. Each layout keeps its
+own state, so schedule only one of them on a machine.
+
 ## Usage
 
 Display the installed project version:
@@ -422,7 +436,7 @@ are rejected when an exact-head build or typecheck check succeeded. Detailed beh
 the [review specification](docs/auto_code_review_spec.md).
 
 GitHub inline finding layout is configurable without changing Python code. See
-the [GitHub comment template how-to](templates/README.md) for the Markdown
+the [GitHub comment template how-to](prwarden/templates/README.md) for the Markdown
 template, complete tag reference, examples, local overrides, and validation
 rules.
 
@@ -727,8 +741,9 @@ which.
 
 ## State, errors, and scheduling
 
-The default `.state/review-state.json` provides atomic, single-host delivery
-idempotency. A process lock rejects overlapping live runs using that state file.
+The default `.state/review-state.json`, or `review-state.json` in the state
+directory of an [installed copy](#where-configuration-and-state-live), provides
+atomic, single-host delivery idempotency. A process lock rejects overlapping live runs using that state file.
 Dry runs do not take the lock.
 
 A live run that meets the lock is a safe skip, not a failure: it reports the run
