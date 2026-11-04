@@ -101,6 +101,14 @@ installation and never review. A first word naming one of them is dispatched bef
 the review parser, which takes no positional argument, so no review invocation can
 be mistaken for one.
 
+- `setup` and `doctor` first check every tool with its own status command, which
+  reads a stored login and calls no model, in the environment a scheduled run
+  gets. `setup` then offers to install a missing one with one vetted command, a
+  Homebrew formula or cask where Homebrew can install it and otherwise the vendor's
+  own installer from the vendor's domain, shown in full and run only on a yes, and
+  to run the tool's own sign-in. It never runs `sudo`; GitHub CLI on Linux without
+  Homebrew is left to its instructions. GitHub CLI and one signed-in AI CLI are
+  required to continue.
 - `setup` writes `.env` and `repositories.json`, both mode `0600`, keeping any
   files it replaces beside them. It pins `GITHUB_REVIEWER_USERNAME` to the chosen
   account, tries each signed-in account in turn for a repository the reviewer
@@ -110,8 +118,10 @@ be mistaken for one.
   for. `--import` copies a source checkout's configuration with its relative paths
   made absolute, and its delivery records, and refuses to merge into an existing
   installation.
-- `doctor` only reads: no post, clone, or model call. It exits 1 for anything that
-  would stop reviews or delivery, including two schedules running at once.
+- `doctor` only reads: no post, clone, or model call. It shows which tools are
+  installed and signed in, and exits 1 for anything that would stop reviews or
+  delivery, a configured engine that is signed out and two schedules running at
+  once included.
 - `schedule install` writes a per-user LaunchAgent on macOS or a systemd user
   timer on Linux that runs `prwarden --live`, and refuses while the configuration
   keeps `AUTO_REVIEW_DRY_RUN` on: a dry run records nothing, so a scheduled one

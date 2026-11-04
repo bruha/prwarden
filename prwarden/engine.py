@@ -1841,11 +1841,8 @@ def _process_owner() -> Optional[str]:
         return None
 
 
-def build_engine_environment(
-    settings: Settings,
-    additions: Optional[Mapping[str, str]] = None,
-) -> dict[str, str]:
-    """Return the scrubbed environment for one engine invocation.
+def scrubbed_environment(names: Sequence[str] = ()) -> dict[str, str]:
+    """Return the few variables an authenticated CLI needs, and ``names``.
 
     A scheduled run inherits far less than an interactive shell. launchd and cron
     supply no USER or LOGNAME, and an authenticated CLI that resolves its stored
@@ -1864,15 +1861,23 @@ def build_engine_environment(
         "USER",
         "LOGNAME",
         "SHELL",
+        *names,
     )
     environment = {name: os.environ[name] for name in safe_names if name in os.environ}
     account = environment.get("USER") or environment.get("LOGNAME") or _process_owner()
     if account:
         environment.setdefault("USER", account)
         environment.setdefault("LOGNAME", account)
-    for name in settings.review_engine_env_allowlist:
-        if name in os.environ:
-            environment[name] = os.environ[name]
+    return environment
+
+
+def build_engine_environment(
+    settings: Settings,
+    additions: Optional[Mapping[str, str]] = None,
+) -> dict[str, str]:
+    """Return the scrubbed environment for one engine invocation."""
+
+    environment = scrubbed_environment(settings.review_engine_env_allowlist)
     if additions:
         environment.update(additions)
     return environment

@@ -22,10 +22,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence
 
-from . import __version__, github, schedule
+from . import __version__, github, schedule, tools
 from .commands import CommandError, run_cmd
 from .config import (
-    DEFAULT_ENGINE_COMMANDS,
     ConfigError,
     default_locations,
     load_env_file,
@@ -86,6 +85,112 @@ class Prompter:
             self.say(f"Choose one of: {', '.join(choices)}")
 
 
+# The tools ---------------------------------------------------------------------
+
+
+def _install(
+    prompter: Prompter, tool: "tools.Tool", run: "tools.Runner"
+) -> "tools.ToolState":
+    """Install one tool with its vetted command once the operator agrees."""
+
+    plan = tools.install_plan(tool)
+    if plan.command is None:
+        prompter.say(f"{tool.name}: {plan.description}")
+        return tools.check(tool)
+    prompter.say(f"{tool.name} installs with: {plan.description}")
+    if not prompter.confirm(f"Run it now to install {tool.name}?"):
+        return tools.check(tool)
+    code = run(plan.command)
+    state = tools.check(tool)
+    if not state.installed:
+        prompter.say(
+            f"{tool.name} is still not installed (the installer exited {code}); see "
+            f"{tool.instructions}"
+        )
+        return state
+    version = f" {state.version}" if state.version else ""
+    prompter.say(f"{tool.name}{version} is installed.")
+    if state.signed_in is False:
+        state = _sign_in(prompter, state, run)
+    return state
+
+
+def _sign_in(
+    prompter: Prompter, state: "tools.ToolState", run: "tools.Runner"
+) -> "tools.ToolState":
+    """Run a tool's own sign-in in this terminal, then check it took."""
+
+    tool = state.tool
+    if not prompter.confirm(
+        f"Sign in to {tool.name} now? {tool.login_hint}", default=True
+    ):
+        return state
+    run(tools.login_command(state))
+    after = tools.check(tool)
+    if after.signed_in:
+        prompter.say(f"{tool.name} is signed in.")
+    else:
+        prompter.say(f"{tool.name} is still not signed in.")
+    return after
+
+
+def _numbers(answer: str, count: int) -> "List[int]":
+    chosen = []
+    for part in answer.replace(",", " ").split():
+        if part.isdigit() and 1 <= int(part) <= count and int(part) - 1 not in chosen:
+            chosen.append(int(part) - 1)
+    return chosen
+
+
+def ensure_tools(
+    prompter: Prompter,
+    run: "tools.Runner" = tools.run_in_terminal,
+    check_all: "Callable[[], List[tools.ToolState]]" = tools.check_all,
+) -> "List[tools.ToolState]":
+    """Check every tool, and install and sign in to what the operator chooses.
+
+    GitHub CLI is required. Of the AI CLIs at least one must end up signed in, and
+    two from different vendors are suggested, so one can verify the other.
+    """
+
+    prompter.say("Checking the tools PR Warden uses...")
+    states = {state.tool.key: state for state in check_all()}
+    for line in tools.render_table(list(states.values())):
+        prompter.say(f"  {line}")
+
+    gh = states["gh"]
+    if not gh.installed:
+        prompter.say("GitHub CLI is required: PR Warden reads and posts through it.")
+        gh = states["gh"] = _install(prompter, gh.tool, run)
+    if not gh.installed:
+        raise SetupError("GitHub CLI is required; install it and run setup again")
+    if not gh.signed_in:
+        gh = states["gh"] = _sign_in(prompter, gh, run)
+    if not gh.signed_in:
+        raise SetupError("Sign in with `gh auth login` and run setup again")
+
+    engines = [state for state in states.values() if state.tool.engine]
+    missing = [state.tool for state in engines if not state.installed]
+    ready = [state for state in engines if state.installed and state.signed_in]
+    if missing:
+        if len(ready) < 2:
+            prompter.say(
+                "Two AI CLIs from different companies let one verify what the other "
+                "finds. Each needs its own account or subscription."
+            )
+        for index, tool in enumerate(missing, 1):
+            prompter.say(f"  {index}. {tool.name}")
+        answer = prompter.text(
+            "Install which? Numbers separated by spaces, or Enter for none"
+        )
+        for index in _numbers(answer, len(missing)):
+            states[missing[index].key] = _install(prompter, missing[index], run)
+    for state in list(states.values()):
+        if state.tool.engine and state.installed and state.signed_in is False:
+            states[state.tool.key] = _sign_in(prompter, state, run)
+    return list(states.values())
+
+
 # What there is to choose from --------------------------------------------------
 
 
@@ -112,15 +217,15 @@ def github_accounts() -> "tuple[List[str], Optional[str]]":
     return logins, active if active in logins else logins[0]
 
 
-def installed_engines() -> "List[str]":
-    """Return the built-in engines whose CLI is installed, in recommended order."""
+def usable_engines(states: "Sequence[tools.ToolState]") -> "List[str]":
+    """Return the engines whose CLI is installed and not known to be signed out."""
 
-    found = []
-    for engine in ENGINE_ORDER:
-        name = DEFAULT_ENGINE_COMMANDS[engine][0]
-        if shutil.which(name) or (Path.home() / ".local" / "bin" / name).exists():
-            found.append(engine)
-    return found
+    usable = {
+        state.tool.engine
+        for state in states
+        if state.tool.engine and state.installed and state.signed_in is not False
+    }
+    return [engine for engine in ENGINE_ORDER if engine in usable]
 
 
 def describe_size(kilobytes: Optional[int]) -> str:
@@ -215,14 +320,16 @@ def ask_reviewer(prompter: Prompter) -> "tuple[str, List[str]]":
     return prompter.choose("Review as", logins, active or logins[0]), logins
 
 
-def ask_engines(prompter: Prompter) -> "dict[str, str]":
-    engines = installed_engines()
+def ask_engines(
+    prompter: Prompter, states: "Sequence[tools.ToolState]"
+) -> "dict[str, str]":
+    engines = usable_engines(states)
     if not engines:
         raise SetupError(
-            "No supported AI CLI was found: install and sign in to one of kiro-cli, "
-            "claude, codex, or agy, then run setup again"
+            "No AI CLI is signed in: install and sign in to one of kiro-cli, claude, "
+            "codex, or agy, then run setup again"
         )
-    prompter.say(f"AI CLIs found: {', '.join(engines)}")
+    prompter.say(f"AI CLIs ready: {', '.join(engines)}")
     review = prompter.choose("Review with", engines, engines[0])
     others = [engine for engine in engines if engine != review]
     values = {"REVIEW_ENGINE": review}
@@ -386,9 +493,10 @@ def interactive(prompter: Prompter, locations: Locations) -> int:
         ):
             prompter.say("Nothing changed.")
             return 0
+    states = ensure_tools(prompter)
     reviewer, logins = ask_reviewer(prompter)
     env_values = {"AUTO_REVIEW_DRY_RUN": "1", "GITHUB_REVIEWER_USERNAME": reviewer}
-    env_values.update(ask_engines(prompter))
+    env_values.update(ask_engines(prompter, states))
     entries = ask_repositories(prompter, reviewer, logins, locations)
     webhook = ask_slack(prompter, entries)
     if webhook:

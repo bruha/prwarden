@@ -1,5 +1,9 @@
 # Review engine setup
 
+`prwarden setup` checks each of these CLIs, offers to install a missing one, and runs
+its sign-in; `prwarden doctor` shows which are installed and signed in. The sections
+below are the reference for doing the same by hand.
+
 The controller has first-party adapters for Antigravity, Codex, Claude Code,
 and Kiro CLI. Select a persistent default with `REVIEW_ENGINE` or override it
 for one invocation with `--engine`.

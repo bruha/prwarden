@@ -12,6 +12,7 @@ from prwarden.commands import CommandError
 from prwarden.config import load_env_file, load_repositories
 from prwarden.paths import Locations
 from prwarden.setup_wizard import Prompter, SetupError
+from prwarden.tools import TOOLS_BY_KEY, ToolState
 
 
 class ScriptedPrompter(Prompter):
@@ -46,9 +47,13 @@ class WizardTests(unittest.TestCase):
         )
         self.clone = self.root / "src" / "private"
         self.clone.mkdir(parents=True)
+        ready = [
+            ToolState(TOOLS_BY_KEY[key], f"/opt/bin/{key}", "1.0", True)
+            for key in ("gh", "claude", "kiro")
+        ]
         for target, value in (
             ("github_accounts", (["reviewer", "owner"], "reviewer")),
-            ("installed_engines", ["claude", "kiro"]),
+            ("ensure_tools", ready),
         ):
             stub = patch(f"prwarden.setup_wizard.{target}", return_value=value)
             stub.start()

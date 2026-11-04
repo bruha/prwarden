@@ -46,8 +46,12 @@ brew install bruha/tap/prwarden    # or: pipx install prwarden
 prwarden setup
 ```
 
-`prwarden setup` asks which GitHub account reviews, which AI CLI reviews and which
-verifies, and which repositories to watch. A repository you have no clone of is
+`prwarden setup` first checks GitHub CLI and the AI CLIs PR Warden can drive,
+Kiro CLI, Claude Code, Codex, and Antigravity, and shows which are installed and
+signed in. It offers to install what is missing, with Homebrew on macOS and the
+vendor's own installer otherwise, showing each command and running it only when you
+agree, and then runs each tool's own sign-in. Then it asks which GitHub account
+reviews, which AI CLI reviews and which verifies, and which repositories to watch. A repository you have no clone of is
 cloned by PR Warden on its first review; setup says where, and roughly how large,
 before you agree. It writes `.env` and `repositories.json` to `~/.config/prwarden`,
 then offers a dry-run preview of one pull request, which spends credits and posts

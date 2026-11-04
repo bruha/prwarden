@@ -50,6 +50,7 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
 - `prwarden/schedule.py`: `prwarden schedule`, the LaunchAgent or systemd timer.
 - `prwarden/doctor.py`: `prwarden doctor`, read-only checks of an installation.
 - `prwarden/setup_wizard.py`: `prwarden setup`, interactive configuration and import.
+- `prwarden/tools.py`: whether each CLI is installed and signed in, and how to install it.
 - `prwarden/workspace.py`: immutable PR-head fetch, detached worktree lifecycle, and
   read-only installed-dependency links.
 - `tests/`: standard-library `unittest` suite mirroring application modules.

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence
 
-from . import __version__, github, schedule
+from . import __version__, github, schedule, tools
 from .commands import CommandError, run_cmd
 from .config import ConfigError, Settings, default_locations, load_settings
 from .paths import LAYOUT_CHECKOUT, LAYOUT_HOME, Locations
@@ -60,7 +60,14 @@ def check_env_file(env_file: Path) -> List[Check]:
     return [Check(OK, f"{_home_relative(env_file)} is private (0600)")]
 
 
-def check_engines(settings: Settings) -> List[Check]:
+def check_engines(
+    settings: Settings, states: "Sequence[tools.ToolState]" = ()
+) -> List[Check]:
+    """Check that every configured engine's CLI is there and signed in."""
+
+    signed_in = {
+        state.tool.engine: state for state in states if state.tool.engine
+    }
     roles = (
         ("review", settings.review_engine, settings.review_engine_command),
         ("verify", settings.verify_engine, settings.verify_engine_command),
@@ -80,12 +87,26 @@ def check_engines(settings: Settings) -> List[Check]:
             found = executable if os.access(executable, os.X_OK) else None
         else:
             found = shutil.which(executable)
-        if found:
-            checks.append(Check(OK, f"{role} engine {engine}: {found}"))
-        else:
+        if not found:
             checks.append(
                 Check(PROBLEM, f"{role} engine {engine}: {executable} was not found")
             )
+            continue
+        state = signed_in.get(engine)
+        if state is not None and state.signed_in is False:
+            login = " ".join([state.tool.command, *state.tool.login])
+            checks.append(
+                Check(
+                    PROBLEM,
+                    f"{role} engine {engine} is not signed in; sign in with: {login}",
+                )
+            )
+        elif state is not None and state.signed_in is None:
+            checks.append(
+                Check(NOTE, f"{role} engine {engine}: could not tell if signed in")
+            )
+        else:
+            checks.append(Check(OK, f"{role} engine {engine}: {found}"))
     return checks
 
 
@@ -191,6 +212,8 @@ def diagnose(env_file: Optional[Path]) -> "tuple[List[str], List[Check]]":
         f"  state          {_home_relative(locations.state_directory)}",
         f"  managed clones {_home_relative(locations.checkouts_directory)}",
     ]
+    states = tools.check_all()
+    header += [f"  {line}" for line in tools.render_table(states)]
     checks = check_env_file(env_file or locations.env_file)
     if any(check.status == PROBLEM for check in checks):
         return header, checks
@@ -198,7 +221,7 @@ def diagnose(env_file: Optional[Path]) -> "tuple[List[str], List[Check]]":
         settings = load_settings(env_file)
     except (ConfigError, CommandError) as error:
         return header, checks + [Check(PROBLEM, str(error))]
-    checks += check_engines(settings)
+    checks += check_engines(settings, states)
     github_checks = check_github(settings)
     checks += github_checks
     if all(check.status != PROBLEM for check in github_checks):
