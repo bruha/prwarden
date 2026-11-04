@@ -347,11 +347,17 @@ def build_terms(
 
     previous = previous or {}
     own = set(own_paths)
+    # A reviewed repository whose slug is allowed is public by choice, as this
+    # project's own repositories are. Its names, titles, and branches are this
+    # project's own, and listing them would refuse every commit naming the project.
+    allowed = {entry.casefold() for entry in previous.get("allow", [])}
     words = set()
     titles = set()
     branches = set()
     paths = set()
     for source in sources:
+        if source.slug.casefold() in allowed:
+            continue
         owner, name = source.slug.split("/", 1)
         words.update({owner, name, source.slug})
         words.update(

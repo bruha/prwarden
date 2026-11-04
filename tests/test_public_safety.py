@@ -306,6 +306,36 @@ class BuildTermsTests(unittest.TestCase):
         result = build_terms([source], "operator", [".github/workflows/test.yml"])
         self.assertEqual(result["paths"], ["src/rockets/launch/Pad.tsx"])
 
+    def test_a_repository_whose_slug_is_allowed_adds_nothing(self) -> None:
+        """This project's own public repositories are reviewed too, and their names
+        would otherwise refuse every commit that names the project."""
+
+        own = RepositorySource(
+            slug="example/warden",
+            logins=frozenset({"contributor"}),
+            titles=("Add the warden scheduler",),
+            branches=frozenset({"feat/warden-scheduler"}),
+            paths=frozenset({"warden/schedule/units.py"}),
+        )
+        other = RepositorySource(
+            slug="acme-corp/acme-shop",
+            logins=frozenset(),
+            titles=(),
+            branches=frozenset(),
+            paths=frozenset(),
+        )
+        result = build_terms(
+            [own, other], "operator", [], {"allow": ["Example/Warden"]}
+        )
+
+        self.assertEqual(
+            result["words"], ["acme-corp", "acme-corp/acme-shop", "acme-shop"]
+        )
+        self.assertEqual(result["titles"], [])
+        self.assertEqual(result["branches"], [])
+        self.assertEqual(result["paths"], [])
+        self.assertEqual(result["allow"], ["Example/Warden"])
+
 
 if __name__ == "__main__":
     unittest.main()

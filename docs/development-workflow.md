@@ -94,7 +94,10 @@ name, the logins of everyone who opened or commented on a pull request, every
 pull-request title and branch name, and the repository's file paths. Rerun it when
 a repository is added. Two hand-kept lists in `.private/terms.json` survive a
 refresh: `extra`, for names the reviewed repositories do not spell out, and
-`allow`, for generic phrases that happen to match, such as a release title.
+`allow`, for generic phrases that happen to match, such as a release title. A
+reviewed repository whose slug is in `allow` contributes nothing, which is how this
+project's own public repositories are reviewed without their names refusing every
+commit that mentions the project.
 
 The hooks then refuse a commit whose added lines, file names, or message contain
 any of those terms, a reference missing from the map, or a malformed one, and
