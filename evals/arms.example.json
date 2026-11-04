@@ -1,0 +1,20 @@
+{
+  "arms": [
+    {
+      "name": "baseline"
+    },
+    {
+      "name": "claude",
+      "engine": "claude"
+    },
+    {
+      "name": "code-only",
+      "design_level": false,
+      "docs_level": false
+    },
+    {
+      "name": "tighter-budget",
+      "max_diff_bytes": 60000
+    }
+  ]
+}

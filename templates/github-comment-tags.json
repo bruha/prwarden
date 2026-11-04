@@ -1,0 +1,20 @@
+{
+  "severity": "severity",
+  "title": "title",
+  "path": "path",
+  "line": "line",
+  "problem": "problem",
+  "trigger": "trigger",
+  "impact": "impact",
+  "evidence": "evidence",
+  "counterevidence": "counterevidence_reason",
+  "suggested-change": "suggested_change",
+  "done-by": "reviewer_attribution",
+  "reviewer": "reviewer_identity",
+  "engine": "engine",
+  "model": "model",
+  "verifier": "verifier_identity",
+  "verify-engine": "verify_engine",
+  "verify-model": "verify_model",
+  "marker": "marker"
+}

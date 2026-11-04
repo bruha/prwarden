@@ -1,0 +1,15 @@
+{
+  "captured": "2026-09-14",
+  "cases": [
+    {
+      "slug": "your-org/example-app",
+      "number": 123,
+      "head": "1111111111111111111111111111111111111111",
+      "base": "2222222222222222222222222222222222222222",
+      "title": "feat: add export button",
+      "head_ref": "feat/add-export-button",
+      "base_ref": "develop",
+      "captured": "2026-09-14"
+    }
+  ]
+}

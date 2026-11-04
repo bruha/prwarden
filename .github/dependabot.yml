@@ -1,0 +1,11 @@
+# The project has no runtime or development dependencies; the GitHub Actions the
+# test workflow pins by commit are the only thing to keep up to date.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    open-pull-requests-limit: 5

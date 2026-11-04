@@ -1,0 +1,35 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+*.log
+.env
+.env.*
+!.env.example
+repositories.json
+repositories.*.json
+!repositories.example.json
+.state/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage.xml
+.coverage
+htmlcov/
+review-output/
+/github-comment.md
+/github-comment-tags.json
+
+# Pinned replay cases and experiment arms name real repositories and pull requests.
+evals/cases.json
+evals/arms.json
+evals/labels.json
+evals/candidates.json
+evals/results/
+
+# Private material that must never reach the public repository: the map from
+# `[pr:xxxx]` references to real pull requests, the word list the public-safety hook
+# checks against, and research notes built from real review data.
+.private/
+research/

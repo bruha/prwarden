@@ -1,0 +1,22 @@
+[
+  {
+    "name": "example-app",
+    "slug": "your-org/example-app",
+    "path": "~/src/example-app"
+  },
+  {
+    "slug": "your-org/example-library",
+    "path": "~/src/example-library"
+  },
+  {
+    "slug": "another-org/side-project",
+    "path": "~/src/side-project",
+    "slack": false
+  },
+  {
+    "slug": "your-name/private-app",
+    "path": "~/src/private-app",
+    "slack": false,
+    "github_account": "your-name"
+  }
+]
