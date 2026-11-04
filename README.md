@@ -78,7 +78,9 @@ cp repositories.example.json repositories.json
 
 4. When the result looks right, set `AUTO_REVIEW_DRY_RUN=0` in `.env` and add
    `--live` to post it.
-5. To review on a schedule, follow [macOS scheduling](docs/macos-scheduling.md).
+5. To review on a schedule, run `prwarden schedule install`, which sets up a
+   LaunchAgent on macOS or a systemd user timer on Linux; see
+   [scheduling](docs/scheduling.md).
 
 PR Warden posts as the account GitHub CLI is signed in as, and never approves that
 account's own pull requests, so a separate reviewer account works best.
@@ -895,9 +897,10 @@ up to five restarts per PR. Live runs can send one aggregated Slack error
 notification after processing, while expected eligibility changes are reported
 only as safe skips.
 
-After targeted dry and live tests succeed, see
-[Scheduling on macOS](docs/macos-scheduling.md) for LaunchAgent and cron setup,
-inspection, and removal.
+After targeted dry and live tests succeed, `prwarden schedule install` runs it on
+a timer; see [scheduling](docs/scheduling.md), and
+[Scheduling on macOS](docs/macos-scheduling.md) for a hand-written LaunchAgent or
+cron entry.
 
 ## Development and releases
 

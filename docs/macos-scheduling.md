@@ -1,5 +1,9 @@
 # Scheduling on macOS
 
+`prwarden schedule install` writes and loads the LaunchAgent below for you; see
+[scheduling](scheduling.md). This guide is the reference for what that agent
+does and for setting one up by hand or with cron.
+
 Use scheduling only after a targeted dry run and a controlled live run succeed.
 The examples below run at 08:00, 12:00, and 16:00, Monday through Friday, in
 the Mac's local time zone.

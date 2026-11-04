@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, Sequence, TextIO, Union
+from typing import Any, Callable, Optional, Sequence, TextIO, Union
 
 from . import __version__, progress
 from .comment_template import CommentTemplateError
@@ -147,6 +147,8 @@ BOARD_ELAPSED_WIDTH = 7
 BOARD_FALLBACK_TERMINAL_SIZE = (80, 24)
 INTERRUPTED_EXIT_CODE = 130
 RUN_LOG_DIRECTORY_NAME = "run-logs"
+# Commands that look after this installation instead of reviewing.
+ADMIN_COMMANDS = ("schedule",)
 PLAN_TITLE_WIDTH = 60
 # The progress line is styled with the terminal's own text colour, never a palette
 # colour: a theme decides what each palette entry looks like, and Solarized Dark sets
@@ -648,7 +650,10 @@ def _review_with_validation_retry(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="prwarden",
-        description="Review configured GitHub pull requests with a pluggable review engine."
+        description=(
+            "Review configured GitHub pull requests with a pluggable review engine."
+        ),
+        epilog="Run `prwarden schedule --help` to review on a schedule.",
     )
     parser.add_argument(
         "--version",
@@ -4468,8 +4473,23 @@ def _run_reviews(
     return 1 if errors else 0
 
 
+def _admin_command(name: str) -> "Callable[[Sequence[str]], int]":
+    """Return the entry point of a command that manages this installation."""
+
+    if name == "schedule":
+        from . import schedule
+
+        return schedule.main
+    raise AssertionError(f"unknown command {name}")
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    # A review run takes no positional argument, so a first word naming one of
+    # these is never a review.
+    if arguments and arguments[0] in ADMIN_COMMANDS:
+        return _admin_command(arguments[0])(arguments[1:])
+    args = build_parser().parse_args(arguments)
     try:
         return run(args)
     except KeyboardInterrupt:

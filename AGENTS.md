@@ -47,6 +47,7 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
   public-safety Git hooks and the private `[pr:xxxx]` reference map.
 - `prwarden/state.py`: atomic JSON state and the single-host process lock.
 - `prwarden/paths.py`: where configuration and state live, checkout or installed.
+- `prwarden/schedule.py`: `prwarden schedule`, the LaunchAgent or systemd timer.
 - `prwarden/workspace.py`: immutable PR-head fetch, detached worktree lifecycle, and
   read-only installed-dependency links.
 - `tests/`: standard-library `unittest` suite mirroring application modules.
@@ -148,6 +149,7 @@ in the current worktree.
   verification.
 - [Defensive prompt rules](docs/prompt-rules.md): where each omit, reject, or
   approve rule in the code prompt came from, and which to re-test on a new model.
+- [Scheduling](docs/scheduling.md): `prwarden schedule` on macOS and Linux.
 - [macOS scheduling](docs/macos-scheduling.md): LaunchAgent and cron operation.
 - [Threat model](docs/threat-model.md): trust boundaries, what stops each threat,
   and the residual risk of running an agent CLI over untrusted content.
