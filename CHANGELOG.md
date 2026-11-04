@@ -9,8 +9,24 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 2.0.0 3911f4fac8d310d091323a30c18419ccaacca4dd -->
+<!-- release-baseline: 2.1.0 1b6b802591091b1c5d9ceb68a1d758df044b93f4 -->
 ## [Unreleased]
+
+## [2.1.0] - 2026-11-04
+
+### Added
+
+- find configuration and state outside a source checkout (`832911d`).
+
+### Testing
+
+- ignore hidden desktop files when checking shipped package data (`86b0246`).
+
+### Maintenance
+
+- package PR Warden with a prwarden command (`a3e5390`).
+- publish each release to PyPI through trusted publishing (`df5e83e`).
+- build with a setuptools free of known advisories (`1b6b802`).
 
 ## [2.0.0] - 2026-11-04
 
