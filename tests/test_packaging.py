@@ -23,6 +23,8 @@ class PackageDataTests(unittest.TestCase):
             if path.is_file()
             and path.suffix not in {".py", ".pyc"}
             and "__pycache__" not in path.parts
+            # Hidden files such as macOS's .DS_Store are the desktop's, not ours.
+            and not path.name.startswith(".")
         )
 
         self.assertTrue(data_files)
