@@ -4,9 +4,13 @@ It asks which GitHub account reviews, which AI CLI reviews and which verifies, a
 which repositories to watch, then writes `.env` and `repositories.json` into the
 configuration directory. A repository named without a local clone is cloned by PR
 Warden on its first review, and setup says where and roughly how large before
-anyone agrees to it. It ends dry: a preview of one pull request costs credits and
-posts nothing, and going live and installing a schedule are each asked for.
+anyone agrees to it. Slack is offered for the reviews of the operator's own pull
+requests, with Slack's page for a new app opened already filled in, and a webhook
+is kept only once Slack has taken a test message through it. It ends dry: a
+preview of one pull request costs credits and posts nothing, and going live and
+installing a schedule are each asked for.
 
+`--slack` connects Slack to an existing configuration the same way, and
 `--import CHECKOUT` copies a source checkout's configuration and delivery records
 instead, so an installed copy carries on where the clone left off without
 reviewing anything twice.
@@ -16,13 +20,16 @@ import argparse
 import getpass
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence
 
-from . import __version__, github, schedule, tools
+from . import __version__, delivery, github, schedule, tools
 from .commands import CommandError, run_cmd
 from .config import (
     ConfigError,
@@ -38,6 +45,36 @@ from .paths import Locations
 
 ENV_REFERENCE = "https://github.com/bruha/prwarden/blob/main/.env.example"
 ENGINE_ORDER = ("antigravity", "claude", "codex", "kiro")
+
+# An app's incoming webhook. A Workflow Builder webhook, under /triggers/, takes
+# its own variables rather than a message, so it cannot carry a review.
+SLACK_WEBHOOK = re.compile(
+    r"https://hooks\.slack\.com/services/[A-Za-z0-9]+/[A-Za-z0-9]+/[A-Za-z0-9]+"
+)
+SLACK_NEW_APP_PAGE = "https://api.slack.com/apps?new_app=1&manifest_json="
+# A Slack app that can do one thing: post to the channel picked when installing it.
+SLACK_APP_MANIFEST = {
+    "_metadata": {"major_version": 1, "minor_version": 1},
+    "display_information": {
+        "name": "PR Warden",
+        "description": "Reviews of your own pull requests, and failed runs, from "
+        "PR Warden.",
+    },
+    # Slack refuses a manifest that asks for a bot scope without a bot user.
+    "features": {"bot_user": {"display_name": "PR Warden", "always_online": False}},
+    "oauth_config": {"scopes": {"bot": ["incoming-webhook"]}},
+    "settings": {
+        "incoming_webhooks": {"incoming_webhooks_enabled": True},
+        "org_deploy_enabled": False,
+        "socket_mode_enabled": False,
+        "token_rotation_enabled": False,
+    },
+}
+# Sent before any repository has been chosen for Slack, so it names none.
+SLACK_TEST_MESSAGE = (
+    "PR Warden is connected. The reviews of your own pull requests, and alerts "
+    "when a run fails, arrive in this channel."
+)
 
 
 class SetupError(RuntimeError):
@@ -414,22 +451,215 @@ def ask_repository(
     return entry
 
 
-def ask_slack(prompter: Prompter, entries: "List[dict]") -> Optional[str]:
+# Slack -------------------------------------------------------------------------
+
+
+def slack_app_url() -> str:
+    """Return Slack's page for a new app, with PR Warden's webhook app filled in."""
+
+    manifest = json.dumps(SLACK_APP_MANIFEST, separators=(",", ":"))
+    return SLACK_NEW_APP_PAGE + urllib.parse.quote(manifest, safe="")
+
+
+def open_in_browser(
+    url: str,
+    platform: Optional[str] = None,
+    environ: "Optional[dict[str, str]]" = None,
+    run: "Callable[..., subprocess.CompletedProcess]" = subprocess.run,
+) -> bool:
+    """Open ``url`` in a desktop browser, when this terminal sits in front of one.
+
+    Over SSH the page would open on a screen nobody is looking at, and on Linux
+    without a display a browser may be a text one that takes over this terminal,
+    so in both the address is printed instead.
+    """
+
+    platform = sys.platform if platform is None else platform
+    environ = os.environ if environ is None else environ
+    if environ.get("SSH_CONNECTION") or environ.get("SSH_TTY"):
+        return False
+    if platform == "darwin":
+        command = ["open", url]
+    elif platform.startswith("linux") and (
+        environ.get("DISPLAY") or environ.get("WAYLAND_DISPLAY")
+    ):
+        command = ["xdg-open", url]
+    else:
+        return False
+    try:
+        completed = run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
+
+
+def guide_slack_app(prompter: Prompter) -> None:
+    """Walk the operator through making a Slack app that holds one webhook."""
+
+    url = slack_app_url()
     prompter.say(
-        "Slack is optional. It receives the reviews of your own pull requests, which "
-        "GitHub does not let you approve, and failure alerts."
+        "PR Warden posts through a Slack app of your own that holds one incoming "
+        "webhook. Setup can open Slack's page for a new app with it filled in. There:"
     )
-    webhook = prompter.secret("Slack incoming webhook URL, or Enter to skip")
-    if not webhook:
-        for entry in entries:
-            entry["slack"] = False
+    prompter.say("  1. Pick the workspace, then press Next until Create, and Create.")
+    prompter.say(
+        "  2. Press Install to Workspace, pick the channel for the messages (a "
+        "private one must be a channel you are in), and press Allow."
+    )
+    prompter.say(
+        "  3. Open Incoming Webhooks on the left, and Copy the Webhook URL there."
+    )
+    prompter.say(
+        "A workspace where an admin approves new apps shows Request to Install "
+        "instead; carry on from step 2 once it is approved."
+    )
+    if prompter.confirm("Open that page in your browser now?", default=True):
+        if open_in_browser(url):
+            return
+    prompter.say(f"Open this address in a browser signed in to Slack:\n{url}")
+
+
+def ask_webhook(prompter: Prompter) -> Optional[str]:
+    """Read a webhook URL hidden, and keep it once Slack takes a test message."""
+
+    while True:
+        webhook = prompter.secret(
+            "Paste the Webhook URL (it stays hidden), or Enter to skip"
+        )
+        if not webhook:
+            return None
+        if not SLACK_WEBHOOK.fullmatch(webhook):
+            prompter.say(
+                "That is not an incoming webhook URL; those start with "
+                "https://hooks.slack.com/services/."
+            )
+            continue
+        prompter.say("Sending a test message through it...")
+        try:
+            delivery.send_slack_message(webhook, SLACK_TEST_MESSAGE)
+        except delivery.DeliveryUncertainError as error:
+            prompter.say(f"Slack could not be reached to check it: {error}")
+            if prompter.confirm("Keep this URL anyway?"):
+                return webhook
+            continue
+        except delivery.DeliveryError as error:
+            prompter.say(
+                f"{error}. Check that the whole URL was copied and that the app is "
+                "still installed."
+            )
+            continue
+        prompter.say("Slack took the test message; it is in the channel you picked.")
+        return webhook
+
+
+def ask_slack_repositories(prompter: Prompter, slugs: Sequence[str]) -> "List[str]":
+    if len(slugs) < 2:
+        return list(slugs)
+    prompter.say(
+        "A webhook belongs to one Slack workspace. A repository left out is never "
+        "named there: your own pull requests in it are reviewed on GitHub instead, "
+        "and its failures stay in the run log."
+    )
+    for index, slug in enumerate(slugs, 1):
+        prompter.say(f"  {index}. {slug}")
+    while True:
+        answer = prompter.text(
+            "Which report to Slack? Numbers separated by spaces, or Enter for all"
+        )
+        if not answer:
+            return list(slugs)
+        chosen = _numbers(answer, len(slugs))
+        if chosen:
+            return [slugs[index] for index in sorted(chosen)]
+        prompter.say(f"Choose numbers from 1 to {len(slugs)}.")
+
+
+def ask_slack(
+    prompter: Prompter, slugs: Sequence[str], reviewer: Optional[str]
+) -> "Optional[tuple[str, List[str]]]":
+    """Connect a Slack webhook, and choose the repositories that report to it.
+
+    Returns the webhook and the slugs that use it, or None when Slack stays off.
+    """
+
+    account = reviewer or "the reviewer account"
+    prompter.say(
+        f"Slack is optional. GitHub does not let {account} approve its own pull "
+        "requests, so their reviews go to Slack, or without it to the pull request "
+        "as comments. Slack also gets failed runs and requests to review by hand."
+    )
+    if not prompter.confirm("Send the reviews of your own pull requests to Slack?"):
         return None
-    if not webhook.startswith("https://hooks.slack.com/"):
-        prompter.say("That does not look like a Slack webhook; Slack is left off.")
-        for entry in entries:
-            entry["slack"] = False
+    if not prompter.confirm("Do you have a Slack incoming webhook URL for it already?"):
+        guide_slack_app(prompter)
+    webhook = ask_webhook(prompter)
+    if webhook is None:
         return None
-    return webhook
+    return webhook, ask_slack_repositories(prompter, slugs)
+
+
+def apply_slack(entries: "List[dict]", slack_slugs: "Optional[Sequence[str]]") -> None:
+    """Turn Slack on for the entries named, and off for every other one."""
+
+    for entry in entries:
+        if slack_slugs is not None and entry.get("slug") in slack_slugs:
+            entry.pop("slack", None)
+        else:
+            entry["slack"] = False
+
+
+def connect_slack(prompter: Prompter, locations: Locations) -> int:
+    """Connect Slack to an existing configuration, or replace its webhook."""
+
+    env_file = locations.env_file.resolve()
+    if not env_file.exists():
+        raise SetupError(f"{env_file} does not exist; run `prwarden setup` first")
+    declared = load_env_file(env_file)
+    configured = declared.get("REPOSITORIES_FILE")
+    repositories_file = (
+        resolve_path(configured, locations.config_directory)
+        if configured
+        else locations.repositories_file.resolve()
+    )
+    if not repositories_file.exists():
+        raise SetupError(
+            f"{repositories_file} does not exist; run `prwarden setup` first"
+        )
+    load_repositories(repositories_file, locations.checkouts_directory)
+    entries = json.loads(repositories_file.read_text(encoding="utf-8"))
+    if declared.get("SLACK_WEBHOOK_URL"):
+        prompter.say("A Slack webhook is set already; connecting one replaces it.")
+    connected = ask_slack(
+        prompter,
+        [entry["slug"] for entry in entries],
+        declared.get("GITHUB_REVIEWER_USERNAME") or None,
+    )
+    if connected is None:
+        prompter.say("Nothing changed.")
+        return 0
+    webhook, slugs = connected
+    for path in (env_file, repositories_file):
+        backup = _backup(path)
+        if backup:
+            prompter.say(f"Kept the previous {path.name} as {backup}")
+    set_env_value(env_file, "SLACK_WEBHOOK_URL", webhook)
+    apply_slack(entries, slugs)
+    _write_private(repositories_file, json.dumps(entries, indent=2) + "\n")
+    prompter.say(
+        f"Slack is on for {len(slugs)} of {len(entries)} repositories, from the "
+        "next run."
+    )
+    return 0
+
+
+# The rest of setup -------------------------------------------------------------
 
 
 def preview(prompter: Prompter, locations: Locations) -> None:
@@ -498,9 +728,12 @@ def interactive(prompter: Prompter, locations: Locations) -> int:
     env_values = {"AUTO_REVIEW_DRY_RUN": "1", "GITHUB_REVIEWER_USERNAME": reviewer}
     env_values.update(ask_engines(prompter, states))
     entries = ask_repositories(prompter, reviewer, logins, locations)
-    webhook = ask_slack(prompter, entries)
-    if webhook:
-        env_values["SLACK_WEBHOOK_URL"] = webhook
+    connected = ask_slack(prompter, [entry["slug"] for entry in entries], reviewer)
+    apply_slack(entries, connected[1] if connected else None)
+    if connected:
+        env_values["SLACK_WEBHOOK_URL"] = connected[0]
+    else:
+        prompter.say("Slack is off. Connect it later with: prwarden setup --slack")
     write_configuration(locations, env_values, entries, prompter.say)
     preview(prompter, locations)
     go_live(prompter, locations)
@@ -574,7 +807,13 @@ def main(argv: Sequence[str], prompter: Optional[Prompter] = None) -> int:
         prog="prwarden setup",
         description="Write PR Warden's configuration by asking, or import a clone's.",
     )
-    parser.add_argument(
+    choice = parser.add_mutually_exclusive_group()
+    choice.add_argument(
+        "--slack",
+        action="store_true",
+        help="connect Slack to the existing configuration, or replace its webhook",
+    )
+    choice.add_argument(
         "--import",
         dest="import_from",
         type=Path,
@@ -590,6 +829,8 @@ def main(argv: Sequence[str], prompter: Optional[Prompter] = None) -> int:
             if not sys.stdin.isatty():
                 raise SetupError("setup asks questions; run it in a terminal")
             prompter = Prompter()
+        if args.slack:
+            return connect_slack(prompter, locations)
         return interactive(prompter, locations)
     except (SetupError, ConfigError, CommandError, OSError, ValueError) as error:
         print(f"ERROR: {error}", file=sys.stderr)

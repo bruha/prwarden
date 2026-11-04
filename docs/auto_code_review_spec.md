@@ -113,11 +113,21 @@ be mistaken for one.
   files it replaces beside them. It pins `GITHUB_REVIEWER_USERNAME` to the chosen
   account, tries each signed-in account in turn for a repository the reviewer
   cannot read and records the first that can as that entry's `github_account`, and
-  leaves Slack off for every entry when no webhook is given. It writes
+  leaves Slack off for every entry unless a webhook is connected. It writes
   `AUTO_REVIEW_DRY_RUN=1`; a preview, going live, and a schedule are each asked
   for. `--import` copies a source checkout's configuration with its relative paths
   made absolute, and its delivery records, and refuses to merge into an existing
   installation.
+- Connecting Slack, in `setup` or alone with `setup --slack`, is asked for. Without
+  a webhook it can open Slack's new-app page with a manifest filled in for an app
+  whose one scope is `incoming-webhook`, and only on a desktop session: never over
+  SSH, and on Linux only with a display. The pasted URL is read hidden and must be
+  an app's incoming webhook, `https://hooks.slack.com/services/...`. It is kept
+  only after Slack accepts one test message through it, which names no repository;
+  a refusal asks again, and an unreachable Slack keeps it only when told to. The
+  operator then picks the repositories that report there, and every other entry is
+  written `"slack": false`. `setup --slack` changes nothing when declined, and
+  otherwise keeps the `.env` and repository list it rewrites beside them.
 - `doctor` only reads: no post, clone, or model call. It shows which tools are
   installed and signed in, and exits 1 for anything that would stop reviews or
   delivery, a configured engine that is signed out and two schedules running at

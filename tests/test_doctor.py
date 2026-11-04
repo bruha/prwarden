@@ -151,6 +151,23 @@ class MainTests(unittest.TestCase):
         self.assertEqual(statuses(dry)[0], NOTE)
         self.assertEqual(statuses(live)[0], OK)
 
+    def test_slack_is_reported_with_how_to_connect_it(self) -> None:
+        settings = settings_for("/tmp", Repository("app", "owner/app"))
+        locations = Locations("user", Path("/c"), Path("/s"), Path("/s/checkouts"))
+
+        missing = doctor.check_delivery(
+            replace(settings, slack_webhook_url=None), locations
+        )
+        connected = doctor.check_delivery(
+            replace(settings, slack_webhook_url="https://hooks.slack.com/x"), locations
+        )
+
+        self.assertEqual(missing[-1].status, NOTE)
+        self.assertIn("prwarden setup --slack", missing[-1].message)
+        self.assertEqual(connected[-1].status, OK)
+        self.assertIn("1 of 1 repositories", connected[-1].message)
+        self.assertNotIn("hooks.slack.com", connected[-1].message)
+
 
 class DispatchTests(unittest.TestCase):
     def test_prwarden_doctor_reaches_the_doctor(self) -> None:

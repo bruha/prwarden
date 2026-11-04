@@ -53,10 +53,19 @@ vendor's own installer otherwise, showing each command and running it only when 
 agree, and then runs each tool's own sign-in. Then it asks which GitHub account
 reviews, which AI CLI reviews and which verifies, and which repositories to watch. A repository you have no clone of is
 cloned by PR Warden on its first review; setup says where, and roughly how large,
-before you agree. It writes `.env` and `repositories.json` to `~/.config/prwarden`,
-then offers a dry-run preview of one pull request, which spends credits and posts
-nothing, live delivery, and a schedule. `prwarden doctor` checks the result at any
-time and spends nothing.
+before you agree.
+
+It then asks whether the reviews of your own pull requests, which GitHub does not
+let you approve, should go to Slack. Without a webhook yet, it opens Slack's page
+for a new app already filled in: pick the workspace and the channel, and paste the
+webhook URL Slack shows. Setup sends a test message through it before keeping it,
+and asks which repositories report there, so a repository whose team is in another
+workspace stays out of it. `prwarden setup --slack` does this step alone later.
+
+Setup writes `.env` and `repositories.json` to `~/.config/prwarden`, then offers a
+dry-run preview of one pull request, which spends credits and posts nothing, live
+delivery, and a schedule. `prwarden doctor` checks the result at any time and
+spends nothing.
 
 ### By hand, or from a clone
 
@@ -114,7 +123,7 @@ account's own pull requests, so a separate reviewer account works best.
   or a compatible custom command
 - A Slack incoming webhook when reviewing your own pull requests or sending
   failure and manual-review notifications, unless every repository is kept out of
-  Slack
+  Slack; `prwarden setup` walks you through making one
 
 No third-party Python packages are required.
 

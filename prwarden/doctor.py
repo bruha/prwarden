@@ -164,12 +164,22 @@ def check_delivery(settings: Settings, locations: Locations) -> List[Check]:
     else:
         checks.append(Check(OK, "live delivery is enabled; runs with --live post"))
     slack = [repository for repository in settings.repositories if repository.slack]
+    total = len(settings.repositories)
     if slack and not settings.slack_webhook_url:
         checks.append(
             Check(
                 NOTE,
                 f"no SLACK_WEBHOOK_URL, so {len(slack)} repositories with Slack on "
-                'report only to the terminal; set "slack": false to say so',
+                "report only to the terminal; connect Slack with `prwarden setup "
+                '--slack`, or set "slack": false to say so',
+            )
+        )
+    elif settings.slack_webhook_url:
+        checks.append(
+            Check(
+                OK,
+                f"Slack: {len(slack)} of {total} repositories report to the webhook; "
+                "`prwarden setup --slack` replaces it",
             )
         )
     return checks

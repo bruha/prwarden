@@ -2,14 +2,17 @@ import io
 import json
 import os
 import stat
+import subprocess
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest.mock import patch
 
 from prwarden import setup_wizard
 from prwarden.commands import CommandError
 from prwarden.config import load_env_file, load_repositories
+from prwarden.delivery import DeliveryError, DeliveryUncertainError
 from prwarden.paths import Locations
 from prwarden.setup_wizard import Prompter, SetupError
 from prwarden.tools import TOOLS_BY_KEY, ToolState
@@ -158,15 +161,105 @@ class WizardTests(unittest.TestCase):
         self.assertEqual(values["AUTO_REVIEW_DRY_RUN"], "0")
         install.assert_called_once()
 
-    def test_a_webhook_is_kept_secret_and_turns_slack_on(self) -> None:
+    def test_a_webhook_is_tested_kept_secret_and_turns_slack_on(self) -> None:
         hook = "https://hooks.slack.com/services/T000/B000/XXXX"
-        self.run_wizard(self.answers(a6=hook))
+        answers = self.answers()
+        # Slack yes, a webhook already made, the webhook, both repositories.
+        answers[6:7] = ["y", "y", hook, ""]
+        with patch("prwarden.delivery.send_slack_message") as send:
+            _, prompter = self.run_wizard(answers)
 
+        send.assert_called_once_with(hook, setup_wizard.SLACK_TEST_MESSAGE)
+        self.assertFalse(any(hook in line for line in prompter.transcript))
         with patch.dict(os.environ, {}, clear=True):
             values = load_env_file(self.locations.env_file)
         self.assertEqual(values["SLACK_WEBHOOK_URL"], hook)
         entries = json.loads(self.locations.repositories_file.read_text())
         self.assertTrue(all("slack" not in entry for entry in entries))
+
+    def test_without_a_webhook_slack_opens_with_the_app_filled_in(self) -> None:
+        hook = "https://hooks.slack.com/services/T000/B000/XXXX"
+        answers = self.answers()
+        # Slack yes, no webhook yet, open the page, the webhook, the first only.
+        answers[6:7] = ["y", "n", "", hook, "1"]
+        with patch("prwarden.delivery.send_slack_message"), patch(
+            "prwarden.setup_wizard.open_in_browser", return_value=True
+        ) as opened:
+            self.run_wizard(answers)
+
+        url = opened.call_args[0][0]
+        self.assertTrue(url.startswith("https://api.slack.com/apps?new_app=1&"))
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        manifest = json.loads(query["manifest_json"][0])
+        scopes = manifest["oauth_config"]["scopes"]
+        self.assertEqual(scopes["bot"], ["incoming-webhook"])
+        self.assertTrue(
+            manifest["settings"]["incoming_webhooks"]["incoming_webhooks_enabled"]
+        )
+        self.assertIn("bot_user", manifest["features"])
+        # A repository left out of Slack is never named there.
+        app, private = load_repositories(
+            self.locations.repositories_file, self.locations.checkouts_directory
+        )
+        self.assertTrue(app.slack)
+        self.assertFalse(private.slack)
+
+    def test_a_page_that_cannot_open_is_given_as_an_address(self) -> None:
+        answers = self.answers()
+        answers[6:7] = ["y", "n", "", ""]  # the URL is skipped in the end
+        with patch("prwarden.setup_wizard.open_in_browser", return_value=False):
+            _, prompter = self.run_wizard(answers)
+
+        self.assertTrue(
+            any(setup_wizard.slack_app_url() in line for line in prompter.transcript)
+        )
+        entries = json.loads(self.locations.repositories_file.read_text())
+        self.assertTrue(all(entry["slack"] is False for entry in entries))
+        self.assertTrue(
+            any("prwarden setup --slack" in line for line in prompter.transcript)
+        )
+
+    def test_a_webhook_slack_refuses_is_asked_for_again(self) -> None:
+        bad = "https://hooks.slack.com/services/T000/B000/GONE"
+        good = "https://hooks.slack.com/services/T000/B000/XXXX"
+        answers = self.answers()
+        answers[6:7] = [
+            "y",
+            "y",
+            "https://hooks.slack.com/triggers/T000/1/abc",  # Workflow Builder
+            bad,
+            good,
+            "",
+        ]
+        refused = DeliveryError("Slack rejected the message: HTTP 404 no_service")
+        with patch(
+            "prwarden.delivery.send_slack_message", side_effect=[refused, "http-200"]
+        ) as send:
+            _, prompter = self.run_wizard(answers)
+
+        self.assertEqual([call[0][0] for call in send.call_args_list], [bad, good])
+        self.assertTrue(any("no_service" in line for line in prompter.transcript))
+        with patch.dict(os.environ, {}, clear=True):
+            values = load_env_file(self.locations.env_file)
+        self.assertEqual(values["SLACK_WEBHOOK_URL"], good)
+
+    def test_an_unreachable_slack_keeps_the_webhook_only_when_told_to(self) -> None:
+        first = "https://hooks.slack.com/services/T000/B000/FIRST"
+        second = "https://hooks.slack.com/services/T000/B000/SECOND"
+        answers = self.answers()
+        # Slack is unreachable both times: the first is not kept, the second is.
+        answers[6:7] = ["y", "y", first, "n", second, "y", ""]
+        offline = DeliveryUncertainError("Slack delivery outcome is uncertain")
+        with patch(
+            "prwarden.delivery.send_slack_message", side_effect=[offline, offline]
+        ):
+            _, prompter = self.run_wizard(answers)
+
+        with patch.dict(os.environ, {}, clear=True):
+            values = load_env_file(self.locations.env_file)
+        self.assertEqual(values["SLACK_WEBHOOK_URL"], second)
+        asked = [line for line in prompter.transcript if "Keep this URL" in line]
+        self.assertEqual(len(asked), 2)
 
     def test_a_repository_nobody_can_read_is_skipped(self) -> None:
         answers = self.answers(a3="acme/app nobody/secret")
@@ -274,6 +367,127 @@ class ImportTests(unittest.TestCase):
         self.assertFalse(self.locations.env_file.exists())
 
 
+class OpenInBrowserTests(unittest.TestCase):
+    URL = "https://api.slack.com/apps?new_app=1"
+
+    def opened_with(self, platform, environ, returncode=0):
+        calls = []
+
+        def run(command, **options):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, returncode)
+
+        opened = setup_wizard.open_in_browser(self.URL, platform, environ, run)
+        return opened, calls
+
+    def test_a_desktop_opens_the_page(self) -> None:
+        self.assertEqual(
+            self.opened_with("darwin", {}), (True, [["open", self.URL]])
+        )
+        self.assertEqual(
+            self.opened_with("linux", {"WAYLAND_DISPLAY": "wayland-0"}),
+            (True, [["xdg-open", self.URL]]),
+        )
+
+    def test_where_nobody_would_see_it_the_page_is_not_opened(self) -> None:
+        # Over SSH it would open on the far machine's screen; on Linux without a
+        # display a text browser could take over this terminal.
+        self.assertEqual(self.opened_with("darwin", {"SSH_TTY": "/dev/x"}), (False, []))
+        self.assertEqual(self.opened_with("linux", {}), (False, []))
+        self.assertEqual(self.opened_with("win32", {}), (False, []))
+
+    def test_a_browser_that_fails_reports_it(self) -> None:
+        self.assertFalse(self.opened_with("darwin", {}, returncode=1)[0])
+
+        def missing(command, **options):
+            raise FileNotFoundError(command[0])
+
+        self.assertFalse(
+            setup_wizard.open_in_browser(self.URL, "linux", {"DISPLAY": ":0"}, missing)
+        )
+
+
+class ConnectSlackTests(unittest.TestCase):
+    HOOK = "https://hooks.slack.com/services/T000/B000/XXXX"
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.locations = Locations(
+            "user",
+            self.root / "config",
+            self.root / "state",
+            self.root / "share" / "checkouts",
+        )
+        self.locations.config_directory.mkdir(parents=True)
+        self.env = "AUTO_REVIEW_DRY_RUN=0\nGITHUB_REVIEWER_USERNAME=reviewer\n"
+        self.locations.env_file.write_text(self.env, encoding="utf-8")
+        self.locations.env_file.chmod(0o600)
+        self.entries = [
+            {"slug": "acme/app", "slack": False},
+            {"slug": "owner/private", "github_account": "owner"},
+        ]
+        self.locations.repositories_file.write_text(
+            json.dumps(self.entries), encoding="utf-8"
+        )
+        environment = patch.dict(os.environ, {}, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def connect(self, answers):
+        prompter = ScriptedPrompter(answers)
+        result = setup_wizard.connect_slack(prompter, self.locations)
+        self.assertEqual(prompter.answers, [], "every scripted answer was asked for")
+        return result, prompter
+
+    def test_slack_joins_an_existing_configuration(self) -> None:
+        with patch("prwarden.delivery.send_slack_message") as send:
+            result, prompter = self.connect(["y", "y", self.HOOK, "1"])
+
+        self.assertEqual(result, 0)
+        send.assert_called_once()
+        self.assertIn("reviewer", prompter.transcript[0])
+        self.assertEqual(
+            self.locations.env_file.read_text(encoding="utf-8"),
+            f"{self.env}SLACK_WEBHOOK_URL={self.HOOK}\n",
+        )
+        self.assertEqual(mode(self.locations.env_file), 0o600)
+        self.assertEqual(
+            json.loads(self.locations.repositories_file.read_text()),
+            [
+                {"slug": "acme/app"},
+                {"slug": "owner/private", "github_account": "owner", "slack": False},
+            ],
+        )
+        for name in (".env", "repositories.json"):
+            backups = list(
+                self.locations.config_directory.glob(f"{name}.before-setup-*")
+            )
+            self.assertEqual(len(backups), 1, name)
+
+    def test_declining_changes_nothing(self) -> None:
+        before = self.locations.repositories_file.read_text(encoding="utf-8")
+
+        result, prompter = self.connect(["n"])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(self.locations.env_file.read_text(encoding="utf-8"), self.env)
+        self.assertEqual(
+            self.locations.repositories_file.read_text(encoding="utf-8"), before
+        )
+        self.assertEqual(
+            list(self.locations.config_directory.glob("*.before-setup-*")), []
+        )
+        self.assertIn("Nothing changed.", prompter.transcript)
+
+    def test_without_a_configuration_it_points_at_setup(self) -> None:
+        self.locations.env_file.unlink()
+
+        with self.assertRaisesRegex(SetupError, "run `prwarden setup` first"):
+            self.connect([])
+
+
 class MainTests(unittest.TestCase):
     def test_without_a_terminal_setup_refuses_rather_than_hanging(self) -> None:
         with patch("sys.stdin", io.StringIO()), patch(
@@ -289,6 +503,20 @@ class MainTests(unittest.TestCase):
             self.assertEqual(cli.main(["setup", "--import", "x"]), 0)
 
         entry.assert_called_once_with(["--import", "x"])
+
+    def test_setup_slack_connects_slack_alone(self) -> None:
+        prompter = ScriptedPrompter([])
+        connect = patch("prwarden.setup_wizard.connect_slack", return_value=0)
+        interactive = patch("prwarden.setup_wizard.interactive")
+        with connect as connect, interactive as interactive:
+            self.assertEqual(setup_wizard.main(["--slack"], prompter), 0)
+
+        connect.assert_called_once()
+        interactive.assert_not_called()
+        with patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(
+            SystemExit
+        ):
+            setup_wizard.main(["--slack", "--import", "x"], prompter)
 
 
 if __name__ == "__main__":
