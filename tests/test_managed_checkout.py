@@ -203,9 +203,9 @@ class RunGitForTests(unittest.TestCase):
             "own", "owner/own", Path("."), github_account="owner",
             managed_checkout=True,
         )
-        with patch("prwarden.github.commands.run_cmd", side_effect=tokens) as run, patch(
-            "prwarden.github.shutil.which", return_value="/opt/bin/gh"
-        ):
+        run_patch = patch("prwarden.github.commands.run_cmd", side_effect=tokens)
+        which_patch = patch("prwarden.github.shutil.which", return_value="/opt/bin/gh")
+        with run_patch as run, which_patch:
             github.pin_github_account("reviewer", [personal])
             github.run_git_for(personal, ["fetch", "origin", SHA])
 
