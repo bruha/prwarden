@@ -34,15 +34,61 @@ and delivery are plain code, the same for every engine. Kiro, Claude Code, Codex
 and Antigravity can each review, verify, or stand in when another's provider fails,
 and a command of your own can review.
 
-## Quick start
+## Install
 
-With the [requirements](#requirements) below installed and signed in (`gh auth
-login`, plus your AI CLI's own login), install PR Warden with Homebrew on macOS or
-Linux, or with [pipx](https://pipx.pypa.io/) anywhere Python 3.9 runs, and set it
-up:
+PR Warden is one command, `prwarden`, with no Python packages of its own to pull
+in. Install it with Homebrew on macOS or Linux, or from PyPI anywhere Python 3.9 or
+newer runs.
+
+### Homebrew
 
 ```sh
-brew install bruha/tap/prwarden    # or: pipx install prwarden
+brew install bruha/tap/prwarden
+```
+
+This adds the [bruha/homebrew-tap](https://github.com/bruha/homebrew-tap) tap and
+installs PR Warden together with GitHub CLI and the Python it runs on.
+
+```sh
+brew upgrade prwarden      # update to the latest release
+brew uninstall prwarden    # remove it
+```
+
+### PyPI
+
+The [prwarden package](https://pypi.org/project/prwarden/) runs on any Python 3.9 or
+newer, the `python3` that comes with the macOS Command Line Tools included. Install
+it with [pipx](https://pipx.pypa.io/), which gives it an environment of its own and
+puts `prwarden` on your `PATH`:
+
+```sh
+pipx install prwarden      # or: uv tool install prwarden
+pipx upgrade prwarden      # update to the latest release
+pipx uninstall prwarden    # remove it
+```
+
+GitHub CLI is not a Python package, so pipx does not install it; `prwarden setup`
+checks for it and offers to.
+
+### Either way
+
+`prwarden --version` shows the installed release. Configuration and review records
+live outside the installation, in `~/.config/prwarden` and `~/.local/state/prwarden`
+(see [where configuration and state live](#where-configuration-and-state-live)), so
+an upgrade keeps them and a schedule keeps working: Homebrew and pipx both keep
+`prwarden` at one path. Install it one way only: `prwarden schedule install`
+schedules the first `prwarden` on your `PATH`.
+
+Uninstalling leaves the configuration and records behind. To remove everything, run
+`prwarden schedule remove` before uninstalling, then delete `~/.config/prwarden`,
+`~/.local/state/prwarden`, and `~/.local/share/prwarden`, which holds the clones PR
+Warden made.
+
+## Quick start
+
+With PR Warden [installed](#install), run:
+
+```sh
 prwarden setup
 ```
 
