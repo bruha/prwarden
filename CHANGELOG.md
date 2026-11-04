@@ -9,8 +9,14 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 1.0.2 5ff28d890c2036505c33cbe234eacafbc17da824 -->
+<!-- release-baseline: 2.0.0 3911f4fac8d310d091323a30c18419ccaacca4dd -->
 ## [Unreleased]
+
+## [2.0.0] - 2026-11-04
+
+### Breaking Changes
+
+- name the package prwarden instead of src (`3911f4f`).
 
 ## [1.0.2] - 2026-11-04
 
