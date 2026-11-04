@@ -9,8 +9,25 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 2.1.0 1b6b802591091b1c5d9ceb68a1d758df044b93f4 -->
+<!-- release-baseline: 2.2.0 27a2890136d7f9fb83482461f5cc58bfe949d924 -->
 ## [Unreleased]
+
+## [2.2.0] - 2026-11-04
+
+### Added
+
+- clone repositories that name no local checkout (`2986fe9`).
+- run on a schedule with prwarden schedule (`a75c97a`).
+- check an installation with prwarden doctor (`191e8b6`).
+- configure PR Warden with prwarden setup (`04e8f01`).
+
+### Fixed
+
+- let this project review its own public repositories (`27a2890`).
+
+### Changed
+
+- wrap a long line in the managed checkout tests (`2de87e2`).
 
 ## [2.1.0] - 2026-11-04
 
