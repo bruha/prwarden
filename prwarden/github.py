@@ -861,6 +861,29 @@ def validate_object_name(value: str, subject: str) -> str:
     return value
 
 
+def repository_reachable(repository: Repository) -> str:
+    """Return the repository's full name as its account sees it, or raise.
+
+    A read that fails here is the failure every review of it would meet: a login
+    that cannot see a private repository, a renamed repository, or a typo.
+    """
+
+    return _run_for(
+        repository,
+        ["gh", "api", f"repos/{repository.slug}", "--jq", ".full_name"],
+        timeout_seconds=30,
+    ).strip()
+
+
+def repository_account_problem(repository: Repository) -> Optional[str]:
+    """Return why the account a repository names could not be pinned, if it was not."""
+
+    account = repository.github_account
+    if not account:
+        return None
+    return _repository_account_failures.get(account.casefold())
+
+
 def get_branch_head_sha(repository: Repository, branch: str) -> str:
     """Return the current tip of ``branch``.
 

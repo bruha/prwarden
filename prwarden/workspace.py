@@ -73,7 +73,7 @@ def ensure_managed_checkout(repository: Repository) -> Path:
     return checkout
 
 
-def _remote_matches_slug(remote_url: str, slug: str) -> bool:
+def remote_matches_slug(remote_url: str, slug: str) -> bool:
     pattern = re.compile(rf"(?:[:/]){re.escape(slug)}(?:\.git)?/?$")
     return bool(pattern.search(remote_url.strip()))
 
@@ -296,7 +296,7 @@ class ReviewWorkspace:
                 f"Cannot validate configured checkout {checkout}: {error}"
             ) from error
 
-        if not _remote_matches_slug(remote_url, self.repository.slug):
+        if not remote_matches_slug(remote_url, self.repository.slug):
             raise WorkspaceError(
                 f"Checkout origin does not match {self.repository.slug}: {remote_url}"
             )

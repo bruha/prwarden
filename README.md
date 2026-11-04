@@ -69,8 +69,9 @@ cp repositories.example.json repositories.json
 2. In `repositories.json`, list each repository's `owner/name` slug, and the path to
    a local clone of it if you have one; without a path PR Warden clones it itself.
    Add `"slack": false` to an entry if you do not use Slack.
-3. Review one pull request as a dry run. Nothing is posted, but the model runs and
-   uses your quota:
+3. Check the setup with `prwarden doctor`, which reads everything and spends
+   nothing. Then review one pull request as a dry run. Nothing is posted, but the
+   model runs and uses your quota:
 
    ```sh
    prwarden --repo your-org/example-app --pr 123

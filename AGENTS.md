@@ -48,6 +48,7 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
 - `prwarden/state.py`: atomic JSON state and the single-host process lock.
 - `prwarden/paths.py`: where configuration and state live, checkout or installed.
 - `prwarden/schedule.py`: `prwarden schedule`, the LaunchAgent or systemd timer.
+- `prwarden/doctor.py`: `prwarden doctor`, read-only checks of an installation.
 - `prwarden/workspace.py`: immutable PR-head fetch, detached worktree lifecycle, and
   read-only installed-dependency links.
 - `tests/`: standard-library `unittest` suite mirroring application modules.

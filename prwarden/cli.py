@@ -148,7 +148,7 @@ BOARD_FALLBACK_TERMINAL_SIZE = (80, 24)
 INTERRUPTED_EXIT_CODE = 130
 RUN_LOG_DIRECTORY_NAME = "run-logs"
 # Commands that look after this installation instead of reviewing.
-ADMIN_COMMANDS = ("schedule",)
+ADMIN_COMMANDS = ("doctor", "schedule")
 PLAN_TITLE_WIDTH = 60
 # The progress line is styled with the terminal's own text colour, never a palette
 # colour: a theme decides what each palette entry looks like, and Solarized Dark sets
@@ -653,7 +653,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Review configured GitHub pull requests with a pluggable review engine."
         ),
-        epilog="Run `prwarden schedule --help` to review on a schedule.",
+        epilog="Other commands: `prwarden doctor` checks this installation, and "
+        "`prwarden schedule` reviews on a timer.",
     )
     parser.add_argument(
         "--version",
@@ -4480,6 +4481,10 @@ def _admin_command(name: str) -> "Callable[[Sequence[str]], int]":
         from . import schedule
 
         return schedule.main
+    if name == "doctor":
+        from . import doctor
+
+        return doctor.main
     raise AssertionError(f"unknown command {name}")
 
 
