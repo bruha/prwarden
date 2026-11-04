@@ -37,7 +37,25 @@ and a command of your own can review.
 ## Quick start
 
 With the [requirements](#requirements) below installed and signed in (`gh auth
-login`, plus your AI CLI's own login):
+login`, plus your AI CLI's own login), install PR Warden with Homebrew on macOS or
+Linux, or with [pipx](https://pipx.pypa.io/) anywhere Python 3.9 runs:
+
+```sh
+brew install bruha/tap/prwarden    # or: pipx install prwarden
+```
+
+An installed copy reads its configuration from `~/.config/prwarden`. Create it
+from the two examples:
+
+```sh
+mkdir -p ~/.config/prwarden && cd ~/.config/prwarden
+base=https://raw.githubusercontent.com/bruha/prwarden/main
+(umask 077 && curl -fsSL "$base/.env.example" -o .env)
+curl -fsSL "$base/repositories.example.json" -o repositories.json
+```
+
+To run from a clone instead, which keeps its configuration in the clone, type
+`python3 -m prwarden` in place of `prwarden`:
 
 ```sh
 git clone https://github.com/bruha/prwarden.git
@@ -54,7 +72,7 @@ cp repositories.example.json repositories.json
    uses your quota:
 
    ```sh
-   python3 -m prwarden --repo your-org/example-app --pr 123
+   prwarden --repo your-org/example-app --pr 123
    ```
 
 4. When the result looks right, set `AUTO_REVIEW_DRY_RUN=0` in `.env` and add
@@ -81,8 +99,10 @@ No third-party Python packages are required.
 ## Setup
 
 The [quick start](#quick-start) created the two private configuration files from
-their examples. If `install` is unavailable, copy `.env.example` to `.env` and then
-run `chmod 600 .env`. Edit both files for your environment. They are ignored by Git.
+their examples, in `~/.config/prwarden` for an installed copy or in the clone. If
+`install` is unavailable, copy `.env.example` to `.env` and then run
+`chmod 600 .env`. Edit both files for your environment. In a clone they are
+ignored by Git.
 
 Each `repositories.json` entry needs a GitHub `owner/repository` slug and the
 path to a matching local Git checkout. The checkout supplies Git objects; its
@@ -168,6 +188,9 @@ because it decides which `.env` is read. An installed copy honours
 own state, so schedule only one of them on a machine.
 
 ## Usage
+
+The examples run from a clone. With an installed copy, type `prwarden` in place
+of `python3 -m prwarden`.
 
 Display the installed project version:
 

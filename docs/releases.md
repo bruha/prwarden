@@ -75,6 +75,26 @@ baseline, a non-Conventional Commit, or disagreement between `VERSION` and
 
 11. Verify the remote branch and tag. Do not describe the release as published
     until both pushes succeed.
+12. The tag starts the Publish workflow, which builds the source archive and the
+    wheel and then waits in the `pypi` environment. The maintainer approves it
+    under the run's "Review deployments"; it uploads through PyPI trusted
+    publishing, so no token exists to leak. Confirm the version on
+    <https://pypi.org/project/prwarden/>.
+13. Publish the GitHub Release for the tag with that version's changelog section:
+
+    ```sh
+    gh release create vX.Y.Z --title "PR Warden X.Y.Z" --notes-file notes.md
+    ```
+
+14. Update the formula in [bruha/homebrew-tap](https://github.com/bruha/homebrew-tap)
+    by pull request: point `url` at the tag's archive and set `sha256` from it.
+    Merge once its macOS and Linux checks pass, then confirm a clean install:
+
+    ```sh
+    url=https://github.com/bruha/prwarden/archive/refs/tags/vX.Y.Z.tar.gz
+    curl -fsSL "$url" | shasum -a 256
+    brew update && brew install bruha/tap/prwarden && brew test prwarden
+    ```
 
 If the branch push succeeds but the tag push fails, retain the local tag,
 report the partial publication, and retry only the tag push after resolving the
