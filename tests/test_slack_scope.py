@@ -19,6 +19,7 @@ from prwarden.models import (
     Repository,
 )
 from prwarden.state import JsonStateStore
+from tests.test_review_rules import without_review_rules
 
 
 READY_SNAPSHOT = PullRequestSnapshot(
@@ -120,6 +121,9 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
 
 class OwnPullRequestOutsideSlackTests(unittest.TestCase):
+    def setUp(self) -> None:
+        without_review_rules(self)
+
     def review(
         self,
         responses,

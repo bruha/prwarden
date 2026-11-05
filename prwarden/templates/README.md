@@ -27,6 +27,7 @@ approvals.
 | `[path]` | `path` | Repository-relative source path | `src/forms/schema.ts` |
 | `[line]` | `line` | New-file line receiving the inline comment | `67` |
 | `[problem]` | `problem` | Confirmed explanation of the defect | `The fallback discards the saved value.` |
+| `[rule]` | `rule` | The repository code review rule the change breaks, with its file, as Markdown; empty when it breaks none | ``**Repository rule** (`AGENTS.md`): > Never log an email address.`` |
 | `[trigger]` | `trigger` | Concrete condition or action that reaches the defect | `Submit the form with an empty identifier.` |
 | `[impact]` | `impact` | Observable result for users or the system | `The request fails before data is saved.` |
 | `[evidence]` | `evidence` | Preformatted Markdown list of exact source evidence | ``- `src/forms/schema.ts:67` — passes the empty value`` |
@@ -51,6 +52,10 @@ so `[verifier]`, `[verify-engine]`, and `[verify-model]` repeat the reviewer
 values and `[done-by]` omits the redundant `verified by` clause. An inline
 comment always describes a confirmed finding, so a rendered comment is always
 attributed to the engine that verified it.
+
+A tag alone on its line whose value is empty takes that line and the blank line
+after it, so `[rule]` leaves no gap in the comment on a finding that breaks no
+repository rule. Text inside a value is never changed.
 
 The template must contain exactly one tag mapped to the `marker` registry value.
 GitHub does not display the HTML comment, but the marker remains in the comment

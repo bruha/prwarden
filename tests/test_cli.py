@@ -33,6 +33,7 @@ from prwarden.models import (
 )
 from prwarden.review import CandidateRejection, ReviewError
 from prwarden.state import JsonStateStore, StateError, StateLockedError
+from tests.test_review_rules import without_review_rules
 
 
 READY_SNAPSHOT = PullRequestSnapshot(
@@ -96,6 +97,7 @@ CONFIRMED_JUDGMENT = {
 
 class OrchestrationTests(unittest.TestCase):
     def setUp(self) -> None:
+        without_review_rules(self)
         checks = patch("prwarden.cli.list_pull_request_checks", return_value=())
         checks.start()
         self.addCleanup(checks.stop)

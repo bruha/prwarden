@@ -74,6 +74,7 @@ from prwarden.models import (
     ReviewMaterial,
 )
 from prwarden.review import ReviewError
+from tests.test_review_rules import without_review_rules
 
 
 def git(root: Path, *args: str) -> str:
@@ -873,6 +874,10 @@ class ReplayBundlingTests(unittest.TestCase):
     change this harness was built to judge.
     """
 
+    def setUp(self) -> None:
+        without_review_rules(self)
+
+
     def test_a_replay_reviews_every_bundle(self) -> None:
         case = ReplayCase("owner/app", 1, "a" * 40, "b" * 40)
         settings = Mock(
@@ -1268,6 +1273,9 @@ class MeasuredProvenanceTests(unittest.TestCase):
 
 
 class ReplayEvidenceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        without_review_rules(self)
+
     def test_a_confirmed_finding_is_named_in_the_transcript(self) -> None:
         """A replay delivers nothing, so its transcript is the only record."""
 
@@ -1546,6 +1554,10 @@ class ParallelReplayTests(unittest.TestCase):
 class RecordedCandidateTests(unittest.TestCase):
     """The reviewer is the expensive half; keeping its output makes the other half
     cheap to question."""
+
+    def setUp(self) -> None:
+        without_review_rules(self)
+
 
     def finding(self) -> Finding:
         return Finding(
@@ -2081,6 +2093,10 @@ class UnmatchedFindingTests(unittest.TestCase):
 class ReplayDecisionTests(unittest.TestCase):
     """What a replay reports as decided must be what a live run would deliver,
     because a control case is judged on nothing else."""
+
+    def setUp(self) -> None:
+        without_review_rules(self)
+
 
     def run_case(
         self,

@@ -29,6 +29,7 @@ class CommentTemplateTests(unittest.TestCase):
             "path": "src/app.py",
             "line": "42",
             "problem": "Data is discarded.",
+            "rule": "",
             "trigger": "Save a replacement.",
             "impact": "Stored data is lost.",
             "evidence": "- `src/app.py:42` — replacement",
@@ -57,6 +58,27 @@ class CommentTemplateTests(unittest.TestCase):
         self.assertIn("**Evidence:**\n- `src/app.py:42`", rendered)
         self.assertIn("_Reviewed by Model @ Engine_", rendered)
         self.assertTrue(rendered.endswith("<!-- prwarden -->"))
+
+    def test_a_tag_with_nothing_to_say_leaves_no_gap(self):
+        template = load_comment_template(
+            DEFAULT_GITHUB_COMMENT_TEMPLATE_FILE,
+            DEFAULT_GITHUB_COMMENT_TAGS_FILE,
+        )
+        values = self.values()
+        values["suggested_change"] = "Keep\n\n\nthe spacing a value has."
+
+        without = template.render(values)
+        values["rule"] = "**Repository rule** (`AGENTS.md`):\n> Never drop data."
+        with_rule = template.render(values)
+
+        self.assertIn("Data is discarded.\n\n**Trigger:**", without)
+        self.assertIn(
+            "Data is discarded.\n\n**Repository rule** (`AGENTS.md`):\n"
+            "> Never drop data.\n\n**Trigger:**",
+            with_rule,
+        )
+        # Only the template's own lines are dropped, never a value's.
+        self.assertIn("Keep\n\n\nthe spacing a value has.", without)
 
     def test_custom_registry_can_add_aliases_and_rearrange_sections(self):
         template_file, tags_file = self.write_files(

@@ -135,6 +135,38 @@ class Finding:
     evidence: tuple[FindingEvidence, ...] = ()
     counterevidence: tuple[FindingEvidence, ...] = ()
     counterevidence_reason: str = ""
+    # The repository code review rule the change breaks, quoted exactly from the
+    # base branch, and the file it is in; empty for a defect that breaks no rule.
+    rule: str = ""
+    rule_source: str = ""
+
+
+@dataclass(frozen=True)
+class ReviewRuleSection:
+    """One "Code review" section of an agent instruction file on the base branch."""
+
+    path: str
+    heading: str
+    text: str
+
+
+@dataclass(frozen=True)
+class ReviewRules:
+    """The base branch's code review rules, which the pull request cannot change."""
+
+    base_ref: str
+    base_sha: str
+    sections: tuple[ReviewRuleSection, ...] = ()
+    # Whether rules beyond the prompt's budget were left out, and so not enforced.
+    truncated: bool = False
+
+    def source_of(self, quote: str) -> Optional[str]:
+        """Return the file whose rules contain ``quote`` exactly, if any does."""
+
+        for section in self.sections:
+            if quote in section.text:
+                return section.path
+        return None
 
 
 @dataclass(frozen=True)
@@ -333,3 +365,5 @@ class ReviewMaterial:
     background: str = ""
     docs_candidates: tuple[DocsFinding, ...] = ()
     max_docs_findings: int = 3
+    # Read from the base branch, so the change under review cannot write its own.
+    review_rules: Optional[ReviewRules] = None

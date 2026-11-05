@@ -48,8 +48,9 @@ The expected review flow is:
    and deliver confirmed notes as one pull-request comment. This level is keyed by
    pull request rather than by head, so a later push does not review the design
    again. Every fault here is contained to this level.
-6. Generate and validate code-level candidate findings against repository
-   evidence.
+6. Read the code review rules from the base branch's tip, then generate and
+   validate code-level candidate findings against repository evidence and those
+   rules.
 7. Adversarially verify candidates in a fresh model invocation.
 8. Re-fetch mutable PR state and feedback.
 9. Restart against a newer head, up to the configured controller limit, or

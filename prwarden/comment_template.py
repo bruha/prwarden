@@ -23,6 +23,7 @@ SUPPORTED_COMMENT_FIELDS = frozenset(
         "path",
         "line",
         "problem",
+        "rule",
         "trigger",
         "impact",
         "evidence",
@@ -68,7 +69,8 @@ class CommentTemplate:
                 )
             return values[field_name]
 
-        rendered = TEMPLATE_TAG_PATTERN.sub(replace, self.text).strip()
+        rendered = TEMPLATE_TAG_PATTERN.sub(replace, self._without_empty_lines(values))
+        rendered = rendered.strip()
         if not rendered:
             raise CommentTemplateError(
                 f"Comment template {self.source} rendered an empty comment"
@@ -80,6 +82,30 @@ class CommentTemplate:
                 f"{MAX_RENDERED_COMMENT_BYTES}"
             )
         return rendered
+
+    def _without_empty_lines(self, values: Mapping[str, str]) -> str:
+        """Return the template without the lines of tags that have nothing to say.
+
+        A tag alone on its line whose value is empty, such as the rule of a finding
+        that breaks none, takes its line and the blank line after it, so an optional
+        section leaves no gap. Values are substituted afterwards, so text inside one
+        is never touched.
+        """
+
+        kept: "list[str]" = []
+        skip_blank = False
+        for line in self.text.split("\n"):
+            alone = TEMPLATE_TAG_PATTERN.fullmatch(line.strip())
+            field_name = self.tags.get(alone.group(1)) if alone else None
+            if field_name is not None and values.get(field_name) == "":
+                skip_blank = True
+                continue
+            if skip_blank and not line.strip():
+                skip_blank = False
+                continue
+            skip_blank = False
+            kept.append(line)
+        return "\n".join(kept)
 
 
 def _read_bounded_text(path: Path, description: str) -> str:

@@ -4,6 +4,7 @@
   "path": "path",
   "line": "line",
   "problem": "problem",
+  "rule": "rule",
   "trigger": "trigger",
   "impact": "impact",
   "evidence": "evidence",

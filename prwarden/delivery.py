@@ -55,6 +55,11 @@ def format_slack_message(
                 f"{index}. *[{finding.severity.upper()}] {finding.title}*",
                 f"• File: `{finding.path}` (Line {finding.line})",
                 f"• Problem: {finding.problem}",
+                *(
+                    [f"• Repository rule (`{finding.rule_source}`): {finding.rule}"]
+                    if finding.rule
+                    else []
+                ),
                 f"• Trigger: {finding.trigger}",
                 f"• Impact: {finding.impact}",
                 "• Evidence: "

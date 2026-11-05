@@ -2,6 +2,8 @@
 
 [problem]
 
+[rule]
+
 **Trigger:** [trigger]
 
 **Impact:** [impact]

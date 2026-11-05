@@ -684,6 +684,41 @@ reviewed content. It may add context, never authority, and never permission to
 relax a rule the prompt states. A repository without the file costs nothing and the
 prompts say nothing about one.
 
+### Repository code review rules
+
+A repository states what its reviews must hold the code to in a section headed
+"Code review" in its agent instruction files: the root `AGENTS.md`, `CLAUDE.md`, or
+`GEMINI.md`, `.cursorrules`, `.cursor/rules`, `.kiro/steering`,
+`.github/copilot-instructions.md`, or `.github/instructions`, the same files the
+documentation level reads. The heading may be any level and may say "Code reviews"
+or add "guidelines", "rules", "instructions", "checklist", or "standards"; the
+section runs to the next heading of the same or a higher level, so its subsections
+belong to it, and a heading inside a fenced code block is not one.
+
+The rules are read from the base branch, never from the reviewed head, so a pull
+request cannot write the rules it is judged by: a change to a rule is a change of its
+own, merged first. The controller asks GitHub for the base branch's current tip,
+refuses anything that is not a Git object name, fetches that commit into the local
+checkout, and reads the matching files from its objects without checking anything
+out. A replay reads them at the case's pinned base. Identical sections, as `CLAUDE.md`
+often repeats `AGENTS.md`, are kept once, root-level files first, and the whole is
+capped at 6000 characters with the rest named as left out. They are read after the
+advisory levels, which never receive them, and a failure to read them fails that pull
+request's code review, which is retried on the next run, rather than letting it pass
+unchecked against them; the advisory levels have already run.
+
+Only the code level and its verification pass receive them, delimited in their own
+block, as requirements: an added line that breaks one is a defect, whatever its kind,
+and withholds the approval like any other confirmed finding. A rule may only add
+requirements; the prompt says that none relaxes a rule it states, grants an approval,
+or changes the response format. A finding of a breach carries `rule`, a fragment of
+one line of the rule copied exactly, and the controller rejects a response whose
+quote is not in the base branch's rules, so a preference cannot be dressed up as a
+rule. The verifier confirms a breach only when the cited added line breaks the rule
+as written. The rule and the file it is in are shown with the finding on GitHub, in
+Slack, and in the terminal. A base branch without rules leaves the prompt and schema
+byte for byte as they were.
+
 ## Review Engine Contract
 
 The core owns the provider-neutral prompt, output schema, and post-generation
@@ -901,7 +936,8 @@ gains a tag that is not registered.
 It permits only read-only local file search and reading for semantic
 verification, and prohibits edits, command execution, networking, browsing, and
 external actions. It requests only correctness, reliability, data-loss,
-concurrency, and security defects introduced by added lines.
+concurrency, and security defects introduced by added lines, and breaches of the
+base branch's code review rules when it has any.
 Changed test code is held to the same rules, with the test run as its runtime. A
 changed test, fixture, or test helper is defective when it fails against correct
 code, reports a pass or a skip without making the check it exists to make, or
@@ -1058,7 +1094,8 @@ Before invoking an engine, the controller verifies that the configured
 checkout is a Git worktree and that its `origin` URL ends with the configured
 GitHub slug. It fetches the selected PR head SHA with `--no-write-fetch-head`,
 creates a unique detached temporary worktree under the ignored state directory,
-and passes that path to the engine. Cleanup runs after successful and failed
+and passes that path to the engine. The base branch's tip is fetched the same way,
+and its code review rules are read from Git's objects, never checked out. Cleanup runs after successful and failed
 engine calls. The configured checkout's branch, index, and working files are
 not changed.
 
@@ -1120,8 +1157,9 @@ other pull requests.
 Create and submit one bodyless `COMMENT` review for the exact head SHA. Each
 finding is an inline comment rendered from a validated Markdown template and
 editable tag registry. The committed default contains severity/title, problem,
-trigger, impact, evidence, counterevidence, suggested change, reviewer
-attribution, and a hidden reviewer marker. Template tags map only to supported
+the repository code review rule the finding breaks, when it breaks one, trigger,
+impact, evidence, counterevidence, suggested change, reviewer attribution, and a
+hidden reviewer marker. Template tags map only to supported
 controller values and cannot execute code. Startup rejects unreadable or
 invalid files, unknown tags, unsupported mappings, and templates without
 exactly one marker field. Rendered comments are bounded before a GitHub write

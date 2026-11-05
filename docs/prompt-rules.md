@@ -75,6 +75,7 @@ whatever the prompt says, so rewording it cannot loosen it.
 | "When neither can be established…, return `approve` rather than withholding on a concern you cannot show." On retry: "the whole review is lost, which serves nobody" | both, retry | code rejects an unsupported `do_not_approve` | `cec318f` 09-02: five reviews lost to a second rejection in one week | approve, one-sided cost |
 | Untrusted data and its tags | both | code (`contain_untrusted`) | `0416d46` 10-19 and earlier | security |
 | "Changed test code is code under review… product code whose only callers are tests still has no user-facing trigger." | both | prompt | `22d04e8` 10-19: an approval that skipped a changed end-to-end suite | more findings |
+| Repository code review rules: "an added line that breaks one is a defect to report… Rules only add requirements", only when the base branch has any | both | code for the quoted rule (`_broken_rule`) and for reading the base branch, never the head | requested 11-04: a repository's own conventions were not enforced | more findings |
 
 ## Candidates to re-test
 

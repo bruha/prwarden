@@ -895,6 +895,8 @@ def _finding_document(finding: Finding) -> "dict[str, Any]":
         "trigger": finding.trigger,
         "impact": finding.impact,
         "counterevidence_reason": finding.counterevidence_reason,
+        "rule": finding.rule,
+        "rule_source": finding.rule_source,
         "evidence": [
             {
                 "path": item.path,
@@ -944,6 +946,8 @@ def _finding_from_document(payload: "dict[str, Any]") -> Finding:
         evidence=citations("evidence"),
         counterevidence=citations("counterevidence"),
         counterevidence_reason=str(payload.get("counterevidence_reason", "")),
+        rule=str(payload.get("rule", "")),
+        rule_source=str(payload.get("rule_source", "")),
     )
 
 
@@ -1360,6 +1364,11 @@ def _prepared_case(
         background = read_background(exact_repository.path)
         if background:
             material = replace(material, background=background)
+        # The rules the pinned base held, so a replay judges what production judged.
+        review_rules = cli.read_review_rules(repository, pull_request, case.base)
+        if review_rules.sections:
+            material = replace(material, review_rules=review_rules)
+            cli._report_review_rules(review_rules)
         cli._report_diff_budget(material)
         yield _PreparedCase(
             repository, pull_request, exact_repository, material, tuple(extra_bundles)

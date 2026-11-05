@@ -1047,6 +1047,11 @@ def format_github_comment(
         f"({inline_code(item.excerpt)})"
         for item in finding.evidence
     )
+    rule = (
+        f"**Repository rule** ({inline_code(finding.rule_source)}):\n> {finding.rule}"
+        if finding.rule
+        else ""
+    )
     return comment_template.render(
         {
             "severity": finding.severity.upper(),
@@ -1054,6 +1059,7 @@ def format_github_comment(
             "path": finding.path,
             "line": str(finding.line),
             "problem": finding.problem,
+            "rule": rule,
             "trigger": finding.trigger,
             "impact": finding.impact,
             "evidence": evidence,

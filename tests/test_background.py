@@ -21,6 +21,7 @@ from prwarden.review import (
     read_background,
 )
 from prwarden.state import JsonStateStore
+from tests.test_review_rules import without_review_rules
 
 
 READY_SNAPSHOT = PullRequestSnapshot(
@@ -123,6 +124,9 @@ class BackgroundPromptTests(unittest.TestCase):
 
 
 class BackgroundOrchestrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        without_review_rules(self)
+
     def test_the_note_reaches_the_engine_and_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
