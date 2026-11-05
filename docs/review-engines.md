@@ -38,6 +38,10 @@ python3 -m prwarden --engine codex --repo owner/repository --pr 123
 The adapter uses non-interactive `codex exec`, an ephemeral session, a read-only
 sandbox, disabled user configuration and project instruction loading, and a
 JSON output schema. It uses the saved session reported by `codex login status`.
+`codex exec` has no effort flag and the user configuration that would hold one is
+skipped, so the role's effort is passed as `--config model_reasoning_effort="…"`;
+without an effort the model runs at its own default, which is `low` for several
+current models.
 
 Skipping the user configuration also keeps a reviewed head's own
 `.codex/config.toml` out. Codex loads that file only for a project the user

@@ -217,8 +217,8 @@ class EffortSettingTests(unittest.TestCase):
             env_file = Path(directory) / ".env"
             write_private_env(
                 env_file,
-                "GITHUB_REVIEWER_USERNAME=reviewer\nREVIEW_ENGINE=kiro\n"
-                "REVIEW_FALLBACK_ENGINE=codex\nREVIEW_FALLBACK_EFFORT=max\n",
+                "GITHUB_REVIEWER_USERNAME=reviewer\nREVIEW_ENGINE=command\n"
+                'REVIEW_ENGINE_COMMAND=["review-wrapper"]\nREVIEW_EFFORT=max\n',
             )
             repositories = Path(directory) / "repositories.json"
             repositories.write_text(
@@ -228,11 +228,30 @@ class EffortSettingTests(unittest.TestCase):
             with patch.dict(os.environ, {}, clear=True):
                 with self.assertRaisesRegex(
                     config.ConfigError,
-                    "REVIEW_FALLBACK_EFFORT is not supported by the codex adapter",
+                    "REVIEW_EFFORT is not supported by the command adapter; only "
+                    "antigravity, claude, codex and kiro pass a reasoning effort",
                 ):
                     config.load_settings(
                         env_file, repositories, Path(directory) / "state.json"
                     )
+
+    def test_a_codex_fallback_takes_its_own_effort(self):
+        """Codex has no effort flag and its user configuration is skipped, so the
+        level travels as a configuration override; refusing it left the fallback at
+        the model's default."""
+
+        self.BASE = tuple(
+            line for line in self.BASE if not line.startswith("REVIEW_FALLBACK_")
+        )
+        settings = self.load(
+            "REVIEW_FALLBACK_ENGINE=codex",
+            "REVIEW_FALLBACK_MODEL=gpt-6.1-sol",
+            "REVIEW_FALLBACK_EFFORT=XHIGH",
+        )
+
+        self.assertEqual(settings.fallback_engine, "codex")
+        self.assertEqual(settings.fallback_model, "gpt-6.1-sol")
+        self.assertEqual(settings.fallback_effort, "xhigh")
 
     def test_the_verifier_takes_a_fallback_of_its_own(self):
         """Kiro served review and verification, so while it was down nothing the

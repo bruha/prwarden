@@ -15,6 +15,7 @@ from prwarden.engine import (
     PROMPT_DATA_TAGS,
     UNTRUSTED_TAG_NOTICE,
     contain_untrusted,
+    CODE_LEVEL,
     DESIGN_FIELD_LIMITS,
     DESIGN_LEVEL,
     DOCS_FIELD_LIMITS,
@@ -1576,6 +1577,61 @@ class ReviewEngineTests(unittest.TestCase):
             self.assertEqual(args[-1], "-")
             self.assertIn("Unified diff:", run.call_args.kwargs["input_text"])
             self.assertFalse(run.call_args.kwargs["inherit_environment"])
+            self.assertFalse(
+                any(arg.startswith("model_reasoning_effort=") for arg in args)
+            )
+
+    def test_codex_adapter_passes_its_effort(self):
+        """The user configuration that would name an effort is skipped, so without
+        this a Codex fallback ran at the model's own default, low for the newest."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            settings = replace(
+                self.settings(
+                    directory, repository, engine="codex", command=("codex",)
+                ),
+                review_model="gpt-6.1-sol",
+                review_effort="xhigh",
+            )
+            with patch(
+                "prwarden.engine_codex.run_cmd", return_value='{"findings": []}'
+            ) as run:
+                CodexEngine(settings).review(*self.input(repository))
+
+            args = run.call_args.args[0]
+            setting = args[args.index('model_reasoning_effort="xhigh"') - 1]
+            self.assertEqual(setting, "--config")
+            self.assertIn("--ignore-user-config", args)
+            self.assertEqual(args[args.index("--model") + 1], "gpt-6.1-sol")
+            self.assertEqual(args[-1], "-")
+
+    def test_codex_adapter_runs_the_code_level_at_its_own_effort(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            settings = replace(
+                self.settings(
+                    directory, repository, engine="codex", command=("codex",)
+                ),
+                review_effort="high",
+                review_code_effort="max",
+            )
+            material = self.input(repository)[2]
+            for level, expected in (
+                (CODE_LEVEL, 'model_reasoning_effort="max"'),
+                (DESIGN_LEVEL, 'model_reasoning_effort="high"'),
+            ):
+                with self.subTest(level=level):
+                    with patch(
+                        "prwarden.engine_codex.run_cmd",
+                        return_value='{"findings": []}',
+                    ) as run:
+                        CodexEngine(settings).review(
+                            repository,
+                            self.input(repository)[1],
+                            replace(material, level=level),
+                        )
+                    self.assertIn(expected, run.call_args.args[0])
 
     def test_claude_adapter_extracts_structured_output(self):
         with tempfile.TemporaryDirectory() as directory:

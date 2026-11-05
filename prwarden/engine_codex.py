@@ -5,7 +5,13 @@ from typing import Any, Optional
 
 from .commands import CommandError, run_cmd
 from .config import Settings
-from .engine import EngineError, build_engine_environment, build_prompt, build_schema
+from .engine import (
+    EngineError,
+    build_engine_environment,
+    build_prompt,
+    build_schema,
+    effort_for,
+)
 from .models import PullRequest, Repository, ReviewMaterial
 
 
@@ -75,6 +81,14 @@ class CodexEngine:
         ]
         if self.settings.review_model:
             args.extend(["--model", self.settings.review_model])
+        effort = effort_for(self.settings, material)
+        if effort:
+            # `codex exec` has no effort flag: the level is a setting, and the user
+            # configuration that would hold it is skipped above, so without this
+            # override every role ran at the model's own default. The level was
+            # validated against EFFORT_LEVELS at startup, and quoting it keeps it a
+            # TOML string.
+            args.extend(["--config", f'model_reasoning_effort="{effort}"'])
         args.append("-")
 
         try:

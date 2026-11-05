@@ -32,13 +32,13 @@ DEFAULT_ENGINE_COMMANDS = {
 SUPPORTED_REVIEW_ENGINES = frozenset((*DEFAULT_ENGINE_COMMANDS, "command"))
 SUPPORTED_VERIFY_ENGINES = frozenset(DEFAULT_ENGINE_COMMANDS)
 SUPPORTED_FALLBACK_ENGINES = frozenset(DEFAULT_ENGINE_COMMANDS)
-# Reasoning effort as both effort-aware CLIs spell it. Kiro accepts any string and
+# Reasoning effort as the effort-aware CLIs spell it. Kiro accepts any string and
 # exits 0, so a misspelt level would quietly run at the model's default; checking it
 # here is the only place that mistake can be caught.
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 # The adapters that pass effort to their CLI. Effort named for any other engine
 # would be dropped without a word, so it is refused instead.
-EFFORT_ENGINES = frozenset(("antigravity", "claude", "kiro"))
+EFFORT_ENGINES = frozenset(("antigravity", "claude", "codex", "kiro"))
 GITHUB_USERNAME_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?")
 GITHUB_USERNAME_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("gh api user", ("gh", "api", "user", "--jq", ".login")),
