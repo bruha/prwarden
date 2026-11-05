@@ -49,6 +49,7 @@ from prwarden.review import (
     validate_docs_judgments,
 )
 from prwarden.state import JsonStateStore
+from tests.test_review_rules import without_review_rules
 
 
 READY_SNAPSHOT = PullRequestSnapshot(
@@ -954,6 +955,9 @@ class DocsDeliveryFormatTests(unittest.TestCase):
 
 
 class DocsOrchestrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        without_review_rules(self)
+
     def settings(
         self,
         directory: str,

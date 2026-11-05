@@ -37,6 +37,7 @@ from prwarden.review import (
     validate_design_judgments,
 )
 from prwarden.state import JsonStateStore
+from tests.test_review_rules import without_review_rules
 
 
 READY_SNAPSHOT = PullRequestSnapshot(
@@ -611,6 +612,9 @@ class DesignDeliveryFormatTests(unittest.TestCase):
 
 
 class DesignOrchestrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        without_review_rules(self)
+
     def settings(
         self,
         directory: str,

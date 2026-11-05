@@ -41,7 +41,8 @@ The expected review flow is:
 1. Load private configuration and resolve the authenticated GitHub identity.
 2. Discover eligible PRs and immutable head SHAs.
 3. Fetch complete GitHub change metadata, feedback, and exact-head checks.
-4. Create a detached worktree for the selected head.
+4. Create a detached worktree for the selected head, and read the code review
+   rules from the base branch's tip.
 5. Run the advisory solution-design level, when enabled and not already settled
    for this pull request: generate design candidates, validate their citations,
    have the verifier judge each candidate by reference, re-fetch mutable PR state,

@@ -8,7 +8,7 @@ import threading
 from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
-from typing import Optional, Type
+from typing import Callable, Optional, Type
 
 from .commands import CommandError, run_cmd
 from .github import run_git_for
@@ -250,6 +250,78 @@ def _checkout_lock(checkout: Optional[Path]) -> "threading.RLock":
             lock = threading.RLock()
             _checkout_locks[key] = lock
         return lock
+
+
+MAX_BASE_FILE_BYTES = 200_000
+MAX_BASE_FILES = 60
+
+
+def read_base_files(
+    repository: Repository,
+    commit: str,
+    pathspecs: "tuple[str, ...]",
+    wanted: "Callable[[str], bool]",
+) -> "list[tuple[str, str]]":
+    """Return the path and text of each wanted file in ``commit``, a trusted commit.
+
+    The commit is fetched into the local checkout and read from Git's objects, never
+    checked out, so nothing in the checkout or the review worktree changes. Only
+    regular files under ``pathspecs`` that ``wanted`` accepts are read; one too large
+    to be prose, or not UTF-8, is skipped.
+    """
+
+    checkout = repository.path
+    if checkout is None:
+        raise WorkspaceError(
+            f"Repository {repository.slug} needs a local checkout path"
+        )
+    fetch = [
+        "-C",
+        str(checkout),
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-write-fetch-head",
+        "origin",
+        commit,
+    ]
+    documents: "list[tuple[str, str]]" = []
+    try:
+        with _checkout_lock(checkout):
+            if repository.managed_checkout:
+                ensure_managed_checkout(repository)
+                run_git_for(repository, fetch, timeout_seconds=180)
+            else:
+                run_cmd(["git", *fetch], timeout_seconds=180)
+            listing = run_cmd(
+                ["git", "-C", str(checkout), "ls-tree", "-r", "-l", "-z", commit, "--"]
+                + list(pathspecs)
+            )
+            entries = []
+            for entry in listing.split("\0"):
+                metadata, _, path = entry.partition("\t")
+                fields = metadata.split()
+                if len(fields) != 4 or not path or not wanted(path):
+                    continue
+                mode, kind, blob, size = fields
+                if kind != "blob" or mode not in ("100644", "100755"):
+                    continue
+                if not size.isdigit() or not 0 < int(size) <= MAX_BASE_FILE_BYTES:
+                    continue
+                entries.append((path, blob))
+            for path, blob in entries[:MAX_BASE_FILES]:
+                try:
+                    text = run_cmd(
+                        ["git", "-C", str(checkout), "cat-file", "blob", blob]
+                    )
+                except UnicodeDecodeError:
+                    continue
+                documents.append((path, text))
+    except CommandError as error:
+        raise WorkspaceError(
+            f"Cannot read {repository.slug} at {commit[:12]}: {error}"
+        ) from error
+    return documents
 
 
 class ReviewWorkspace:

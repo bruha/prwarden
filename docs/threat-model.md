@@ -11,8 +11,9 @@ follows its shape deliberately so the two can be read side by side.
 
 1. Asks GitHub, through the authenticated `gh` CLI, which pull requests are open.
 2. Fetches each reviewed head into a detached worktree from a local checkout.
-3. Builds a prompt from the diff, prior review comments, GitHub checks, and the
-   repository's own `.prwarden/background.md`.
+3. Builds a prompt from the diff, prior review comments, GitHub checks, the
+   repository's own `.prwarden/background.md`, and the "Code review" rules in the
+   base branch's agent instruction files.
 4. Runs an authenticated coding-agent CLI, in that worktree, with the prompt.
 5. Validates every citation in the response against the worktree.
 6. Posts inline comments, a review, an approval, or advisory pull-request comments
@@ -25,6 +26,7 @@ follows its shape deliberately so the two can be read side by side.
 | --- | --- | --- |
 | Operator | Trusted | Owns `.env`, `repositories.json`, and the schedule |
 | Local checkout | Trusted as a Git object source | Its working tree is never used; only objects are |
+| Base branch | Trusted for its code review rules | Merged by the maintainers; the pull request under review cannot change it |
 | Reviewed head | **Untrusted** | Any contributor can put anything in a diff |
 | Coding-agent CLI | Semi-trusted | Authenticated by the operator, but it is a general tool with its own capabilities and its own sandbox |
 | Model response | **Untrusted** | Validated in full before anything is delivered |
@@ -41,7 +43,7 @@ background note — is data written by whoever opened the pull request.
 | # | Threat | Mitigation, and where |
 | --- | --- | --- |
 | T1 | Command injection through diff, path, branch, or model-supplied text | No shell anywhere: `prwarden/commands.py:112` is the single `subprocess.run`, always with an argument list, `check=False`, an explicit timeout, and a controlled environment. `shell=True`, `os.system`, and `os.popen` appear zero times in `src/`. The prompt, which carries untrusted diff text, is passed as one argv element, never interpolated into a command string |
-| T2 | Prompt injection from the reviewed head, making the agent act rather than review | Every prompt names the untrusted inputs and forbids following instructions in them (`prwarden/engine.py`), forbids edits, commands, network, browsing, and host skills or subagents, and the engine's own sandbox enforces it independently — observed in production [pr:7nzi], where Antigravity refused a `ListDir` call the review had asked for. Data cannot end the block it was placed in: `contain_untrusted` neutralises the prompt's own tag names inside every untrusted value, so a pull-request body carrying `</pr-body>` cannot continue as the prompt's own voice. Residual risk is real and documented below |
+| T2 | Prompt injection from the reviewed head, making the agent act rather than review | Every prompt names the untrusted inputs and forbids following instructions in them (`prwarden/engine.py`), forbids edits, commands, network, browsing, and host skills or subagents, and the engine's own sandbox enforces it independently — observed in production [pr:7nzi], where Antigravity refused a `ListDir` call the review had asked for. Data cannot end the block it was placed in: `contain_untrusted` neutralises the prompt's own tag names inside every untrusted value, so a pull-request body carrying `</pr-body>` cannot continue as the prompt's own voice. Code review rules, which the prompt treats as requirements, are read from the base branch, never from the reviewed head, so a pull request cannot add a rule that excuses it; a rule may only add requirements, and a finding's quoted rule must be the base branch's own text. Residual risk is real and documented below |
 | T3 | Secret leakage to the agent CLI | The engine environment is built from an allowlist, not inherited: `build_engine_environment` (`prwarden/engine.py:1691`) passes `HOME`, `PATH`, `TMPDIR`, `TEMP`, `TMP`, `LANG`, `LC_ALL`, `USER`, `LOGNAME`, `SHELL` and nothing else, and the call site sets `inherit_environment=False`. `SLACK_WEBHOOK_URL` and the rest of `.env` are therefore not visible to the model's process. The reviewer's pinned GitHub token, and the token of any account a repository entry names with `github_account`, is held in `prwarden/github.py` and added only to that module's `gh` calls, never to `os.environ`, so no engine allowlist can forward it. `refresh-terms` passes such a token in its `gh` child's environment, never in its arguments, which every process on the machine can read |
 | T4 | Secret or local-path leakage into Slack or GitHub | The webhook is read from the environment and never printed; Slack message bodies pass through `redact_local_paths` (`prwarden/delivery.py`) so a machine path in a finding cannot reach a channel. A webhook belongs to one workspace, so a repository configured with `"slack": false` is never named in it: its owner's pull requests are reviewed on GitHub, and its run errors and notices stay in the run log. `.env` and `repositories.json` are untracked, and the setup instructions create `.env` mode 600. `prwarden setup` reads a pasted webhook without echoing it, never prints it, and writes it only to `.env`, mode 600 |
 | T5 | Path traversal through a model-supplied citation path | `_required_evidence` (`prwarden/review.py:430`) rejects absolute paths, resolves the candidate, and requires it to sit inside the worktree or an allowed dependency root; resolution happens before the comparison, so a symlink cannot escape. A path that does not exist in the reviewed head is rejected outright |

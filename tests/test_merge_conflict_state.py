@@ -12,6 +12,7 @@ from prwarden.commands import CommandError
 from prwarden.config import Settings
 from prwarden.models import PullRequest, PullRequestSnapshot, Repository
 from prwarden.state import JsonStateStore
+from tests.test_review_rules import without_review_rules
 
 
 CONFLICTED_SNAPSHOT = PullRequestSnapshot(
@@ -28,6 +29,9 @@ UNSETTLED_SNAPSHOT = replace(CONFLICTED_SNAPSHOT, mergeable=None)
 
 
 class MergeConflictStateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        without_review_rules(self)
+
     def settings(self, directory: str, repository: Repository) -> Settings:
         return Settings(
             reviewer_username="reviewer",

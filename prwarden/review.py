@@ -33,6 +33,8 @@ from .models import (
     RejectedDocsCandidate,
     RemovedFile,
     ReviewMaterial,
+    ReviewRules,
+    ReviewRuleSection,
 )
 
 
@@ -640,6 +642,7 @@ def validate_findings(
         suggestion = _required_string(raw_finding, "suggestion", RESPONSE_FIELD_LIMITS["suggestion"])
         trigger = _required_string(raw_finding, "trigger", RESPONSE_FIELD_LIMITS["trigger"])
         impact = _required_string(raw_finding, "impact", RESPONSE_FIELD_LIMITS["impact"])
+        rule, rule_source = _broken_rule(raw_finding, title, material.review_rules)
         contradicting_check = _contradicting_build_check(
             (title, problem, trigger, impact),
             passing_build_checks,
@@ -678,9 +681,42 @@ def validate_findings(
                     "counterevidence_reason",
                     RESPONSE_FIELD_LIMITS["counterevidence_reason"],
                 ),
+                rule=rule,
+                rule_source=rule_source,
             )
         )
     return findings
+
+
+def _broken_rule(
+    raw_finding: "dict[str, Any]", title: str, rules: Optional[ReviewRules]
+) -> "tuple[str, str]":
+    """Return the repository rule a finding says the change breaks, and its file.
+
+    The quote must be the base branch's own text, so a finding cannot invent a rule,
+    or borrow one from the reviewed head, to dress a preference up as a defect.
+    Without rules the field is not asked for, and anything sent anyway is ignored.
+    """
+
+    if rules is None or not rules.sections:
+        return "", ""
+    value = raw_finding.get("rule", "")
+    if not isinstance(value, str):
+        raise ReviewError(f"Finding {title!r} field 'rule' must be a string")
+    quote = value.strip()
+    if not quote:
+        return "", ""
+    limit = RESPONSE_FIELD_LIMITS["rule"]
+    if len(quote) > limit:
+        raise ReviewError(f"Finding {title!r} field 'rule' exceeds {limit} characters")
+    source = None if "\n" in quote or "\r" in quote else rules.source_of(quote)
+    if source is None:
+        raise ReviewError(
+            f"Finding {title!r} quotes a rule that is not in the repository's code "
+            f"review rules: {quote[:120]!r}. Copy a fragment of one line of a rule "
+            "exactly, or leave `rule` empty for a defect that breaks no rule"
+        )
+    return quote, source
 
 
 DESIGN_SEVERITIES = ("LOW", "MEDIUM", "HIGH")
@@ -847,6 +883,134 @@ def is_documentation_path(path: str) -> bool:
     return any(
         _glob_matches(parts, pattern.split("/"))
         for pattern in AI_DOCUMENTATION_PATTERNS + HUMAN_DOCUMENTATION_PATTERNS
+    )
+
+
+# A repository states what its reviews must hold the code to in a "Code review"
+# section of its agent instructions, the files `AI_DOCUMENTATION_PATTERNS` names.
+REVIEW_RULE_HEADING = re.compile(
+    r"code[ -]?reviews?(?:\s+(?:guidelines|rules|instructions|checklist|standards))?",
+    re.IGNORECASE,
+)
+ATX_HEADING = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
+CODE_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+# What one prompt can carry without crowding out the diff it is about.
+MAX_REVIEW_RULES_CHARACTERS = 6000
+
+
+def is_review_rule_source(path: str) -> bool:
+    """Return whether a repository path is an agent instruction file."""
+
+    parts = tuple(part for part in PurePosixPath(path).parts if part not in ("", "."))
+    return bool(parts) and any(
+        _glob_matches(parts, pattern.split("/"))
+        for pattern in AI_DOCUMENTATION_PATTERNS
+    )
+
+
+def review_rule_pathspecs() -> "tuple[str, ...]":
+    """Return the directories and files an instruction file can be found under."""
+
+    prefixes = []
+    for pattern in AI_DOCUMENTATION_PATTERNS:
+        literal = []
+        for part in pattern.split("/"):
+            if any(character in part for character in "*?["):
+                break
+            literal.append(part)
+        if literal:
+            prefixes.append("/".join(literal))
+    return tuple(dict.fromkeys(prefixes))
+
+
+def _is_review_heading(text: str) -> bool:
+    title = re.sub(r"^\d+(?:\.\d+)*[.)]?\s+", "", text.strip())
+    title = title.strip("*_` \t").rstrip(":").strip("*_` \t")
+    return bool(REVIEW_RULE_HEADING.fullmatch(title))
+
+
+def code_review_sections(text: str) -> "list[tuple[str, str]]":
+    """Return the heading and body of each "Code review" section of a document.
+
+    A section runs from its Markdown heading to the next heading of the same or a
+    higher level, so its own subsections belong to it. A heading inside a fenced
+    code block is code, not a heading.
+    """
+
+    sections: "list[tuple[str, str]]" = []
+    current: "Optional[tuple[int, str, list[str]]]" = None
+    fence = ""
+
+    def close() -> None:
+        if current is not None:
+            body = "\n".join(current[2]).strip()
+            if body:
+                sections.append((current[1], body))
+
+    for line in text.splitlines():
+        if fence:
+            stripped = line.strip()
+            if stripped and set(stripped) == {fence[0]} and len(stripped) >= len(fence):
+                fence = ""
+            if current is not None:
+                current[2].append(line)
+            continue
+        opening = CODE_FENCE.match(line)
+        if opening:
+            fence = opening.group(1)
+            if current is not None:
+                current[2].append(line)
+            continue
+        heading = ATX_HEADING.match(line)
+        if heading:
+            level = len(heading.group(1))
+            title = (heading.group(2) or "").strip()
+            if current is not None and level <= current[0]:
+                close()
+                current = None
+            if current is None:
+                if _is_review_heading(title):
+                    current = (level, title, [])
+                continue
+        if current is not None:
+            current[2].append(line)
+    close()
+    return sections
+
+
+def collect_review_rules(
+    documents: "Sequence[tuple[str, str]]", base_ref: str, base_sha: str
+) -> ReviewRules:
+    """Return every "Code review" section the base branch's instruction files hold.
+
+    Root-level files come first, and a section repeated word for word in two files,
+    as `CLAUDE.md` often repeats `AGENTS.md`, is kept once. Past the budget the rest
+    is left out and marked truncated, so nobody mistakes it for enforced.
+    """
+
+    sections: "list[ReviewRuleSection]" = []
+    seen: "set[str]" = set()
+    remaining = MAX_REVIEW_RULES_CHARACTERS
+    truncated = False
+    ordered = sorted(documents, key=lambda item: (item[0].count("/"), item[0]))
+    for path, text in ordered:
+        for heading, body in code_review_sections(text):
+            if body in seen:
+                continue
+            seen.add(body)
+            if remaining <= 0:
+                truncated = True
+                break
+            if len(body) > remaining:
+                body = body[:remaining].rstrip()
+                truncated = True
+            remaining -= len(body)
+            sections.append(ReviewRuleSection(path=path, heading=heading, text=body))
+    return ReviewRules(
+        base_ref=base_ref,
+        base_sha=base_sha,
+        sections=tuple(sections),
+        truncated=truncated,
     )
 
 

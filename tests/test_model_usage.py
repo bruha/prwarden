@@ -11,6 +11,7 @@ from prwarden.engine import report_invocation_credits, take_invocation_credits
 from prwarden.metrics import ReviewMetrics
 from prwarden.models import PullRequest, Repository, ReviewMaterial
 from pathlib import Path
+from tests.test_review_rules import without_review_rules
 
 
 class ModelUsageTests(unittest.TestCase):
@@ -291,6 +292,10 @@ class MeasuredEngineTests(unittest.TestCase):
 
 class UsageReportingTests(unittest.TestCase):
     """The two places an operator reads the spend: per pull request, and per run."""
+
+    def setUp(self) -> None:
+        without_review_rules(self)
+
 
     def test_a_reviewed_pull_request_reports_what_it_spent(self) -> None:
         import tempfile

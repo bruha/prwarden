@@ -17,6 +17,7 @@ from prwarden.models import PullRequest, Repository
 from prwarden.public_safety import refresh_terms
 from prwarden.state import JsonStateStore
 from tests.test_slack_scope import APPROVING, READY_SNAPSHOT, settings_for
+from tests.test_review_rules import without_review_rules
 
 
 SHA = "a" * 40
@@ -164,6 +165,10 @@ class RepositoryAccountTokenTests(unittest.TestCase):
 
 class RepositoryAccountReviewTests(unittest.TestCase):
     """Whose pull request it is follows the account the repository is read as."""
+
+    def setUp(self) -> None:
+        without_review_rules(self)
+
 
     def review(self, author: str):
         with tempfile.TemporaryDirectory() as directory:

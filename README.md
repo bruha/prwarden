@@ -529,6 +529,27 @@ It is framed as untrusted context in the prompt, capped, and may add background
 rather than authority, so it can never relax a review rule. A repository without the
 file costs nothing.
 
+A repository can also set the rules its reviews hold the code to. Write them under a
+"Code review" heading in its agent instructions, such as `AGENTS.md`, `CLAUDE.md`,
+`.kiro/steering/*.md`, `.cursor/rules`, or `.github/copilot-instructions.md`:
+
+```markdown
+## Code review
+
+- Never log a customer's email address.
+- Every new API endpoint checks the caller's permission.
+```
+
+The code level then reports an added line that breaks one of these rules as a defect,
+of any kind, style included, and it withholds the approval like any other finding.
+The rules are read from the base branch, never from the pull request, so a pull
+request cannot write the rules it is judged by: to change a rule, merge that change
+first, or change the code. A rule can only add requirements, never relax PR Warden's
+own. Each such finding quotes the rule it breaks, which the controller checks against
+the base branch's text and the comment shows with the file it came from, and the
+verifier confirms it like any other finding. A repository without a "Code review"
+section is reviewed exactly as before.
+
 The controller validates cited evidence against the exact PR worktree and uses
 a separate adversarial verification pass for candidate findings, optionally on a
 second engine and model. That pass judges each candidate by reference and never

@@ -73,6 +73,7 @@ from .github import (
     submit_docs_notes,
     submit_lgtm_comment,
     submit_review,
+    validate_object_name,
 )
 from .github_status import describe_github_incident
 from .models import (
@@ -85,6 +86,7 @@ from .models import (
     PullRequestSnapshot,
     Repository,
     ReviewMaterial,
+    ReviewRules,
 )
 from .metrics import ReviewMetrics
 from .paths import PACKAGE_ROOT
@@ -101,7 +103,10 @@ from .review import (
     documentation_change_fingerprint,
     dominant_directories,
     read_background,
+    collect_review_rules,
     format_byte_size,
+    is_review_rule_source,
+    review_rule_pathspecs,
     validate_approval_reason,
     validate_approval_verdict,
     validate_blocking_comment_ids,
@@ -114,7 +119,7 @@ from .review import (
 )
 from .reviewer_identity import format_review_attribution, format_review_plan
 from .state import JsonStateStore, StateError, StateLockedError
-from .workspace import WorkspaceError, review_workspace
+from .workspace import WorkspaceError, read_base_files, review_workspace
 
 
 MAX_FAILURE_NOTIFICATION_ERRORS = 10
@@ -1284,6 +1289,44 @@ class _GithubIncidentNotice:
             progress.notify(f"      -> {self._note}")
 
 
+def read_review_rules(
+    repository: Repository, pull_request: PullRequest, commit: Optional[str] = None
+) -> ReviewRules:
+    """Return the code review rules on the pull request's base branch.
+
+    Read from the base branch's current tip rather than the reviewed head, so a pull
+    request cannot write the rules it is judged by; changing a rule is a change of
+    its own, merged first. A failure to read them fails the review rather than
+    letting it pass without them.
+    """
+
+    base_ref = pull_request.base_ref
+    if commit is None:
+        if not base_ref:
+            raise WorkspaceError(
+                f"{repository.slug}#{pull_request.number} names no base branch to "
+                "read its code review rules from"
+            )
+        commit = get_branch_head_sha(repository, base_ref)
+    commit = validate_object_name(commit, f"{repository.slug} base commit")
+    documents = read_base_files(
+        repository, commit, review_rule_pathspecs(), is_review_rule_source
+    )
+    return collect_review_rules(documents, base_ref or commit[:12], commit)
+
+
+def _report_review_rules(rules: ReviewRules) -> None:
+    sources = ", ".join(dict.fromkeys(section.path for section in rules.sections))
+    print(
+        f"      -> Following the code review rules on {rules.base_ref} in {sources}"
+    )
+    if rules.truncated:
+        print(
+            "      -> The code review rules are longer than one review carries; "
+            "the rest are not enforced"
+        )
+
+
 def _print_findings(findings: list[Finding], approve: bool) -> None:
     if not findings:
         if approve:
@@ -1297,6 +1340,8 @@ def _print_findings(findings: list[Finding], approve: bool) -> None:
             f"{finding.title}"
         )
         print(f"         Problem: {finding.problem}")
+        if finding.rule:
+            print(f"         Rule ({finding.rule_source}): {finding.rule}")
         print(f"         Trigger: {finding.trigger}")
         print(f"         Impact: {finding.impact}")
         print(f"         Change: {finding.suggestion}")
@@ -2393,6 +2438,10 @@ def _process_pull_request(
                     f"      -> Read {len(background)} characters of repository "
                     f"background from {BACKGROUND_FILE}"
                 )
+            review_rules = read_review_rules(repository, pull_request)
+            if review_rules.sections:
+                material = replace(material, review_rules=review_rules)
+                _report_review_rules(review_rules)
             if workspace.dependency_links:
                 material = replace(
                     material,
