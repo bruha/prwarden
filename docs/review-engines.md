@@ -437,9 +437,11 @@ overrides it for the code level alone, the one level that can approve. The
 verifier and the fallback each run at their own effort on every level; neither
 inherits the code override, which was chosen for the reviewer's model.
 
-Only the `kiro`, `antigravity`, and `claude` adapters pass an effort to their CLI,
-as `--effort`, so an effort named for any other engine is refused at startup rather
-than silently dropped. Claude Code took `--effort` from 2.1.304, the version this
+The `kiro`, `antigravity`, and `claude` adapters pass an effort to their CLI as
+`--effort`, and `codex` passes it as `--config model_reasoning_effort="…"`, because
+`codex exec` has no effort flag and its user configuration is skipped. An effort
+named for a `command` engine is refused at startup rather than silently dropped.
+Claude Code took `--effort` from 2.1.304, the version this
 was checked against. The level is checked here too, because Kiro accepts any
 string and runs the model's default when it does not recognise one. Which levels a
 model supports is up to its provider: Antigravity refuses an effort for a model
