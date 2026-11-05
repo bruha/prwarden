@@ -9,8 +9,27 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 2.3.0 58db92835c4943db08ec452436b1272a70a2f4a2 -->
+<!-- release-baseline: 2.4.0 36fb03402360f54251180f4d867bdf0b1d8a0e14 -->
 ## [Unreleased]
+
+## [2.4.0] - 2026-11-05
+
+### Added
+
+- hold the code to the base branch's Code review rules (`7c5d548`).
+
+### Fixed
+
+- let the advisory levels run when the review rules cannot be read (`85f784b`).
+- tell Kiro and Antigravity the head's own instruction files are untrusted (`cdc9556`).
+- show only plain path names in the host-loaded file notice (`36fb034`).
+
+### Documentation
+
+- merge every change through a pull request PR Warden reviewed (`63c70f3`).
+- give this repository's reviews its own Code review rules (`5e77826`).
+- merge a pull request with a merge commit when main has moved (`f2bd610`).
+- list the repository rule among the default comment's sections (`60ecf34`).
 
 ## [2.3.0] - 2026-11-04
 
