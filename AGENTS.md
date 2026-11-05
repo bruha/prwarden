@@ -100,6 +100,34 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
 The complete operational contract is
 [docs/auto_code_review_spec.md](docs/auto_code_review_spec.md).
 
+## Code review
+
+PR Warden reviews this repository's pull requests against the rules below, read from
+`main`, and reports an added line that breaks one as a defect. To change a rule,
+merge that change first.
+
+- Code runs on Python 3.9: no `X | Y` unions outside quoted annotations, no `match`
+  statements, no parenthesized multi-item `with` statements, no expression spanning
+  lines inside an f-string's braces, and no standard-library API newer than 3.9,
+  such as `zip(strict=...)`, `dataclass(slots=...)` or `kw_only`, `typing.Self`, or
+  `datetime.UTC`.
+- Code under `prwarden/` imports only the standard library and `prwarden` itself,
+  and tests use only `unittest` and the standard library.
+- An error is never turned into an empty or clean result: a failure path never
+  returns no findings, an approval, or an `LGTM` in place of the error.
+- A GitHub or Slack write that may have been delivered is never retried
+  automatically; it is recorded as uncertain instead.
+- A subprocess runs from an argument list, never with `shell=True` or a command
+  string built from repository, pull-request, or model text.
+- A Slack message never names a repository configured with `"slack": false`.
+- Tokens, the Slack webhook, and other `.env` values are never printed, logged, or
+  added to an engine's environment beyond its allowlist.
+- Text from the reviewed head, its pull request, or a model enters a prompt only
+  through `contain_untrusted`, inside a tag registered in `PROMPT_DATA_TAGS`.
+- A changed defensive rule in a review prompt updates its row in
+  `docs/prompt-rules.md` in the same pull request.
+- A bug fix comes with a test in `tests/` that fails without the fix.
+
 ## Required development process
 
 1. Start from current `main` and create a focused feature branch.
