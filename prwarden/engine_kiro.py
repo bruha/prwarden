@@ -12,6 +12,7 @@ from .engine import (
     build_prompt,
     build_schema,
     effort_for,
+    host_loaded_instructions,
     refuse_host_configuration,
     report_invocation_credits,
     response_discriminator_keys,
@@ -57,6 +58,9 @@ KIRO_WORKSPACE_FILES = {
 # did not write and refused the head. A head that ships the file is refused before any
 # call, so one found after a call is Kiro's own and is removed before the next.
 KIRO_GENERATED_FILES = ("settings/lsp.json",)
+# What Kiro adds to the model's context from the directory it starts in: its default
+# agent's resources, which custom agents inherit, checked with a file in each place.
+KIRO_LOADED_INSTRUCTIONS = ("AGENTS.md", "README.md", ".kiro/steering/**/*.md")
 _WORKSPACE_LOCK = threading.Lock()
 
 
@@ -190,6 +194,10 @@ class KiroEngine:
             material,
             self.settings.max_findings,
         )
+        if repository.path is not None:
+            prompt += host_loaded_instructions(
+                repository.path, "Kiro", KIRO_LOADED_INSTRUCTIONS
+            )
         prompt += "\nReturn exactly one JSON object matching this schema:\n"
         prompt += json.dumps(
             build_schema(self.settings.max_findings, material), separators=(",", ":")

@@ -129,6 +129,16 @@ ships that file is refused before any call, so the adapter removes it after ever
 call, whether the call succeeded or not; it unlinks a link rather than following it.
 A refusal names the file it found, because the head is not the only possible author.
 
+Kiro also adds the head's `AGENTS.md`, `README.md`, and `.kiro/steering` files to the
+model's context as project instructions, and there is no way to stop it: a custom
+agent with no resources still inherited all three with
+`chat.disableInheritingDefaultResources` set, which Kiro CLI 2.22.1 read and did not
+apply. A pull request could therefore instruct its own review. The adapter's prompt
+names each of those files the head carries as untrusted data from the pull request,
+never to be followed. Both halves were checked: with a code word in each file Kiro
+reported all three, and with an `AGENTS.md` telling it to end every answer with a
+word, it did so without the notice and did not with it.
+
 Kiro's `--output-format stream-json`, which would return the answer unrendered,
 needs the v2 agent engine, and Kiro CLI 2.22.1 cannot select a model on that
 engine. A resumed session (`--resume-id`) reloads every installed skill file into
@@ -169,6 +179,15 @@ Antigravity starts, a head whose `.agents/` or `.agent/` holds anything but
 `rules/` and `workflows/` documents, which are instructions rather than code. A
 refusal is an engine failure, so a code review the
 primary engine refuses goes to the fallback engine when one is configured.
+
+Those documents still reach the model: Antigravity adds the head's `AGENTS.md` and
+`GEMINI.md`, and any rule in `.agents/rules` with a trigger, to its context as rules
+its system prompt says override earlier instructions, and has no setting to skip them.
+The adapter's prompt names each of those files the head carries as untrusted data
+from the pull request, never to be followed. An `AGENTS.md` telling Antigravity to
+end every answer with a word was obeyed without the notice and ignored with it.
+Claude Code in safe mode and Codex with `project_doc_max_bytes=0` load none of these
+files, which the same code-word check confirmed.
 
 A tool call that cannot be completed ends an Antigravity review outright, taking
 every finding it had already verified with it. That consequence belongs to this

@@ -17,6 +17,7 @@ from .engine import (
     build_prompt,
     build_schema,
     effort_for,
+    host_loaded_instructions,
     is_exhausted_quota,
     refuse_host_configuration,
 )
@@ -34,6 +35,16 @@ ANTIGRAVITY_DOCUMENT_DIRECTORIES = {
     ".agents": ("rules", "workflows"),
     ".agent": ("rules", "workflows"),
 }
+
+# What Antigravity adds to the model's context as rules from the directory it starts
+# in, checked with a file in each place: rules in `.agents/rules` load only with a
+# trigger in their front matter, so they are named whenever they exist.
+ANTIGRAVITY_LOADED_INSTRUCTIONS = (
+    "AGENTS.md",
+    "GEMINI.md",
+    ".agents/rules/*.md",
+    ".agent/rules/*.md",
+)
 
 ANTIGRAVITY_MAX_RETRIES = 2
 ANTIGRAVITY_RETRY_DELAY_SECONDS = 15
@@ -649,6 +660,9 @@ class AntigravityEngine:
         readable_roots = "\n".join(
             f"  {root}"
             for root in (workspace_root, *_dependency_read_targets(material))
+        )
+        prompt += host_loaded_instructions(
+            repository.path, "Antigravity", ANTIGRAVITY_LOADED_INSTRUCTIONS
         )
         prompt += f"""
 
