@@ -60,6 +60,52 @@ A PR should explain the problem, behavior change, safety implications, tests,
 documentation updates, and any manual verification still required. Its title
 must be suitable as a squash commit without editing.
 
+## Every change goes through a pull request
+
+Nothing reaches `main` without a pull request that PR Warden has reviewed, this
+repository's own changes and the Homebrew tap's formula bumps included. A release
+commit is the one exception: it holds only the version and changelog the release
+command generated from commits that were reviewed already.
+
+1. Push the branch and open a pull request against `main`:
+
+   ```sh
+   git push -u origin docs/example-change
+   gh pr create --base main --title "docs: example change" --body-file pr.md
+   ```
+
+   Open it as the maintainer account, not as the account PR Warden reviews as. PR
+   Warden never approves its reviewer's own pull requests, so one opened by the
+   reviewer gets comments and an `LGTM` at best, never an approval.
+
+2. Wait for CI and for PR Warden's review. The next scheduled run picks the pull
+   request up; to review it now, which spends credits, run
+   `prwarden --repo bruha/prwarden --pr <number> --live`.
+3. Address each finding with a new commit, or answer it on its thread when it is
+   wrong. Every push is a new head, so it is reviewed again; push fixes together
+   rather than one at a time.
+4. Merge only after the maintainer approves, with a fast-forward from the command
+   line, so `main` receives exactly the commits that were reviewed and GitHub marks
+   the pull request merged:
+
+   ```sh
+   git checkout main && git pull --ff-only
+   git merge --ff-only docs/example-change
+   git push origin main
+   ```
+
+   When `main` has moved on, rebase the branch onto it, push it with
+   `git push --force-with-lease`, which is allowed on a feature branch and never on
+   `main`, and let the new head be reviewed before merging. A merge commit is never
+   used: its subject is not a Conventional Commit, so the release command refuses
+   it.
+
+5. Delete the branch, as in [branch cleanup](#branch-cleanup).
+
+The tap's pull requests merge through GitHub instead, with
+`gh pr merge --rebase --delete-branch`, once its macOS and Linux checks pass and PR
+Warden has reviewed them.
+
 ## Public safety
 
 This tool is developed against private repositories, and nothing learned there may
@@ -116,12 +162,16 @@ rather than passing, because it has nothing to compare against.
 5. Run targeted tests followed by all required quality gates.
 6. Review the full diff for secrets, unrelated changes, compatibility, failure
    handling, and public safety.
-7. Commit with Conventional Commits and push the feature branch when the user
-   has authorized publication.
-8. Present the outcome and verification. Obtain explicit user approval before
+7. Commit with Conventional Commits, push the feature branch, and open a pull
+   request, as in [every change goes through a pull
+   request](#every-change-goes-through-a-pull-request). Never merge a change
+   without one.
+8. Wait for CI and PR Warden's review, and address its findings. Then present the
+   outcome, the review, and the verification. Obtain explicit user approval before
    merging to `main`; silence or an earlier general instruction is not approval
    for a materially changed result.
-9. Merge the approved branch to `main` only after required checks pass.
+9. Merge the approved pull request to `main` by fast-forward, only after required
+   checks pass.
 10. Delete the merged branch locally, and on the remote when it was published.
 11. Prepare the SemVer release on the updated `main`, review the generated
     version and changelog, commit and tag it, then push `main` and the tag.

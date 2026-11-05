@@ -106,10 +106,13 @@ The complete operational contract is
 2. Use a Conventional Commits type and kebab-case description for the branch.
 3. Make the smallest cohesive change and update tests and docs with it.
 4. Run all quality gates listed below.
-5. Present the result, risks, and verification to the user and wait for explicit
-   approval before merging.
-6. Merge the approved branch to `main`, then delete the merged branch.
-7. On `main`, prepare the SemVer release and changelog, review it, commit it,
+5. Push the branch and open a pull request; never merge a change without one.
+   Wait for CI and for PR Warden's review of it, and address its findings.
+6. Present the result, the review, risks, and verification to the user and wait
+   for explicit approval before merging.
+7. Merge the approved pull request to `main` by fast-forward, then delete the
+   merged branch.
+8. On `main`, prepare the SemVer release and changelog, review it, commit it,
    tag it, and push the branch and tag.
 
 Branch names, commits, PR titles, review expectations, and the exact release

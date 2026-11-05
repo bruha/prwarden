@@ -17,8 +17,8 @@ tag. Until the first tag exists, the checked-in release baseline is used.
 
 ## Release command
 
-Run the command only from a clean feature-complete `main` after the user has
-approved and the feature branch has been merged:
+Run the command only from a clean feature-complete `main` after every pull request
+in the release was reviewed, approved, and merged:
 
 ```sh
 python3 -m prwarden.release --dry-run
@@ -44,8 +44,8 @@ baseline, a non-Conventional Commit, or disagreement between `VERSION` and
 
 ## Release checklist
 
-1. Confirm the approved feature branch is merged and local `main` matches the
-   intended remote head.
+1. Confirm every pull request in the release is merged and local `main` matches
+   the intended remote head.
 2. Confirm `git status --short` is empty.
 3. Run the complete test and compile checks.
 4. Run `python3 -m prwarden.release --dry-run` and review the proposed version and
@@ -88,7 +88,8 @@ baseline, a non-Conventional Commit, or disagreement between `VERSION` and
 
 14. Update the formula in [bruha/homebrew-tap](https://github.com/bruha/homebrew-tap)
     by pull request: point `url` at the tag's archive and set `sha256` from it.
-    Merge once its macOS and Linux checks pass, then confirm a clean install:
+    Merge once its macOS and Linux checks pass and PR Warden has reviewed it, then
+    confirm a clean install:
 
     ```sh
     url=https://github.com/bruha/prwarden/archive/refs/tags/vX.Y.Z.tar.gz
