@@ -110,8 +110,8 @@ The complete operational contract is
    Wait for CI and for PR Warden's review of it, and address its findings.
 6. Present the result, the review, risks, and verification to the user and wait
    for explicit approval before merging.
-7. Merge the approved pull request to `main` by fast-forward, then delete the
-   merged branch.
+7. Merge the approved pull request to `main`, by fast-forward or, when `main` has
+   moved, a merge commit, then delete the merged branch.
 8. On `main`, prepare the SemVer release and changelog, review it, commit it,
    tag it, and push the branch and tag.
 

@@ -84,9 +84,9 @@ command generated from commits that were reviewed already.
 3. Address each finding with a new commit, or answer it on its thread when it is
    wrong. Every push is a new head, so it is reviewed again; push fixes together
    rather than one at a time.
-4. Merge only after the maintainer approves, with a fast-forward from the command
-   line, so `main` receives exactly the commits that were reviewed and GitHub marks
-   the pull request merged:
+4. Merge only after the maintainer approves. When the branch is still on top of
+   `main`, fast-forward from the command line, so `main` receives exactly the
+   commits that were reviewed and GitHub marks the pull request merged:
 
    ```sh
    git checkout main && git pull --ff-only
@@ -94,11 +94,18 @@ command generated from commits that were reviewed already.
    git push origin main
    ```
 
-   When `main` has moved on, rebase the branch onto it, push it with
-   `git push --force-with-lease`, which is allowed on a feature branch and never on
-   `main`, and let the new head be reviewed before merging. A merge commit is never
-   used: its subject is not a Conventional Commit, so the release command refuses
-   it.
+   When `main` has moved on, merge through GitHub with a merge commit instead, which
+   keeps the reviewed commits as they were; the release command skips merge commits,
+   so their subjects never reach the changelog:
+
+   ```sh
+   gh pr merge <number> --merge --delete-branch
+   ```
+
+   Rebasing would make a new head, and with it another full review. Rebase only when
+   the branch conflicts with `main`, push it with `git push --force-with-lease`,
+   which is allowed on a feature branch and never on `main`, and let the new head be
+   reviewed before merging.
 
 5. Delete the branch, as in [branch cleanup](#branch-cleanup).
 
@@ -170,8 +177,8 @@ rather than passing, because it has nothing to compare against.
    outcome, the review, and the verification. Obtain explicit user approval before
    merging to `main`; silence or an earlier general instruction is not approval
    for a materially changed result.
-9. Merge the approved pull request to `main` by fast-forward, only after required
-   checks pass.
+9. Merge the approved pull request to `main`, by fast-forward or a merge commit,
+   only after required checks pass.
 10. Delete the merged branch locally, and on the remote when it was published.
 11. Prepare the SemVer release on the updated `main`, review the generated
     version and changelog, commit and tag it, then push `main` and the tag.
