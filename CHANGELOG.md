@@ -9,8 +9,18 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 2.4.0 36fb03402360f54251180f4d867bdf0b1d8a0e14 -->
+<!-- release-baseline: 2.5.0 53cae45a5fcbcbcf52b2485919ef85614dfc950d -->
 ## [Unreleased]
+
+## [2.5.0] - 2026-11-05
+
+### Added
+
+- pass reasoning effort to the Codex adapter (`5b90e7f`).
+
+### Documentation
+
+- say the Codex adapter passes an effort (`53cae45`).
 
 ## [2.4.0] - 2026-11-05
 
