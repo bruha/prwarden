@@ -478,7 +478,7 @@ class DeliveryTests(unittest.TestCase):
 
 
 class OrchestrationTests(unittest.TestCase):
-    def review(self, read_rules):
+    def review(self, read_rules, design_level=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "app.py").write_text("value = 1\n", encoding="utf-8")
@@ -499,7 +499,7 @@ class OrchestrationTests(unittest.TestCase):
                 review_timeout_seconds=300,
                 max_diff_bytes=100000,
                 max_findings=10,
-                design_level=False,
+                design_level=design_level,
                 docs_level=False,
             )
             engine = Mock()
@@ -524,8 +524,11 @@ class OrchestrationTests(unittest.TestCase):
             ) as workspace, patch(
                 "prwarden.cli.read_review_rules", **read_rules
             ) as read, patch(
+                "prwarden.cli._run_design_level"
+            ) as design, patch(
                 "sys.stdout", new_callable=StringIO
             ) as output:
+                self.design = design
                 workspace.return_value.__enter__.return_value = repository
                 workspace.return_value.dependency_links = ()
                 workspace.return_value.dependency_notes = ()
@@ -561,6 +564,15 @@ class OrchestrationTests(unittest.TestCase):
 
         with self.assertRaises(WorkspaceError):
             self.review({"side_effect": failure})
+
+    def test_rules_that_cannot_be_read_still_leave_the_advisory_levels(self) -> None:
+        """The rules bind the code level alone, so only it waits on them."""
+
+        failure = WorkspaceError("Cannot read owner/app at aaaaaaaaaaaa")
+        with self.assertRaises(WorkspaceError):
+            self.review({"side_effect": failure}, design_level=True)
+
+        self.design.assert_called_once()
 
 
 if __name__ == "__main__":

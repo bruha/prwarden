@@ -2438,10 +2438,6 @@ def _process_pull_request(
                     f"      -> Read {len(background)} characters of repository "
                     f"background from {BACKGROUND_FILE}"
                 )
-            review_rules = read_review_rules(repository, pull_request)
-            if review_rules.sections:
-                material = replace(material, review_rules=review_rules)
-                _report_review_rules(review_rules)
             if workspace.dependency_links:
                 material = replace(
                     material,
@@ -2493,6 +2489,12 @@ def _process_pull_request(
                     docs_fingerprint=documentation_change_fingerprint(files),
                     fallback=fallback,
                 )
+            # Read here, after the advisory levels: the rules bind the code level
+            # alone, so failing to read them must not cost the other levels.
+            review_rules = read_review_rules(repository, pull_request)
+            if review_rules.sections:
+                material = replace(material, review_rules=review_rules)
+                _report_review_rules(review_rules)
             review_material = material
             rejected_candidates = 0
             (

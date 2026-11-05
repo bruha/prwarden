@@ -702,9 +702,10 @@ refuses anything that is not a Git object name, fetches that commit into the loc
 checkout, and reads the matching files from its objects without checking anything
 out. A replay reads them at the case's pinned base. Identical sections, as `CLAUDE.md`
 often repeats `AGENTS.md`, are kept once, root-level files first, and the whole is
-capped at 6000 characters with the rest named as left out. A failure to read them
-fails that pull request's review, which is retried on the next run, rather than
-letting it pass unchecked against them.
+capped at 6000 characters with the rest named as left out. They are read after the
+advisory levels, which never receive them, and a failure to read them fails that pull
+request's code review, which is retried on the next run, rather than letting it pass
+unchecked against them; the advisory levels have already run.
 
 Only the code level and its verification pass receive them, delimited in their own
 block, as requirements: an added line that breaks one is a defect, whatever its kind,
