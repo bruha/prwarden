@@ -58,6 +58,11 @@ KIRO_WORKSPACE_FILES = {
 # did not write and refused the head. A head that ships the file is refused before any
 # call, so one found after a call is Kiro's own and is removed before the next.
 KIRO_GENERATED_FILES = ("settings/lsp.json",)
+# Kiro CLI 3.1 also creates an empty `agents` directory there on every call, and the
+# next call refused the head for it. Git keeps no empty directory, so a head cannot
+# ship one: an empty one found after a call is Kiro's and is removed. One holding
+# anything, or a link, could name an agent Kiro would load, so it stays to be refused.
+KIRO_GENERATED_DIRECTORIES = ("agents",)
 # What Kiro adds to the model's context from the directory it starts in: its default
 # agent's resources, which custom agents inherit, checked with a file in each place.
 KIRO_LOADED_INSTRUCTIONS = ("AGENTS.md", "README.md", ".kiro/steering/**/*.md")
@@ -96,7 +101,8 @@ def remove_kiro_generated_files(root: Path) -> None:
     """Remove what Kiro wrote into the controller's directory during a call.
 
     Only the named files, only as files or links: a link is removed, never followed,
-    and anything else is left for the next call's refusal to name.
+    and anything else is left for the next call's refusal to name. The named
+    directories are removed only while empty, and never through a link.
     """
 
     workspace = root / KIRO_WORKSPACE_DIRECTORY
@@ -111,6 +117,19 @@ def remove_kiro_generated_files(root: Path) -> None:
                         f"Could not remove {path}, which Kiro wrote during the "
                         f"review: {error}"
                     ) from error
+        for relative in KIRO_GENERATED_DIRECTORIES:
+            path = workspace / relative
+            if path.is_symlink() or not path.is_dir():
+                continue
+            try:
+                if any(path.iterdir()):
+                    continue
+                path.rmdir()
+            except OSError as error:
+                raise EngineError(
+                    f"Could not remove {path}, which Kiro created during the "
+                    f"review: {error}"
+                ) from error
 
 
 def parse_kiro_credits(text: str) -> Optional[float]:

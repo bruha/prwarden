@@ -43,6 +43,15 @@ skipped, so the role's effort is passed as `--config model_reasoning_effort="…
 without an effort the model runs at its own default, which is `low` for several
 current models.
 
+`--output-schema` is sent in OpenAI's strict structured-output mode, which refuses
+`uniqueItems` and any object that does not require all of its properties, so the
+adapter translates the common schema first: every property is required, one the
+common contract leaves optional may be `null`, and those nulls are removed from the
+answer before the controller validates it. The controller still rejects a repeated
+blocking reference itself. When Codex fails, it has already written the whole prompt
+to standard error, so the adapter reports only its `ERROR:` lines, the API's own
+message where one is given, at most 500 characters.
+
 Skipping the user configuration also keeps a reviewed head's own
 `.codex/config.toml` out. Codex loads that file only for a project the user
 configuration marks as trusted, and a trusted parent directory, such as the home
@@ -131,6 +140,10 @@ nothing from it. The next call in the same worktree then found configuration the
 controller had not written and refused the head, which failed the review. A head that
 ships that file is refused before any call, so the adapter removes it after every
 call, whether the call succeeded or not; it unlinks a link rather than following it.
+Kiro CLI 3.1 also creates an empty `.kiro/agents` directory on every call, which the
+next call refused the same way. Git keeps no empty directory, so a head cannot ship
+one, and the adapter removes it after each call while it is empty. A `.kiro/agents`
+holding anything, or a link, is left in place and refused by name.
 A refusal names the file it found, because the head is not the only possible author.
 
 Kiro also adds the head's `AGENTS.md`, `README.md`, and `.kiro/steering` files to the

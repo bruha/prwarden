@@ -20,8 +20,13 @@ from prwarden.engine import (
     DESIGN_LEVEL,
     DOCS_FIELD_LIMITS,
     DOCS_LEVEL,
+    build_code_verification_schema,
     build_design_prompt,
+    build_design_schema,
+    build_design_verification_schema,
     build_docs_prompt,
+    build_docs_schema,
+    build_docs_verification_schema,
     is_exhausted_quota,
     RESPONSE_FIELD_LIMITS,
     EngineError,
@@ -41,7 +46,7 @@ from prwarden.engine import (
 import prwarden.engine_antigravity as engine_antigravity
 from prwarden.engine_antigravity import AntigravityEngine
 from prwarden.engine_claude import ClaudeEngine
-from prwarden.engine_codex import CodexEngine
+from prwarden.engine_codex import CodexEngine, strict_output_schema
 from prwarden.engine_command import CommandEngine
 from prwarden.engine_kiro import (
     KIRO_WORKSPACE_FILES,
@@ -1633,6 +1638,194 @@ class ReviewEngineTests(unittest.TestCase):
                         )
                     self.assertIn(expected, run.call_args.args[0])
 
+    def test_codex_receives_a_schema_openai_strict_mode_accepts(self):
+        """`codex exec --output-schema` uses OpenAI's strict structured output, which
+        refused every common schema before any model ran: `uniqueItems` is not
+        permitted there, and each object must require all of its properties. Every
+        review handed to a Codex fallback failed, and Kiro had handed it a run's
+        worth."""
+
+        def nodes(node):
+            if isinstance(node, dict):
+                yield node
+                for value in node.values():
+                    yield from nodes(value)
+            elif isinstance(node, list):
+                for value in node:
+                    yield from nodes(value)
+
+        material = self.input(Repository("app", "owner/app", Path(".")))[2]
+        schemas = {
+            "code": build_schema(10, material),
+            "code verification": build_code_verification_schema(2),
+            "design": build_design_schema(4),
+            "design verification": build_design_verification_schema(2),
+            "docs": build_docs_schema(4),
+            "docs verification": build_docs_verification_schema(2),
+        }
+        for name, schema in schemas.items():
+            with self.subTest(name):
+                untouched = json.dumps(schema, sort_keys=True)
+                strict = strict_output_schema(schema)
+                self.assertEqual(json.dumps(schema, sort_keys=True), untouched)
+                for node in nodes(strict):
+                    self.assertNotIn("uniqueItems", node)
+                    if node.get("type") == "object" and "properties" in node:
+                        self.assertEqual(node["required"], list(node["properties"]))
+
+        judgment = strict_output_schema(build_code_verification_schema(1))[
+            "properties"
+        ]["judgments"]["items"]["properties"]
+        # What the common contract leaves optional is said as null instead.
+        self.assertEqual(judgment["severity"]["type"], ["string", "null"])
+        self.assertIn(None, judgment["severity"]["enum"])
+        self.assertEqual(judgment["ref"]["type"], "string")
+
+    def test_codex_adapter_sends_the_strict_schema_and_drops_its_nulls(self):
+        """The controller reads an optional field as absent, never as null, so the
+        nulls strict mode makes Codex write for them are removed before it sees the
+        answer, and Codex answers to the same contract as every other engine."""
+
+        answer = {
+            "verdict": "approve",
+            "approval_reason": "Nothing qualifies.",
+            "blocking_comment_ids": [],
+            "judgments": [
+                {
+                    "ref": "C1",
+                    "verdict": "rejected",
+                    "reason": "Guarded upstream.",
+                    "severity": None,
+                    "rejection_class": None,
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            settings = self.settings(
+                directory, repository, engine="codex", command=("codex",)
+            )
+            sent = {}
+
+            def answers(args, **kwargs):
+                path = Path(args[args.index("--output-schema") + 1])
+                sent["schema"] = json.loads(path.read_text(encoding="utf-8"))
+                return json.dumps(answer)
+
+            with patch("prwarden.engine_codex.run_cmd", side_effect=answers):
+                output = CodexEngine(settings).review(*self.input(repository))
+
+        self.assertNotIn("uniqueItems", json.dumps(sent["schema"]))
+        self.assertEqual(
+            output["judgments"],
+            [{"ref": "C1", "verdict": "rejected", "reason": "Guarded upstream."}],
+        )
+        self.assertEqual(output["blocking_comment_ids"], [])
+
+    def test_a_codex_failure_reports_its_error_not_the_prompt_it_echoed(self):
+        """Codex writes the whole prompt to standard error before its own error, and
+        that stream became the failure: one Slack notification carried the prompt,
+        the pull request's description included, several times over."""
+
+        prompt_text = "You are a conservative pull-request code reviewer."
+        api_error = json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "message": (
+                        "Invalid schema for response_format 'codex_output_schema'"
+                    ),
+                    "type": "invalid_request_error",
+                },
+                "status": 400,
+            }
+        )
+        echoed = (
+            "OpenAI Codex v0.167.0\n--------\nmodel: gpt-6.1-sol\n--------\nuser\n"
+            f"{prompt_text}\n" + "Untrusted description text.\n" * 400
+        )
+        cases = {
+            "API error": (
+                echoed + f"ERROR: {api_error}\nERROR: {api_error}",
+                "codex exited with 1: Invalid schema for response_format "
+                "'codex_output_schema'",
+            ),
+            "plain error line": (
+                echoed + "ERROR: stream disconnected before completion",
+                "codex exited with 1: stream disconnected before completion",
+            ),
+            "no error line": (
+                "Not inside a trusted directory and --skip-git-repo-check was "
+                "not specified.",
+                "codex exited with 1: Not inside a trusted directory and "
+                "--skip-git-repo-check was not specified.",
+            ),
+            "an error too long to relay": (
+                echoed + "ERROR: " + "y" * 2000,
+                "codex exited with 1: " + "y" * 499 + "…",
+            ),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            settings = self.settings(
+                directory, repository, engine="codex", command=("codex",)
+            )
+            for name, (stderr, expected) in cases.items():
+                with self.subTest(name):
+                    failure = CommandError(
+                        f"/opt/homebrew/bin/codex exited with 1: {stderr}",
+                        command="/opt/homebrew/bin/codex",
+                        returncode=1,
+                        error_output=stderr,
+                    )
+                    with patch(
+                        "prwarden.engine_codex.run_cmd", side_effect=failure
+                    ):
+                        with self.assertRaises(EngineError) as raised:
+                            CodexEngine(settings).review(*self.input(repository))
+                    self.assertEqual(str(raised.exception), expected)
+
+    def test_a_codex_failure_with_only_the_prompt_says_so(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            settings = self.settings(
+                directory, repository, engine="codex", command=("codex",)
+            )
+            material = self.input(repository)
+            prompt = build_prompt(repository, material[1], material[2], 10)
+            stderr = (
+                "OpenAI Codex v0.167.0\n--------\nworkdir: /tmp/review\n"
+                "model: gpt-6.1-sol\n--------\nuser\n" + prompt
+            )
+            failure = CommandError(
+                f"codex exited with 1: {stderr}",
+                command="codex",
+                returncode=1,
+                error_output=stderr,
+            )
+            with patch("prwarden.engine_codex.run_cmd", side_effect=failure):
+                with self.assertRaises(EngineError) as raised:
+                    CodexEngine(settings).review(*material)
+
+        message = str(raised.exception)
+        self.assertEqual(
+            message,
+            "codex exited with 1: no error reported beyond the prompt it echoed",
+        )
+
+    def test_a_codex_timeout_is_reported_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            settings = self.settings(
+                directory, repository, engine="codex", command=("codex",)
+            )
+            failure = CommandError("Command timed out after 900s: codex")
+            with patch("prwarden.engine_codex.run_cmd", side_effect=failure):
+                with self.assertRaisesRegex(
+                    EngineError, r"^Command timed out after 900s: codex$"
+                ):
+                    CodexEngine(settings).review(*self.input(repository))
+
     def test_claude_adapter_extracts_structured_output(self):
         with tempfile.TemporaryDirectory() as directory:
             repository = Repository("app", "owner/app", Path(directory))
@@ -1748,6 +1941,83 @@ class ReviewEngineTests(unittest.TestCase):
                     "chat.enableCodeIntelligence": False,
                 },
             )
+
+    def test_kiro_removes_the_empty_agents_directory_it_creates_during_a_call(self):
+        """Kiro CLI 3.1 creates an empty `.kiro/agents` in the directory it starts
+        in. The next call in that worktree found configuration the controller had
+        not written and refused the head, so every pull request lost the rest of its
+        levels to the fallback. An empty directory holds nothing Kiro could load."""
+
+        answer = ('{"verdict":"approve","findings":[]}', "")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = Repository("app", "owner/app", root)
+            settings = self.settings(
+                directory, repository, engine="kiro", command=("kiro-cli",)
+            )
+            agents = root / ".kiro" / "agents"
+
+            def creates_directory(*args, **kwargs):
+                agents.mkdir(exist_ok=True)
+                return answer
+
+            with patch(
+                "prwarden.engine_kiro.run_cmd_streams", side_effect=creates_directory
+            ) as run:
+                engine = KiroEngine(settings)
+                engine.review(*self.input(repository))
+                engine.review(*self.input(repository))
+
+            self.assertEqual(run.call_count, 2)
+            self.assertFalse(os.path.lexists(agents))
+
+    def test_kiro_leaves_an_agents_directory_with_content_to_be_refused(self):
+        """Only the empty directory is Kiro's own. Anything inside it could be an
+        agent Kiro would load, so it stays where it is and the next call refuses
+        the head by naming it."""
+
+        answer = ('{"verdict":"approve","findings":[]}', "")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "head"
+            root.mkdir()
+            outside = Path(directory) / "elsewhere"
+            outside.mkdir()
+            repository = Repository("app", "owner/app", root)
+            settings = self.settings(
+                directory, repository, engine="kiro", command=("kiro-cli",)
+            )
+            agents = root / ".kiro" / "agents"
+
+            def writes_agent(*args, **kwargs):
+                agents.mkdir(exist_ok=True)
+                (agents / "reviewer.json").write_text("{}\n")
+                return answer
+
+            def links_directory(*args, **kwargs):
+                agents.symlink_to(outside, target_is_directory=True)
+                return answer
+
+            for label, call, remains in (
+                ("an agent file", writes_agent, agents / "reviewer.json"),
+                ("a link", links_directory, agents),
+            ):
+                with self.subTest(label):
+                    with patch(
+                        "prwarden.engine_kiro.run_cmd_streams", side_effect=call
+                    ):
+                        KiroEngine(settings).review(*self.input(repository))
+                    with patch("prwarden.engine_kiro.run_cmd_streams") as run:
+                        with self.assertRaisesRegex(EngineError, r"\.kiro/agents"):
+                            KiroEngine(settings).review(*self.input(repository))
+                    run.assert_not_called()
+                    self.assertTrue(os.path.lexists(remains))
+                    self.assertTrue(outside.is_dir())
+                    if agents.is_symlink():
+                        agents.unlink()
+                    else:
+                        for entry in agents.iterdir():
+                            entry.unlink()
+                        agents.rmdir()
 
     def test_a_workspace_a_kiro_call_configured_is_refused_by_name(self):
         """Code intelligence, once a review used it, wrote `.kiro/settings/lsp.json`,

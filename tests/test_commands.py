@@ -29,6 +29,22 @@ class CommandRetryTests(unittest.TestCase):
         self.assertEqual(subprocess_run.call_count, 3)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4])
 
+    def test_a_failed_command_keeps_its_exit_status_and_standard_error(self):
+        """Codex echoes the whole prompt to standard error, so its adapter has to
+        pick its own error lines out of that stream rather than relay all of it."""
+
+        with patch(
+            "prwarden.commands.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                ["codex"], 2, stdout="", stderr="header\nERROR: boom\n"
+            ),
+        ):
+            with self.assertRaises(CommandError) as raised:
+                run_cmd(["codex", "exec"])
+
+        self.assertEqual(raised.exception.returncode, 2)
+        self.assertEqual(raised.exception.error_output, "header\nERROR: boom")
+
     def test_does_not_retry_permanent_failure(self):
         failure = Mock(returncode=1, stderr="HTTP 401: Bad credentials", stdout="")
 

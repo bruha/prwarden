@@ -9,7 +9,13 @@ from typing import Mapping, Optional, Sequence
 
 
 class CommandError(RuntimeError):
-    """Raised when an external command cannot complete successfully."""
+    """Raised when an external command cannot complete successfully.
+
+    ``returncode`` and ``error_output`` are set when the command ran and exited
+    non-zero, so a caller can explain the failure from the command's own report
+    rather than from the whole of standard error, which some CLIs fill with the
+    prompt they were given.
+    """
 
     def __init__(
         self,
@@ -17,10 +23,14 @@ class CommandError(RuntimeError):
         *,
         command: Optional[str] = None,
         output: Optional[str] = None,
+        returncode: Optional[int] = None,
+        error_output: Optional[str] = None,
     ) -> None:
         super().__init__(message)
         self.command = command
         self.output = output
+        self.returncode = returncode
+        self.error_output = error_output
 
 
 TRANSIENT_COMMAND_ERROR_MARKERS = (
@@ -137,6 +147,8 @@ def run_cmd_streams(
                 f"{args[0]} exited with {result.returncode}: {detail}",
                 command=args[0],
                 output=result.stdout.strip() or None,
+                returncode=result.returncode,
+                error_output=result.stderr.strip(),
             )
 
         if (
