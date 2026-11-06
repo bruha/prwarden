@@ -105,8 +105,28 @@ def _failure_detail(error: CommandError, prompt: str) -> str:
 
     if error.returncode is None or error.error_output is None:
         return str(error)
+    # The echo comes first, and the prompt carries the pull request's description
+    # line for line, where a pasted log can start with `ERROR:` too. So only what
+    # follows the echo is Codex's own. Where the echo is not found verbatim, a line
+    # the prompt holds is never read as Codex's error instead.
+    stream = error.error_output
+    echo = prompt.strip()
+    position = stream.find(echo) if echo else -1
+    if position != -1:
+        lines = [
+            line.strip()
+            for line in stream[position + len(echo):].splitlines()
+            if line.strip()
+        ]
+    else:
+        echoed = {line.strip() for line in prompt.splitlines() if line.strip()}
+        lines = [
+            line.strip()
+            for line in stream.splitlines()
+            if line.strip() and line.strip() not in echoed
+        ]
     reported: "list[str]" = []
-    for line in error.error_output.splitlines():
+    for line in lines:
         if not line.startswith(CODEX_ERROR_PREFIX):
             continue
         message = " ".join(
@@ -115,12 +135,7 @@ def _failure_detail(error: CommandError, prompt: str) -> str:
         if message and message not in reported:
             reported.append(message)
     if not reported:
-        echoed = {line.strip() for line in prompt.splitlines() if line.strip()}
-        remaining = [
-            line.strip()
-            for line in error.error_output.splitlines()
-            if line.strip() and line.strip() not in echoed
-        ]
+        remaining = lines
         if remaining and remaining[0].startswith("OpenAI Codex"):
             # The header sits between two rule lines, and the prompt follows a line
             # that says whose turn it is.

@@ -1785,6 +1785,64 @@ class ReviewEngineTests(unittest.TestCase):
                             CodexEngine(settings).review(*self.input(repository))
                     self.assertEqual(str(raised.exception), expected)
 
+    def test_an_error_line_in_the_echoed_prompt_is_not_codex_s_error(self):
+        """The prompt carries the pull request's description line for line, and a
+        pasted log there can start with `ERROR:`. Read as Codex's own error, such
+        lines came first and could push the real one past the length limit. Only
+        what follows the echo is Codex's, so its own error is kept even when it
+        matches a line of the description; where the echo is not verbatim, no line
+        the prompt holds is read as Codex's error."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            settings = self.settings(
+                directory, repository, engine="codex", command=("codex",)
+            )
+            repository, pull_request, material = self.input(repository)
+            pull_request = replace(
+                pull_request,
+                body="Logs from CI:\nERROR: relation \"users\" does not exist\n"
+                + "ERROR: could not connect to server\n" * 40
+                + "ERROR: stream disconnected\n",
+            )
+            header = "OpenAI Codex v0.167.0\n--------\nmodel: gpt-6.1-sol\n--------\n"
+            echoes = {
+                "verbatim": lambda prompt: prompt,
+                "line by line": lambda prompt: "\n\n".join(prompt.splitlines()),
+            }
+            for name, echo in echoes.items():
+                with self.subTest(name):
+                    sent = {}
+
+                    def fails(args, **kwargs):
+                        prompt = kwargs["input_text"]
+                        sent["prompt"] = prompt
+                        stderr = (
+                            f"{header}user\n{echo(prompt)}\n"
+                            "ERROR: stream disconnected"
+                        )
+                        raise CommandError(
+                            f"codex exited with 1: {stderr}",
+                            command="codex",
+                            returncode=1,
+                            error_output=stderr,
+                        )
+
+                    with patch("prwarden.engine_codex.run_cmd", side_effect=fails):
+                        with self.assertRaises(EngineError) as raised:
+                            CodexEngine(settings).review(
+                                repository, pull_request, material
+                            )
+
+                    self.assertIn('ERROR: relation "users"', sent["prompt"])
+                    expected = (
+                        "codex exited with 1: stream disconnected"
+                        if name == "verbatim"
+                        else "codex exited with 1: no error reported beyond the "
+                        "prompt it echoed"
+                    )
+                    self.assertEqual(str(raised.exception), expected)
+
     def test_a_codex_failure_with_only_the_prompt_says_so(self):
         with tempfile.TemporaryDirectory() as directory:
             repository = Repository("app", "owner/app", Path(directory))

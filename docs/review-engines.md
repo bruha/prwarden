@@ -49,8 +49,10 @@ adapter translates the common schema first: every property is required, one the
 common contract leaves optional may be `null`, and those nulls are removed from the
 answer before the controller validates it. The controller still rejects a repeated
 blocking reference itself. When Codex fails, it has already written the whole prompt
-to standard error, so the adapter reports only its `ERROR:` lines, the API's own
-message where one is given, at most 500 characters.
+to standard error, so the adapter reports only the `ERROR:` lines that follow that
+echo, the API's own message where one is given, at most 500 characters. The prompt
+carries the pull request's description, where a pasted log can start with `ERROR:`
+too; where the echo is not found verbatim, no line the prompt holds is reported.
 
 Skipping the user configuration also keeps a reviewed head's own
 `.codex/config.toml` out. Codex loads that file only for a project the user
