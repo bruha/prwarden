@@ -9,8 +9,15 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 2.5.0 53cae45a5fcbcbcf52b2485919ef85614dfc950d -->
+<!-- release-baseline: 2.5.1 291242cfa553d7de9f19b6ddeb2b33ec07067475 -->
 ## [Unreleased]
+
+## [2.5.1] - 2026-11-06
+
+### Fixed
+
+- keep Kiro 3.1 and the Codex fallback reviewing (`605c031`).
+- read only Codex's own error lines after the echoed prompt (`291242c`).
 
 ## [2.5.0] - 2026-11-05
 
