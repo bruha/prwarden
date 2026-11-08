@@ -3,6 +3,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
+from prwarden.config import DEFAULT_IGNORED_MISSING_PATCH_PATTERNS
 from prwarden.engine import REJECTION_CLASSES, RESPONSE_FIELD_LIMITS
 from prwarden.models import (
     DependencyLink,
@@ -752,6 +753,32 @@ class ReviewValidationTests(unittest.TestCase):
         )
         self.assertIn("src/example.py", material.added_lines)
         self.assertNotIn("tsconfig.tsbuildinfo", material.diff)
+
+    def test_the_built_in_list_keeps_a_lockfile_change_approvable(self):
+        """With the built-in list, a lockfile GitHub would not show is ignored and
+        the review stays complete, while an image it would not show is still read
+        around and named, because an image can carry script."""
+
+        material = build_review_material(
+            [
+                {"filename": "apps/web/package-lock.json", "additions": 9000},
+                {"filename": "worker-configuration.d.ts", "additions": 16000},
+                {"filename": "assets/logo.svg", "additions": 4000},
+                {"filename": "src/example.py", "patch": PATCH},
+            ],
+            10000,
+            ignored_missing_patch_patterns=DEFAULT_IGNORED_MISSING_PATCH_PATTERNS,
+        )
+
+        self.assertEqual(
+            material.ignored_missing_patch_files,
+            ("apps/web/package-lock.json", "worker-configuration.d.ts"),
+        )
+        self.assertEqual(
+            [file.path for file in material.diff_budget.unreadable],
+            ["assets/logo.svg"],
+        )
+        self.assertIn("src/example.py", material.added_lines)
 
     def test_rejects_pull_request_when_every_patch_is_ignored(self):
         with self.assertRaisesRegex(ReviewError, "no reviewable changed files"):

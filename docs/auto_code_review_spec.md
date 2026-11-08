@@ -1284,7 +1284,16 @@ mask or replace the original command failure.
 - `IGNORED_MISSING_PATCH_PATTERNS` therefore no longer decides whether a pull
   request is reviewed at all. It states that a matching path is generated and
   needs no review, which ignores the file outright and leaves the change
-  approvable. Widening it is a decision to allow approval over an unread file,
+  approvable. Unset or empty, it is `DEFAULT_IGNORED_MISSING_PATCH_PATTERNS`:
+  dependency lockfiles, `*.tsbuildinfo`, and Wrangler's
+  `worker-configuration.d.ts`, each by name at the root and in its `*/` form. An
+  image, a minified bundle, a source map, a test snapshot, and other generators'
+  output are not on it, because each can hold a line worth reading. A configured
+  list replaces the built-in one rather than adding to it, so a release never
+  widens what an operator chose, and `[]` ignores nothing. A release that changes
+  the built-in list changes the fingerprint below, which reopens the pull requests
+  recorded as unapprovable over a file it now covers.
+  Widening it is a decision to allow approval over an unread file,
   not a way to unblock a review, and narrowing it costs an approval rather than a
   review. Matching omitted patches are reported in terminal output and ignored by
   the engine. If nothing is reviewable at all, the review stops without approval:

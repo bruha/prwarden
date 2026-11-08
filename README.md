@@ -247,7 +247,7 @@ Important `.env` settings:
 | `MAX_REVIEW_BUNDLES` | Reviews one oversized change may be read in, 1 to 8 |
 | `DESIGN_EXCLUDED_HEAD_BRANCHES` | Head branches whose PRs skip the design level |
 | `EXCLUDED_PR_LABELS` | Case-insensitive labels treated like draft status |
-| `IGNORED_MISSING_PATCH_PATTERNS` | Globs whose omitted patch needs no review, such as lockfiles, keeping the PR approvable |
+| `IGNORED_MISSING_PATCH_PATTERNS` | Globs whose omitted patch needs no review, keeping the PR approvable; unset, a built-in list of lockfiles and other generated files |
 | `GITHUB_COMMENT_TEMPLATE_FILE` | Markdown layout for GitHub inline findings |
 | `GITHUB_COMMENT_TAGS_FILE` | Editable tag aliases for template values |
 | `GITHUB_REVIEWER_USERNAME` | Optional reviewer identity override that skips the GitHub user lookup |
@@ -479,10 +479,16 @@ rather than advisory notes nobody checked.
   GitHub omits the patch of a generated file whose diff is too large, most often
   a lockfile. That file is reviewed around rather than stopping the PR: the rest
   of the change is reviewed, the path is named wherever the result is reported,
-  and the approval is withheld because nobody read it. List such a path in
-  `IGNORED_MISSING_PATCH_PATTERNS` to say it is generated and needs no review,
-  which ignores it outright and leaves the PR approvable, and that setting change
-  reopens a PR already recorded as unapprovable over that file. Withholding an
+  and the approval is withheld because nobody read it. A path matching
+  `IGNORED_MISSING_PATCH_PATTERNS` is said to be generated and to need no review,
+  which ignores it outright and leaves the PR approvable. Left unset, that setting
+  is a built-in list of dependency lockfiles (npm, Yarn, pnpm, Bun, Deno, Poetry,
+  uv, Pipenv, PDM, Cargo, Go, Bundler, Composer, Pub, CocoaPods, Swift Package
+  Manager, NuGet, Mix, and Nix), `*.tsbuildinfo`, and Wrangler's
+  `worker-configuration.d.ts`, each at any depth; images, minified bundles, source
+  maps, and test snapshots are left out because each can hold a line worth reading.
+  A list of your own replaces the built-in one, and `[]` ignores nothing. Changing
+  the setting reopens a PR already recorded as unapprovable over that file. Withholding an
   approval this way is the controller's own decision, so it is not reconsidered
   while the head and those settings are unchanged; without that, every run would
   spend a full review to reach the recorded answer again. A binary file needs no such pattern:

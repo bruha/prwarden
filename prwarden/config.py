@@ -368,7 +368,55 @@ def parse_excluded_pr_labels(value: str) -> frozenset[str]:
     return frozenset(item.strip().casefold() for item in payload)
 
 
-def parse_ignored_missing_patch_patterns(value: str) -> tuple[str, ...]:
+# Generated files whose patch GitHub leaves out once they grow large, and that carry
+# no line a reviewer would judge: dependency lockfiles, TypeScript build state, and
+# the type declarations Wrangler writes. Ignored only when GitHub omitted the patch,
+# so a change small enough to show is still reviewed. An image, a minified bundle, a
+# source map, a test snapshot, and other code generators' output are left out on
+# purpose: each can hold a line worth reading. A bare name matches the repository
+# root only, so each name also comes in its `*/` form, whose `*` crosses directories.
+GENERATED_FILE_NAMES = (
+    # JavaScript and TypeScript
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lock",
+    "bun.lockb",
+    "deno.lock",
+    # Python
+    "poetry.lock",
+    "uv.lock",
+    "Pipfile.lock",
+    "pdm.lock",
+    # Other ecosystems
+    "Cargo.lock",
+    "go.sum",
+    "Gemfile.lock",
+    "composer.lock",
+    "pubspec.lock",
+    "Podfile.lock",
+    "Package.resolved",
+    "packages.lock.json",
+    "mix.lock",
+    "flake.lock",
+    # Generated type declarations
+    "worker-configuration.d.ts",
+)
+DEFAULT_IGNORED_MISSING_PATCH_PATTERNS = ("*.tsbuildinfo",) + tuple(
+    pattern for name in GENERATED_FILE_NAMES for pattern in (name, f"*/{name}")
+)
+
+
+def parse_ignored_missing_patch_patterns(value: Optional[str]) -> tuple[str, ...]:
+    """Return the globs whose omitted patch needs no review.
+
+    Unset or empty means the built-in list. A value replaces it, so `[]` ignores
+    nothing, and an operator's own list is never silently widened by a release.
+    """
+
+    if value is None or not value.strip():
+        return DEFAULT_IGNORED_MISSING_PATCH_PATTERNS
     try:
         payload = json.loads(value)
     except json.JSONDecodeError as error:
@@ -827,7 +875,7 @@ def load_settings(
             os.getenv("EXCLUDED_PR_LABELS", "[]")
         ),
         ignored_missing_patch_patterns=parse_ignored_missing_patch_patterns(
-            os.getenv("IGNORED_MISSING_PATCH_PATTERNS", "[]")
+            os.getenv("IGNORED_MISSING_PATCH_PATTERNS")
         ),
         design_excluded_head_branches=parse_design_excluded_head_branches(
             os.getenv(

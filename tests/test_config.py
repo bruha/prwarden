@@ -1,3 +1,4 @@
+import fnmatch
 import json
 import os
 import tempfile
@@ -426,6 +427,85 @@ class ConfigurationTests(unittest.TestCase):
                 settings.repositories[0].path,
                 (root / "example-app").resolve(),
             )
+
+    def _ignored_patterns(self, *lines: str) -> "tuple[str, ...]":
+        with tempfile.TemporaryDirectory() as directory:
+            env_file = Path(directory) / ".env"
+            write_private_env(
+                env_file,
+                "\n".join(("GITHUB_REVIEWER_USERNAME=reviewer", *lines)) + "\n",
+            )
+            repositories = Path(directory) / "repositories.json"
+            repositories.write_text(
+                '[{"slug": "owner/repo", "path": "' + directory + '"}]',
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                return config.load_settings(
+                    env_file, repositories, Path(directory) / "state.json"
+                ).ignored_missing_patch_patterns
+
+    def test_an_unset_ignore_list_uses_the_built_in_generated_files(self):
+        """The list lived only in `.env.example`, and `prwarden setup` writes no
+        such line, so an install made with setup withheld the approval of every pull
+        request whose lockfile GitHub would not show."""
+
+        for lines in ((), ("IGNORED_MISSING_PATCH_PATTERNS=",)):
+            with self.subTest(lines=lines):
+                self.assertEqual(
+                    self._ignored_patterns(*lines),
+                    config.DEFAULT_IGNORED_MISSING_PATCH_PATTERNS,
+                )
+
+    def test_a_set_ignore_list_replaces_the_built_in_one(self):
+        self.assertEqual(
+            self._ignored_patterns('IGNORED_MISSING_PATCH_PATTERNS=["data/*.csv"]'),
+            ("data/*.csv",),
+        )
+        self.assertEqual(
+            self._ignored_patterns("IGNORED_MISSING_PATCH_PATTERNS=[]"), ()
+        )
+
+    def test_the_built_in_list_matches_generated_files_at_any_depth(self):
+        """A monorepo keeps a lockfile in each workspace, and a bare name matches
+        the repository root only, so every name also comes in its `*/` form."""
+
+        patterns = config.DEFAULT_IGNORED_MISSING_PATCH_PATTERNS
+
+        def ignored(path: str) -> bool:
+            return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
+
+        for path in (
+            "package-lock.json",
+            "apps/web/package-lock.json",
+            "pnpm-lock.yaml",
+            "Cargo.lock",
+            "crates/core/Cargo.lock",
+            "go.sum",
+            "uv.lock",
+            "services/api/poetry.lock",
+            "ios/Podfile.lock",
+            "worker-configuration.d.ts",
+            "apps/worker/worker-configuration.d.ts",
+            "tsconfig.tsbuildinfo",
+            "packages/ui/tsconfig.app.tsbuildinfo",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(ignored(path))
+        # Each of these can hold a line worth reading: script in an image, code
+        # that ships, a test's expectation, or a near-miss of a generated name.
+        for path in (
+            "assets/logo.svg",
+            "dist/app.min.js",
+            "dist/app.js.map",
+            "src/__snapshots__/app.test.ts.snap",
+            "src/package-lock.json.ts",
+            "docs/Cargo.lock.md",
+            "worker-configuration.ts",
+            "package.json",
+        ):
+            with self.subTest(path=path):
+                self.assertFalse(ignored(path))
 
     def test_run_log_retention_defaults_to_a_week_and_is_configurable(self):
         """How long transcripts are kept is an operator decision."""
