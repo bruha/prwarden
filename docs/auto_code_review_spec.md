@@ -1291,8 +1291,9 @@ mask or replace the original command failure.
   output are not on it, because each can hold a line worth reading. A configured
   list replaces the built-in one rather than adding to it, so a release never
   widens what an operator chose, and `[]` ignores nothing. A release that changes
-  the built-in list changes the fingerprint below, which reopens the pull requests
-  recorded as unapprovable over a file it now covers.
+  the built-in list changes the fingerprint above, which reopens every pull request
+  recorded as unapprovable over an unread file for one more review, whether or not
+  the new list covers that file.
   Widening it is a decision to allow approval over an unread file,
   not a way to unblock a review, and narrowing it costs an approval rather than a
   review. Matching omitted patches are reported in terminal output and ignored by

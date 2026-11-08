@@ -488,7 +488,8 @@ rather than advisory notes nobody checked.
   `worker-configuration.d.ts`, each at any depth; images, minified bundles, source
   maps, and test snapshots are left out because each can hold a line worth reading.
   A list of your own replaces the built-in one, and `[]` ignores nothing. Changing
-  the setting reopens a PR already recorded as unapprovable over that file. Withholding an
+  the setting reopens the PRs already recorded as unapprovable over an unread file,
+  each for one more review. Withholding an
   approval this way is the controller's own decision, so it is not reconsidered
   while the head and those settings are unchanged; without that, every run would
   spend a full review to reach the recorded answer again. A binary file needs no such pattern:
