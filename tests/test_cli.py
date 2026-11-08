@@ -10,6 +10,7 @@ from dataclasses import replace
 from io import StringIO
 from argparse import Namespace
 from pathlib import Path
+from typing import Optional
 from unittest.mock import Mock, patch
 
 import prwarden.cli as cli
@@ -3207,9 +3208,14 @@ class OrchestrationTests(unittest.TestCase):
         changed_files=None,
         ignored_missing_patch_patterns: tuple = (),
         max_review_bundles: int = 1,
+        generated_marks: "Optional[dict]" = None,
+        marks_unreadable: bool = False,
     ) -> dict:
         repository = Repository("app", "owner/app", Path(directory))
-        pull_request = PullRequest(1, "Title", "", "author", head, "url")
+        pull_request = PullRequest(
+            1, "Title", "", "author", head, "url", base_ref="main"
+        )
+        marks = None if marks_unreadable else dict(generated_marks or {})
         settings = self.settings(directory, repository)
         settings = Settings(
             **{
@@ -3227,6 +3233,8 @@ class OrchestrationTests(unittest.TestCase):
         with patch("prwarden.cli.has_current_review", return_value=False), patch(
             "prwarden.cli.list_prior_review_comments", return_value=()
         ), patch(
+            "prwarden.cli._read_generated_marks", return_value=marks
+        ) as read_marks, patch(
             "prwarden.cli.list_changed_files",
             return_value=(
                 self.partially_reviewable_files()
@@ -3269,6 +3277,7 @@ class OrchestrationTests(unittest.TestCase):
             "submit_review": submit_review,
             "submit_approval": submit_approval,
             "send_slack": send_slack,
+            "read_marks": read_marks,
         }
 
     def test_a_bundled_review_reads_every_file_and_may_approve(self) -> None:
@@ -3681,6 +3690,117 @@ class OrchestrationTests(unittest.TestCase):
             self.assertNotIn("Skipped: approval stays withheld", again["terminal"])
             again["submit_approval"].assert_called_once()
             self.assertEqual(again["record"]["status"], "delivered")
+
+    GENERATED = "src/api/generated/client.ts"
+
+    def generated_change(self) -> list:
+        return [
+            {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"},
+            {
+                "filename": self.GENERATED,
+                "status": "modified",
+                "additions": 9000,
+                "deletions": 8000,
+                "changes": 17000,
+            },
+        ]
+
+    def approving_engine(self) -> Mock:
+        engine = Mock()
+        engine.review.return_value = {
+            "verdict": "approve",
+            "approval_reason": "No qualifying defects remain.",
+            "findings": [],
+        }
+        return engine
+
+    def test_a_file_the_base_marks_generated_keeps_the_pull_request_approvable(
+        self,
+    ) -> None:
+        """A repository already tells GitHub which files are machine-made. A file it
+        marks `linguist-generated` on its base branch needs no review when GitHub
+        omits its patch, exactly as a file the ignore list names."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                self.approving_engine(),
+                max_diff_bytes=100000,
+                changed_files=self.generated_change(),
+                generated_marks={self.GENERATED: True},
+            )
+
+        result["read_marks"].assert_called_once()
+        self.assertEqual(result["read_marks"].call_args.args[2], (self.GENERATED,))
+        self.assertIn(
+            "marked linguist-generated on main: " + self.GENERATED,
+            result["terminal"],
+        )
+        result["submit_approval"].assert_called_once()
+        self.assertEqual(result["record"]["status"], "delivered")
+
+    def test_a_base_mark_added_later_reopens_the_withheld_approval(self) -> None:
+        """The skip that saves a re-review must not outlive what it rests on: once
+        the base branch marks the unread file generated, the next run reviews again
+        and may approve, while an unchanged base still skips."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            engine = self.approving_engine()
+            first = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.generated_change(),
+                generated_marks={self.GENERATED: None},
+            )
+            self.assertEqual(first["record"]["status"], "approval_withheld")
+            self.assertEqual(
+                first["record"]["unread_generated_marks"],
+                {self.GENERATED: "unmarked"},
+            )
+
+            unchanged = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.generated_change(),
+                generated_marks={self.GENERATED: None},
+            )
+            self.assertIn("Skipped: approval stays withheld", unchanged["terminal"])
+            self.assertEqual(engine.review.call_count, 1)
+
+            marked = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.generated_change(),
+                generated_marks={self.GENERATED: True},
+            )
+
+        self.assertIn(
+            "generated marks on the base branch changed", marked["terminal"]
+        )
+        marked["submit_approval"].assert_called_once()
+        self.assertEqual(marked["record"]["status"], "delivered")
+
+    def test_marks_that_cannot_be_read_withhold_the_approval(self) -> None:
+        """Failing to read the marks must cost an approval, never grant one."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                self.approving_engine(),
+                max_diff_bytes=100000,
+                changed_files=self.generated_change(),
+                marks_unreadable=True,
+            )
+
+        result["submit_approval"].assert_not_called()
+        self.assertEqual(result["record"]["status"], "approval_withheld")
+        self.assertEqual(
+            result["record"]["unread_generated_marks"],
+            {self.GENERATED: "unavailable"},
+        )
 
     def test_a_larger_budget_reopens_a_pull_request_left_unread(self) -> None:
         """Changing what can be read must make the approval reachable again."""

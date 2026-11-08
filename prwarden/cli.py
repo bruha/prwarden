@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence, TextIO, Union
+from typing import Any, Callable, Mapping, Optional, Sequence, TextIO, Union
 
 from . import __version__, progress
 from .comment_template import CommentTemplateError
@@ -106,6 +106,7 @@ from .review import (
     collect_review_rules,
     format_byte_size,
     is_review_rule_source,
+    omitted_patch_paths,
     review_rule_pathspecs,
     validate_approval_reason,
     validate_approval_verdict,
@@ -119,7 +120,12 @@ from .review import (
 )
 from .reviewer_identity import format_review_attribution, format_review_plan
 from .state import JsonStateStore, StateError, StateLockedError
-from .workspace import WorkspaceError, read_base_files, review_workspace
+from .workspace import (
+    WorkspaceError,
+    read_base_files,
+    read_generated_marks,
+    review_workspace,
+)
 
 
 MAX_FAILURE_NOTIFICATION_ERRORS = 10
@@ -207,10 +213,13 @@ def _unread_settings_fingerprint(settings: Settings) -> str:
     """Return a fingerprint of the settings that decide what goes unread.
 
     For one immutable head, which files GitHub refuses to diff and which files
-    exceed the byte budget are decided by that head and these two settings alone,
-    so a matching fingerprint proves another review would defer the same files and
-    withhold the approval for the same reason. Anything else about the run may
-    differ freely, including the engine and the prompt.
+    exceed the byte budget are decided by that head, these two settings, and how
+    the base branch marks the omitted files as generated. The marks live in the
+    repository rather than in the settings, so they are recorded beside this as
+    `unread_generated_marks` and compared on their own. A matching fingerprint and
+    matching marks prove another review would defer the same files and withhold the
+    approval for the same reason. Anything else about the run may differ freely,
+    including the engine and the prompt.
     """
 
     return json.dumps(
@@ -1615,10 +1624,85 @@ def _validate_pull_request_snapshot(
         )
 
 
+def _read_generated_marks(
+    repository: Repository,
+    pull_request: PullRequest,
+    paths: "Sequence[str]",
+) -> "Optional[dict[str, Optional[bool]]]":
+    """Return how the base branch marks each omitted file, or None when unknown.
+
+    A repository tells GitHub which files are machine-made with
+    `linguist-generated` in its `.gitattributes`. Read from the base branch's
+    current tip rather than the reviewed head, for the reason the code review rules
+    are: a pull request must not be able to mark its own new file as generated and
+    so leave it unread and approvable. Not being able to read the marks costs an
+    approval rather than granting one: every omitted file then stays unread.
+    """
+
+    if not paths:
+        return {}
+    base_ref = pull_request.base_ref
+    try:
+        if not base_ref:
+            raise WorkspaceError("the pull request names no base branch")
+        commit = validate_object_name(
+            get_branch_head_sha(repository, base_ref),
+            f"{repository.slug} base commit",
+        )
+        return read_generated_marks(repository, commit, tuple(paths))
+    except (CommandError, WorkspaceError) as error:
+        print(
+            f"      -> Could not read .gitattributes on {base_ref or 'the base branch'}"
+            f", so it marks no omitted file generated: {error}"
+        )
+        return None
+
+
+def _generated_mark_states(
+    marks: "Optional[Mapping[str, Optional[bool]]]",
+    paths: "Sequence[str]",
+) -> "dict[str, str]":
+    """Return what the base branch said about each path, as recorded state."""
+
+    if marks is None:
+        return {path: "unavailable" for path in paths}
+    names = {True: "generated", False: "not_generated", None: "unmarked"}
+    return {path: names[marks.get(path)] for path in paths}
+
+
+def _generated_marks_changed(
+    repository: Repository,
+    pull_request: PullRequest,
+    record: "dict[str, Any]",
+) -> bool:
+    """Return whether the base branch now marks a recorded unread file differently.
+
+    Only a record that measured the marks is compared, and only for the omitted
+    files it names, so a withholding with nothing omitted costs no lookup.
+    """
+
+    recorded = record.get("unread_generated_marks")
+    if not isinstance(recorded, dict) or not recorded:
+        return False
+    paths = tuple(sorted(path for path in recorded if isinstance(path, str)))
+    current = _generated_mark_states(
+        _read_generated_marks(repository, pull_request, paths), paths
+    )
+    if current == recorded:
+        return False
+    print(
+        "      -> The generated marks on the base branch changed for "
+        + ", ".join(path for path in paths if current[path] != recorded.get(path))
+        + "; reconsidering withheld approval"
+    )
+    return True
+
+
 def _bundled_material(
     files: "list[dict[str, Any]]",
     settings: Settings,
     prior_comments: "tuple[PriorReviewComment, ...]",
+    generated_marks: "Optional[Mapping[str, Optional[bool]]]" = None,
 ) -> "tuple[ReviewMaterial, tuple[ReviewMaterial, ...]]":
     """Return the first bundle, carrying the whole change's budget, and the rest.
 
@@ -1635,6 +1719,7 @@ def _bundled_material(
         settings.max_review_bundles,
         prior_comments,
         settings.ignored_missing_patch_patterns,
+        generated_marks,
     )
     first = bundles[0]
     if len(bundles) == 1:
@@ -2276,9 +2361,12 @@ def _process_pull_request(
                 print(f"      -> Skipped: state is approval_withheld{detail}")
                 return
             recorded_unread = _recorded_unread_paths(record)
-            if recorded_unread and record.get(
-                "unread_settings_fingerprint"
-            ) == _unread_settings_fingerprint(settings):
+            if (
+                recorded_unread
+                and record.get("unread_settings_fingerprint")
+                == _unread_settings_fingerprint(settings)
+                and not _generated_marks_changed(repository, pull_request, record)
+            ):
                 # The controller withheld this approval itself, because it could
                 # not read these files. That answer is not the engine's opinion to
                 # revisit: for this head and these settings another review would
@@ -2336,6 +2424,7 @@ def _process_pull_request(
         store.set_status(state_key, "in_progress")
 
     unread_paths: "tuple[str, ...]" = ()
+    unread_marks: "dict[str, str]" = {}
 
     try:
         initial_snapshot = get_pull_request_snapshot(repository, pull_request)
@@ -2381,7 +2470,12 @@ def _process_pull_request(
             pull_request,
             initial_snapshot.changed_files,
         )
-        material, extra_bundles = _bundled_material(files, settings, prior_comments)
+        generated_marks = _read_generated_marks(
+            repository, pull_request, omitted_patch_paths(files)
+        )
+        material, extra_bundles = _bundled_material(
+            files, settings, prior_comments, generated_marks
+        )
         if extra_bundles:
             print(
                 f"      -> Reviewing in {len(extra_bundles) + 1} bundles: the "
@@ -2406,7 +2500,16 @@ def _process_pull_request(
                 f"check{'s' if len(checks) != 1 else ''}"
             )
         for path in material.ignored_missing_patch_files:
-            print(f"      -> Skipping omitted patch matching configured pattern: {path}")
+            if (generated_marks or {}).get(path) is True:
+                print(
+                    "      -> Skipping omitted patch marked linguist-generated on "
+                    f"{pull_request.base_ref}: {path}"
+                )
+            else:
+                print(
+                    "      -> Skipping omitted patch matching configured pattern: "
+                    f"{path}"
+                )
         for path in material.textless_files:
             print(
                 "      -> Reviewing without a changed line GitHub could diff, "
@@ -2603,6 +2706,10 @@ def _process_pull_request(
             unread_paths = tuple(
                 sorted(deferred.path for deferred in budget.deferred)
             )
+            unread_marks = _generated_mark_states(
+                generated_marks,
+                tuple(sorted(deferred.path for deferred in budget.unreadable)),
+            )
         reviewer_engine = review_settings.review_engine
         reviewer_model = review_settings.review_model
         raw_findings = structured_output.get("findings", [])
@@ -2673,6 +2780,7 @@ def _process_pull_request(
             unread_settings_fingerprint=(
                 _unread_settings_fingerprint(settings) if unread_paths else ""
             ),
+            unread_generated_marks=unread_marks if unread_paths else {},
         )
         print(f"      -> Recorded as approval_withheld: {approval_reason}")
         return

@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
-from typing import Any, NamedTuple, Optional, Sequence
+from typing import Any, Mapping, NamedTuple, Optional, Sequence
 
 from .engine import (
     DESIGN_CATEGORIES,
@@ -194,11 +194,38 @@ def _fit_diff_to_budget(
     return included, deferred
 
 
+def omitted_patch_paths(files: "list[dict[str, Any]]") -> "tuple[str, ...]":
+    """Return the changed files GitHub has text for but will not show.
+
+    These are the files `build_review_material` can only read around: not a
+    removal, a rename with no content change, or a file with no changed line, each
+    of which needs no patch. Asking anything about generated files is only worth it
+    for these, and most pull requests have none.
+    """
+
+    paths = []
+    for file_data in files:
+        path = file_data.get("filename")
+        if not isinstance(path, str) or not path:
+            continue
+        if isinstance(file_data.get("patch"), str):
+            continue
+        if file_data.get("status") == "removed" and file_data.get("additions") == 0:
+            continue
+        if _content_free_rename(path, file_data) is not None:
+            continue
+        if _has_no_changed_lines(file_data):
+            continue
+        paths.append(path)
+    return tuple(paths)
+
+
 def build_review_material(
     files: list[dict[str, Any]],
     max_diff_bytes: int,
     prior_comments: tuple[PriorReviewComment, ...] = (),
     ignored_missing_patch_patterns: tuple[str, ...] = (),
+    generated_marks: "Optional[Mapping[str, Optional[bool]]]" = None,
 ) -> ReviewMaterial:
     """Return the reviewable material for one pull request.
 
@@ -207,8 +234,14 @@ def build_review_material(
     diff does not fit ``max_diff_bytes``, the review reads what fits and names the
     rest instead of reviewing nothing: a pull request nobody reviewed catches no
     defects at all.
+
+    ``generated_marks`` is how the base branch's `.gitattributes` mark each omitted
+    file: True says it is generated, so it needs no review like a file the patterns
+    name, and False says it is not, which keeps it unread even when a pattern names
+    it. A repository can widen review by unmarking a file, never narrow it.
     """
 
+    marks = generated_marks or {}
     sections: dict[str, str] = {}
     order: list[str] = []
     added_lines: dict[str, frozenset[int]] = {}
@@ -249,9 +282,13 @@ def build_review_material(
                 textless_files.append(path)
                 added_lines[path] = frozenset()
                 continue
-            if any(
-                fnmatch.fnmatchcase(path, pattern)
-                for pattern in ignored_missing_patch_patterns
+            mark = marks.get(path)
+            if mark is True or (
+                mark is not False
+                and any(
+                    fnmatch.fnmatchcase(path, pattern)
+                    for pattern in ignored_missing_patch_patterns
+                )
             ):
                 ignored_missing_patch_files.append(path)
                 continue
@@ -317,6 +354,7 @@ def build_bundled_review_material(
     max_bundles: int = 1,
     prior_comments: "tuple[PriorReviewComment, ...]" = (),
     ignored_missing_patch_patterns: "tuple[str, ...]" = (),
+    generated_marks: "Optional[Mapping[str, Optional[bool]]]" = None,
 ) -> "tuple[tuple[ReviewMaterial, ...], tuple[DeferredFile, ...]]":
     """Return the material for each bundle, and the files still nobody read.
 
@@ -339,6 +377,7 @@ def build_bundled_review_material(
         max_diff_bytes,
         prior_comments,
         ignored_missing_patch_patterns,
+        generated_marks,
     )
     bundles = [first]
     remaining = first.diff_budget.oversized
@@ -362,6 +401,7 @@ def build_bundled_review_material(
                 max_diff_bytes,
                 prior_comments,
                 ignored_missing_patch_patterns,
+                generated_marks,
             )
         except (DiffTooLargeError, ReviewError):
             # Nothing here fits alone, so another bundle would read nothing. The

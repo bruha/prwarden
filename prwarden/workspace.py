@@ -8,7 +8,7 @@ import threading
 from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
-from typing import Callable, Optional, Type
+from typing import Callable, Optional, Sequence, Type
 
 from .commands import CommandError, run_cmd
 from .github import run_git_for
@@ -28,6 +28,8 @@ DEPENDENCY_DIRECTORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 
 CLONE_TIMEOUT_SECONDS = 1800
+# The attribute GitHub reads to collapse a machine-made file in a pull request.
+GENERATED_ATTRIBUTE = "linguist-generated"
 
 
 def ensure_managed_checkout(repository: Repository) -> Path:
@@ -288,11 +290,7 @@ def read_base_files(
     documents: "list[tuple[str, str]]" = []
     try:
         with _checkout_lock(checkout):
-            if repository.managed_checkout:
-                ensure_managed_checkout(repository)
-                run_git_for(repository, fetch, timeout_seconds=180)
-            else:
-                run_cmd(["git", *fetch], timeout_seconds=180)
+            _fetch_trusted_commit(repository, fetch)
             listing = run_cmd(
                 ["git", "-C", str(checkout), "ls-tree", "-r", "-l", "-z", commit, "--"]
                 + list(pathspecs)
@@ -322,6 +320,84 @@ def read_base_files(
             f"Cannot read {repository.slug} at {commit[:12]}: {error}"
         ) from error
     return documents
+
+
+def _fetch_trusted_commit(repository: Repository, fetch: "list[str]") -> None:
+    """Fetch a trusted commit into the local checkout; the caller holds its lock."""
+
+    if repository.managed_checkout:
+        ensure_managed_checkout(repository)
+        run_git_for(repository, fetch, timeout_seconds=180)
+    else:
+        run_cmd(["git", *fetch], timeout_seconds=180)
+
+
+def read_generated_marks(
+    repository: Repository,
+    commit: str,
+    paths: "Sequence[str]",
+) -> "dict[str, Optional[bool]]":
+    """Return how ``commit``, a trusted commit, marks each path as generated.
+
+    True where its `.gitattributes` set `linguist-generated`, the mark GitHub reads
+    to collapse a machine-made file in a diff, False where they unset it or set it
+    false, and None where they say nothing. Git does the matching itself, so nested
+    files, later lines overriding earlier ones, and negations mean what they mean
+    to Git and GitHub. `--source` reads the commit's own files rather than the
+    checkout's, which may sit on any branch; it needs Git 2.40, and an older Git
+    fails here like an unreadable commit. The paths go on standard input, so no
+    file name is ever read as an option.
+    """
+
+    if not paths:
+        return {}
+    checkout = repository.path
+    if checkout is None:
+        raise WorkspaceError(
+            f"Repository {repository.slug} needs a local checkout path"
+        )
+    fetch = [
+        "-C",
+        str(checkout),
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-write-fetch-head",
+        "origin",
+        commit,
+    ]
+    try:
+        with _checkout_lock(checkout):
+            _fetch_trusted_commit(repository, fetch)
+            output = run_cmd(
+                [
+                    "git",
+                    "-C",
+                    str(checkout),
+                    "check-attr",
+                    "-z",
+                    "--stdin",
+                    f"--source={commit}",
+                    GENERATED_ATTRIBUTE,
+                ],
+                input_text="".join(f"{path}\0" for path in paths),
+            )
+    except CommandError as error:
+        raise WorkspaceError(
+            f"Cannot read the {GENERATED_ATTRIBUTE} marks of {repository.slug} at "
+            f"{commit[:12]}: {error}"
+        ) from error
+    fields = output.split("\0")
+    marks: "dict[str, Optional[bool]]" = {}
+    for index in range(0, len(fields) - 2, 3):
+        path, attribute, value = fields[index : index + 3]
+        if attribute != GENERATED_ATTRIBUTE:
+            continue
+        if value in ("set", "true"):
+            marks[path] = True
+        elif value in ("unset", "false"):
+            marks[path] = False
+    return {path: marks.get(path) for path in paths}
 
 
 class ReviewWorkspace:

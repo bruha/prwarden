@@ -1294,6 +1294,21 @@ mask or replace the original command failure.
   the built-in list changes the fingerprint above, which reopens every pull request
   recorded as unapprovable over an unread file for one more review, whether or not
   the new list covers that file.
+- A repository's own `linguist-generated` marks count beside the list. For each
+  omitted patch, the controller asks `git check-attr --source=<base tip>` how the
+  base branch's `.gitattributes` mark the path: set or `true` makes it a generated
+  file that needs no review, and unset or `false` keeps it unread even when a
+  pattern names it, so a repository can widen review by unmarking a file but never
+  narrow it beyond what it marked. The base branch's current tip is read, never the
+  reviewed head, for the reason the code review rules are: a pull request must not
+  mark its own new file generated. Git matches the marks itself, nested
+  `.gitattributes` and later lines included, and reads them from the commit rather
+  than from the local checkout's working tree. Marks that cannot be read, because
+  the base cannot be fetched or Git is older than 2.40, count as no marks: every
+  omitted file stays unread and the approval is withheld. The withheld record keeps
+  what the base said about each omitted unread file as `unread_generated_marks`, and
+  a later run reviews again only when that differs, so a mark added on the base
+  reopens the pull request while an unchanged base still skips.
   Widening it is a decision to allow approval over an unread file,
   not a way to unblock a review, and narrowing it costs an approval rather than a
   review. Matching omitted patches are reported in terminal output and ignored by

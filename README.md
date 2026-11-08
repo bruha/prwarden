@@ -489,7 +489,14 @@ rather than advisory notes nobody checked.
   maps, and test snapshots are left out because each can hold a line worth reading.
   A list of your own replaces the built-in one, and `[]` ignores nothing. Changing
   the setting reopens the PRs already recorded as unapprovable over an unread file,
-  each for one more review. Withholding an
+  each for one more review. A repository can name its own generated files too: a
+  path its `.gitattributes` marks `linguist-generated`, the mark GitHub uses to
+  collapse a generated file in a diff, counts as a match, and one it unmarks with
+  `-linguist-generated` stays unread even when the list names it. The marks are
+  read from the base branch, never from the pull request, so a pull request cannot
+  mark its own new file as generated, and a mark added there later reopens a PR
+  recorded as unapprovable over that file. Reading them needs Git 2.40 or newer;
+  when they cannot be read, every omitted file stays unread. Withholding an
   approval this way is the controller's own decision, so it is not reconsidered
   while the head and those settings are unchanged; without that, every run would
   spend a full review to reach the recorded answer again. A binary file needs no such pattern:
