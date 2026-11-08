@@ -495,8 +495,10 @@ rather than advisory notes nobody checked.
   `-linguist-generated` stays unread even when the list names it. The marks are
   read from the base branch, never from the pull request, so a pull request cannot
   mark its own new file as generated, and a mark added there later reopens a PR
-  recorded as unapprovable over that file. Reading them needs Git 2.40 or newer;
-  when they cannot be read, every omitted file stays unread. Withholding an
+  recorded as unapprovable over that file. When the base cannot be read, every
+  omitted file stays unread, a listed one included, since any mark might have been
+  an unmark. Reading the marks needs Git 2.40 or newer; with an older Git they are
+  not read and the list alone decides, as before. Withholding an
   approval this way is the controller's own decision, so it is not reconsidered
   while the head and those settings are unchanged; without that, every run would
   spend a full review to reach the recorded answer again. A binary file needs no such pattern:

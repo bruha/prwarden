@@ -1304,13 +1304,17 @@ mask or replace the original command failure.
   mark its own new file generated. Git matches the marks itself, nested
   `.gitattributes` and later lines included, and reads them from the commit rather
   than from the local checkout's working tree. Marks that cannot be read, because
-  the base cannot be fetched or Git is older than 2.40, count as no marks: every
-  omitted file stays unread and the approval is withheld. The withheld record keeps
+  the base cannot be fetched or its tip is not an object name, keep every omitted
+  file unread, one a pattern names included, because any of them might have been
+  an unmark: failing to read the marks can only withhold an approval. Git older
+  than 2.40 has no `check-attr --source` and would read the checkout's working
+  tree instead, so it is never asked; that lasting fact of the installation is
+  reported and the patterns alone decide, exactly as before the marks were read. The withheld record keeps
   what the base said about each omitted unread file as `unread_generated_marks`, and
-  a later run reviews again only when the base now marks one of them generated,
-  the one answer that changes the outcome: a missing mark, an unmark, or a lookup
-  that fails would leave the file unread and spend a review to record the same
-  result. A record written before the marks were read names no omitted files, so
+  a later run reviews again only when one of them would now need no review under
+  the same rule, `ignores_omitted_patch`: the base now marks it generated, or no
+  longer unmarks it while a pattern names it. Any other answer, and a lookup that
+  fails, would leave the file unread and spend a review to record the same result. A record written before the marks were read names no omitted files, so
   its unread paths are asked about, and a mark added on the base reopens it too.
   Widening it is a decision to allow approval over an unread file,
   not a way to unblock a review, and narrowing it costs an approval rather than a

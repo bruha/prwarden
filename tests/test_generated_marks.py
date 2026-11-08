@@ -10,7 +10,11 @@ from prwarden import cli
 from prwarden.commands import CommandError
 from prwarden.models import PullRequest, Repository
 from prwarden.review import build_review_material, omitted_patch_paths
-from prwarden.workspace import WorkspaceError, read_generated_marks
+from prwarden.workspace import (
+    UnsupportedGitError,
+    WorkspaceError,
+    read_generated_marks,
+)
 
 PATCH = "@@ -0,0 +1 @@\n+value = 1"
 OMITTED = {"status": "modified", "additions": 9000, "deletions": 10, "changes": 9010}
@@ -105,6 +109,14 @@ class ReadGeneratedMarksTests(unittest.TestCase):
         with self.assertRaises(WorkspaceError):
             read_generated_marks(self.repository, "b" * 40, ("src/app.ts",))
 
+    def test_a_git_that_cannot_read_a_commits_attributes_says_so(self) -> None:
+        """Before 2.40 `check-attr` has no `--source`, and without it Git would
+        read the checkout's working tree, which is not the base branch."""
+
+        with patch("prwarden.workspace._git_version", return_value=(2, 39)):
+            with self.assertRaisesRegex(UnsupportedGitError, "Git 2.39"):
+                read_generated_marks(self.repository, self.base, ("src/app.ts",))
+
 
 class MaterialTests(unittest.TestCase):
     """The marks decide only what GitHub would not show."""
@@ -140,6 +152,20 @@ class MaterialTests(unittest.TestCase):
             10000,
             ignored_missing_patch_patterns=("package-lock.json",),
             generated_marks={"package-lock.json": False},
+        )
+
+        self.assertEqual(material.ignored_missing_patch_files, ())
+        self.assertEqual(
+            [file.path for file in material.diff_budget.unreadable],
+            ["package-lock.json"],
+        )
+
+    def test_marks_that_could_not_be_read_keep_every_omitted_file_unread(self):
+        material = build_review_material(
+            [omitted("package-lock.json"), {"filename": "app.py", "patch": PATCH}],
+            10000,
+            ignored_missing_patch_patterns=("package-lock.json",),
+            marks_unreadable=True,
         )
 
         self.assertEqual(material.ignored_missing_patch_files, ())
@@ -223,6 +249,25 @@ class LookupTests(unittest.TestCase):
                     call.args[0] for call in output.write.call_args_list
                 )
                 self.assertIn("Could not read .gitattributes on main", printed)
+
+    def test_an_old_git_leaves_the_decision_to_the_ignore_list(self) -> None:
+        """A lasting fact of the installation, not a failure: the review behaves
+        as it did before marks were read, rather than withholding every approval
+        over a lockfile on a machine that cannot read them."""
+
+        with patch(
+            "prwarden.cli.get_branch_head_sha", return_value="c" * 40
+        ), patch(
+            "prwarden.cli.read_generated_marks",
+            side_effect=UnsupportedGitError("Git 2.34 cannot read attributes"),
+        ), patch("sys.stdout") as output:
+            marks = cli._read_generated_marks(
+                self.repository, self.pull_request, ("gen.ts",)
+            )
+
+        self.assertEqual(marks, {})
+        printed = "".join(call.args[0] for call in output.write.call_args_list)
+        self.assertIn("Not reading .gitattributes on main", printed)
 
     def test_a_base_tip_that_is_not_an_object_name_is_refused(self) -> None:
         with patch(

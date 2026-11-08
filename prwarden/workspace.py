@@ -30,6 +30,24 @@ DEPENDENCY_DIRECTORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
 CLONE_TIMEOUT_SECONDS = 1800
 # The attribute GitHub reads to collapse a machine-made file in a pull request.
 GENERATED_ATTRIBUTE = "linguist-generated"
+# `git check-attr --source`, which reads attributes from a commit rather than from
+# the working tree, arrived in Git 2.40.
+ATTRIBUTE_SOURCE_GIT = (2, 40)
+GIT_VERSION_PATTERN = re.compile(r"git version (\d+)\.(\d+)")
+
+
+class UnsupportedGitError(WorkspaceError):
+    """Raised when the installed Git cannot read attributes from a commit."""
+
+
+def _git_version() -> "Optional[tuple[int, int]]":
+    """Return the installed Git's major and minor version, or None when unknown."""
+
+    try:
+        match = GIT_VERSION_PATTERN.search(run_cmd(["git", "--version"]))
+    except CommandError:
+        return None
+    return (int(match.group(1)), int(match.group(2))) if match else None
 
 
 def ensure_managed_checkout(repository: Repository) -> Path:
@@ -351,6 +369,12 @@ def read_generated_marks(
 
     if not paths:
         return {}
+    version = _git_version()
+    if version is not None and version < ATTRIBUTE_SOURCE_GIT:
+        raise UnsupportedGitError(
+            f"Git {version[0]}.{version[1]} cannot read attributes from a commit; "
+            f"Git {ATTRIBUTE_SOURCE_GIT[0]}.{ATTRIBUTE_SOURCE_GIT[1]} or newer can"
+        )
     checkout = repository.path
     if checkout is None:
         raise WorkspaceError(

@@ -3778,7 +3778,8 @@ class OrchestrationTests(unittest.TestCase):
             )
 
         self.assertIn(
-            "The base branch now marks " + self.GENERATED + " linguist-generated",
+            "The base branch's marks now leave " + self.GENERATED
+            + " needing no review",
             marked["terminal"],
         )
         marked["submit_approval"].assert_called_once()
@@ -3855,6 +3856,100 @@ class OrchestrationTests(unittest.TestCase):
             marked["read_marks"].call_args_list[0].args[2], (self.GENERATED,)
         )
         marked["submit_approval"].assert_called_once()
+
+    def test_unreadable_marks_keep_even_a_listed_file_unread(self) -> None:
+        """Any unreadable mark might have been an unmark, so a lookup that failed
+        must not let a pattern ignore the file: success could have withheld the
+        approval that the failure would otherwise grant."""
+
+        lockfile = [
+            {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"},
+            {
+                "filename": "package-lock.json",
+                "status": "modified",
+                "additions": 9000,
+                "deletions": 8000,
+                "changes": 17000,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                self.approving_engine(),
+                max_diff_bytes=100000,
+                changed_files=lockfile,
+                ignored_missing_patch_patterns=("package-lock.json",),
+                marks_unreadable=True,
+            )
+
+        result["submit_approval"].assert_not_called()
+        self.assertEqual(result["record"]["unread_paths"], ["package-lock.json"])
+
+    def test_a_base_dropping_its_unmark_reopens_a_listed_file(self) -> None:
+        """A file the patterns name stayed unread only because the base unmarked it.
+        Once the base drops the unmark, another review would ignore it and could
+        approve, so the next run must review again."""
+
+        lockfile = [
+            {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"},
+            {
+                "filename": "package-lock.json",
+                "status": "modified",
+                "additions": 9000,
+                "deletions": 8000,
+                "changes": 17000,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            engine = self.approving_engine()
+            first = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=lockfile,
+                ignored_missing_patch_patterns=("package-lock.json",),
+                generated_marks={"package-lock.json": False},
+            )
+            self.assertEqual(
+                first["record"]["unread_generated_marks"],
+                {"package-lock.json": "not_generated"},
+            )
+
+            dropped = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=lockfile,
+                ignored_missing_patch_patterns=("package-lock.json",),
+                generated_marks={"package-lock.json": None},
+            )
+
+        self.assertIn("needing no review; reconsidering", dropped["terminal"])
+        dropped["submit_approval"].assert_called_once()
+
+        # A lookup that fails proves nothing, even for a file a pattern names: the
+        # review it would reopen keeps that file unread and withholds again.
+        with tempfile.TemporaryDirectory() as directory:
+            engine = self.approving_engine()
+            self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=lockfile,
+                ignored_missing_patch_patterns=("package-lock.json",),
+                generated_marks={"package-lock.json": False},
+            )
+            failed = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=lockfile,
+                ignored_missing_patch_patterns=("package-lock.json",),
+                marks_unreadable=True,
+            )
+
+        self.assertIn("Skipped: approval stays withheld", failed["terminal"])
+        self.assertEqual(engine.review.call_count, 1)
 
     def test_marks_that_cannot_be_read_withhold_the_approval(self) -> None:
         """Failing to read the marks must cost an approval, never grant one."""

@@ -105,6 +105,7 @@ from .review import (
     read_background,
     collect_review_rules,
     format_byte_size,
+    ignores_omitted_patch,
     is_review_rule_source,
     omitted_patch_paths,
     review_rule_pathspecs,
@@ -121,6 +122,7 @@ from .review import (
 from .reviewer_identity import format_review_attribution, format_review_plan
 from .state import JsonStateStore, StateError, StateLockedError
 from .workspace import (
+    UnsupportedGitError,
     WorkspaceError,
     read_base_files,
     read_generated_marks,
@@ -1636,7 +1638,10 @@ def _read_generated_marks(
     current tip rather than the reviewed head, for the reason the code review rules
     are: a pull request must not be able to mark its own new file as generated and
     so leave it unread and approvable. Not being able to read the marks costs an
-    approval rather than granting one: every omitted file then stays unread.
+    approval rather than granting one: None keeps every omitted file unread, since
+    any mark might have been an unmark. A Git too old to read attributes from a
+    commit is a lasting fact of the installation rather than a failure, so it
+    returns no marks, and the ignore list decides as it did before marks existed.
     """
 
     if not paths:
@@ -1650,10 +1655,16 @@ def _read_generated_marks(
             f"{repository.slug} base commit",
         )
         return read_generated_marks(repository, commit, tuple(paths))
+    except UnsupportedGitError as error:
+        print(
+            f"      -> Not reading .gitattributes on {base_ref}: {error}; only "
+            "IGNORED_MISSING_PATCH_PATTERNS decide which omitted files need no review"
+        )
+        return {}
     except (CommandError, WorkspaceError) as error:
         print(
             f"      -> Could not read .gitattributes on {base_ref or 'the base branch'}"
-            f", so it marks no omitted file generated: {error}"
+            f", so every omitted file stays unread: {error}"
         )
         return None
 
@@ -1670,17 +1681,20 @@ def _generated_mark_states(
     return {path: names[marks.get(path)] for path in paths}
 
 
-def _generated_marks_changed(
+def _omitted_file_now_ignored(
+    settings: Settings,
     repository: Repository,
     pull_request: PullRequest,
     record: "dict[str, Any]",
 ) -> bool:
-    """Return whether the base branch now marks a recorded unread file generated.
+    """Return whether a recorded unread file now needs no review.
 
-    That is the only change of mark that changes the outcome: a recorded unread
-    file was not marked generated when it was recorded, so it stayed unread, and
-    any other answer now, a missing mark, an unmark, or a lookup that fails, would
-    leave it unread again and spend a review to record the same result.
+    The same question the material builder asks, `ignores_omitted_patch`, put to
+    the base branch's current marks: a file it now marks generated, or one it no
+    longer unmarks while a pattern names it, would be ignored by another review, so
+    that review could approve. Any other answer leaves the file unread and would
+    spend a review to record the same result, and a lookup that fails proves
+    nothing either way, so neither reopens.
 
     A record written before the marks were read names no omitted files, so all of
     its unread paths are asked about; a newer one names its omitted unread files,
@@ -1695,13 +1709,21 @@ def _generated_marks_changed(
     if not paths:
         return False
     marks = _read_generated_marks(repository, pull_request, paths)
-    marked = [path for path in paths if (marks or {}).get(path) is True]
-    if not marked:
+    if marks is None:
+        return False
+    ignored = [
+        path
+        for path in paths
+        if ignores_omitted_patch(
+            path, settings.ignored_missing_patch_patterns, marks.get(path)
+        )
+    ]
+    if not ignored:
         return False
     print(
-        "      -> The base branch now marks "
-        + ", ".join(marked)
-        + " linguist-generated; reconsidering withheld approval"
+        "      -> The base branch's marks now leave "
+        + ", ".join(ignored)
+        + " needing no review; reconsidering withheld approval"
     )
     return True
 
@@ -1711,6 +1733,7 @@ def _bundled_material(
     settings: Settings,
     prior_comments: "tuple[PriorReviewComment, ...]",
     generated_marks: "Optional[Mapping[str, Optional[bool]]]" = None,
+    marks_unreadable: bool = False,
 ) -> "tuple[ReviewMaterial, tuple[ReviewMaterial, ...]]":
     """Return the first bundle, carrying the whole change's budget, and the rest.
 
@@ -1728,6 +1751,7 @@ def _bundled_material(
         prior_comments,
         settings.ignored_missing_patch_patterns,
         generated_marks,
+        marks_unreadable,
     )
     first = bundles[0]
     if len(bundles) == 1:
@@ -2373,7 +2397,9 @@ def _process_pull_request(
                 recorded_unread
                 and record.get("unread_settings_fingerprint")
                 == _unread_settings_fingerprint(settings)
-                and not _generated_marks_changed(repository, pull_request, record)
+                and not _omitted_file_now_ignored(
+                    settings, repository, pull_request, record
+                )
             ):
                 # The controller withheld this approval itself, because it could
                 # not read these files. That answer is not the engine's opinion to
@@ -2482,7 +2508,11 @@ def _process_pull_request(
             repository, pull_request, omitted_patch_paths(files)
         )
         material, extra_bundles = _bundled_material(
-            files, settings, prior_comments, generated_marks
+            files,
+            settings,
+            prior_comments,
+            generated_marks,
+            marks_unreadable=generated_marks is None,
         )
         if extra_bundles:
             print(

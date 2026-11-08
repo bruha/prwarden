@@ -194,6 +194,22 @@ def _fit_diff_to_budget(
     return included, deferred
 
 
+def ignores_omitted_patch(
+    path: str, patterns: "Sequence[str]", mark: Optional[bool]
+) -> bool:
+    """Return whether a file whose patch GitHub omitted needs no review.
+
+    The base branch's own mark decides first: generated needs none, and not
+    generated keeps the file unread whatever the patterns say. Without a mark the
+    patterns decide. The skip gate asks the same question of a recorded file, so
+    both places read one answer.
+    """
+
+    if mark is not None:
+        return mark
+    return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
+
+
 def omitted_patch_paths(files: "list[dict[str, Any]]") -> "tuple[str, ...]":
     """Return the changed files GitHub has text for but will not show.
 
@@ -226,6 +242,7 @@ def build_review_material(
     prior_comments: tuple[PriorReviewComment, ...] = (),
     ignored_missing_patch_patterns: tuple[str, ...] = (),
     generated_marks: "Optional[Mapping[str, Optional[bool]]]" = None,
+    marks_unreadable: bool = False,
 ) -> ReviewMaterial:
     """Return the reviewable material for one pull request.
 
@@ -239,6 +256,9 @@ def build_review_material(
     file: True says it is generated, so it needs no review like a file the patterns
     name, and False says it is not, which keeps it unread even when a pattern names
     it. A repository can widen review by unmarking a file, never narrow it.
+    ``marks_unreadable`` says the marks were needed and could not be read, so any
+    of them might be an unmark: every omitted file then stays unread, and failing
+    to read the marks can only withhold an approval, never grant one.
     """
 
     marks = generated_marks or {}
@@ -282,13 +302,8 @@ def build_review_material(
                 textless_files.append(path)
                 added_lines[path] = frozenset()
                 continue
-            mark = marks.get(path)
-            if mark is True or (
-                mark is not False
-                and any(
-                    fnmatch.fnmatchcase(path, pattern)
-                    for pattern in ignored_missing_patch_patterns
-                )
+            if not marks_unreadable and ignores_omitted_patch(
+                path, ignored_missing_patch_patterns, marks.get(path)
             ):
                 ignored_missing_patch_files.append(path)
                 continue
@@ -355,6 +370,7 @@ def build_bundled_review_material(
     prior_comments: "tuple[PriorReviewComment, ...]" = (),
     ignored_missing_patch_patterns: "tuple[str, ...]" = (),
     generated_marks: "Optional[Mapping[str, Optional[bool]]]" = None,
+    marks_unreadable: bool = False,
 ) -> "tuple[tuple[ReviewMaterial, ...], tuple[DeferredFile, ...]]":
     """Return the material for each bundle, and the files still nobody read.
 
@@ -378,6 +394,7 @@ def build_bundled_review_material(
         prior_comments,
         ignored_missing_patch_patterns,
         generated_marks,
+        marks_unreadable,
     )
     bundles = [first]
     remaining = first.diff_budget.oversized
@@ -402,6 +419,7 @@ def build_bundled_review_material(
                 prior_comments,
                 ignored_missing_patch_patterns,
                 generated_marks,
+                marks_unreadable,
             )
         except (DiffTooLargeError, ReviewError):
             # Nothing here fits alone, so another bundle would read nothing. The
