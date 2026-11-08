@@ -1675,25 +1675,33 @@ def _generated_marks_changed(
     pull_request: PullRequest,
     record: "dict[str, Any]",
 ) -> bool:
-    """Return whether the base branch now marks a recorded unread file differently.
+    """Return whether the base branch now marks a recorded unread file generated.
 
-    Only a record that measured the marks is compared, and only for the omitted
-    files it names, so a withholding with nothing omitted costs no lookup.
+    That is the only change of mark that changes the outcome: a recorded unread
+    file was not marked generated when it was recorded, so it stayed unread, and
+    any other answer now, a missing mark, an unmark, or a lookup that fails, would
+    leave it unread again and spend a review to record the same result.
+
+    A record written before the marks were read names no omitted files, so all of
+    its unread paths are asked about; a newer one names its omitted unread files,
+    and one with none costs no lookup.
     """
 
     recorded = record.get("unread_generated_marks")
-    if not isinstance(recorded, dict) or not recorded:
+    if isinstance(recorded, dict):
+        paths = tuple(sorted(path for path in recorded if isinstance(path, str)))
+    else:
+        paths = _recorded_unread_paths(record)
+    if not paths:
         return False
-    paths = tuple(sorted(path for path in recorded if isinstance(path, str)))
-    current = _generated_mark_states(
-        _read_generated_marks(repository, pull_request, paths), paths
-    )
-    if current == recorded:
+    marks = _read_generated_marks(repository, pull_request, paths)
+    marked = [path for path in paths if (marks or {}).get(path) is True]
+    if not marked:
         return False
     print(
-        "      -> The generated marks on the base branch changed for "
-        + ", ".join(path for path in paths if current[path] != recorded.get(path))
-        + "; reconsidering withheld approval"
+        "      -> The base branch now marks "
+        + ", ".join(marked)
+        + " linguist-generated; reconsidering withheld approval"
     )
     return True
 

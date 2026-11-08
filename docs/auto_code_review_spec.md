@@ -1307,8 +1307,11 @@ mask or replace the original command failure.
   the base cannot be fetched or Git is older than 2.40, count as no marks: every
   omitted file stays unread and the approval is withheld. The withheld record keeps
   what the base said about each omitted unread file as `unread_generated_marks`, and
-  a later run reviews again only when that differs, so a mark added on the base
-  reopens the pull request while an unchanged base still skips.
+  a later run reviews again only when the base now marks one of them generated,
+  the one answer that changes the outcome: a missing mark, an unmark, or a lookup
+  that fails would leave the file unread and spend a review to record the same
+  result. A record written before the marks were read names no omitted files, so
+  its unread paths are asked about, and a mark added on the base reopens it too.
   Widening it is a decision to allow approval over an unread file,
   not a way to unblock a review, and narrowing it costs an approval rather than a
   review. Matching omitted patches are reported in terminal output and ignored by

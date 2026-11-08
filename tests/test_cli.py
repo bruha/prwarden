@@ -3778,10 +3778,83 @@ class OrchestrationTests(unittest.TestCase):
             )
 
         self.assertIn(
-            "generated marks on the base branch changed", marked["terminal"]
+            "The base branch now marks " + self.GENERATED + " linguist-generated",
+            marked["terminal"],
         )
         marked["submit_approval"].assert_called_once()
         self.assertEqual(marked["record"]["status"], "delivered")
+
+    def test_only_a_new_generated_mark_reopens_a_withheld_approval(self) -> None:
+        """Any other answer leaves the file unread again. A lookup that failed, or an
+        unmark, counted as a change and spent a review to record the same result,
+        and a transient failure would have done so twice, once each way."""
+
+        for later in ({self.GENERATED: False}, None):
+            with self.subTest(later=later):
+                with tempfile.TemporaryDirectory() as directory:
+                    engine = self.approving_engine()
+                    self.run_partial_review(
+                        directory,
+                        engine,
+                        max_diff_bytes=100000,
+                        changed_files=self.generated_change(),
+                        generated_marks={self.GENERATED: None},
+                    )
+
+                    again = self.run_partial_review(
+                        directory,
+                        engine,
+                        max_diff_bytes=100000,
+                        changed_files=self.generated_change(),
+                        generated_marks=later,
+                        marks_unreadable=later is None,
+                    )
+
+                self.assertIn(
+                    "Skipped: approval stays withheld", again["terminal"]
+                )
+                self.assertEqual(engine.review.call_count, 1)
+
+    def test_a_record_from_before_the_marks_reopens_once_the_base_marks_it(
+        self,
+    ) -> None:
+        """A withholding recorded before the marks were read names no omitted files.
+        Its unread paths are asked about, or a mark on the base could never reopen a
+        pull request already waiting on that file."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            engine = self.approving_engine()
+            first = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.generated_change(),
+                generated_marks={self.GENERATED: None},
+            )
+            state_file = Path(directory) / "state.json"
+            with JsonStateStore(state_file) as store:
+                key = store.key("owner/app", 1, "head", "github")
+                older = dict(store.get(key))
+                del older["unread_generated_marks"]
+                store.set_status(key, older.pop("status"), **{
+                    name: value
+                    for name, value in older.items()
+                    if name != "updated_at"
+                })
+
+            marked = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.generated_change(),
+                generated_marks={self.GENERATED: True},
+            )
+
+        self.assertEqual(first["record"]["status"], "approval_withheld")
+        self.assertEqual(
+            marked["read_marks"].call_args_list[0].args[2], (self.GENERATED,)
+        )
+        marked["submit_approval"].assert_called_once()
 
     def test_marks_that_cannot_be_read_withhold_the_approval(self) -> None:
         """Failing to read the marks must cost an approval, never grant one."""
