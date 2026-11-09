@@ -9,8 +9,25 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 2.5.1 291242cfa553d7de9f19b6ddeb2b33ec07067475 -->
+<!-- release-baseline: 2.6.0 55e40a6709aec106824c605f447f6b6219001f71 -->
 ## [Unreleased]
+
+## [2.6.0] - 2026-11-09
+
+### Added
+
+- ignore common generated files by default when GitHub omits them (`6d11200`).
+- honour a repository's linguist-generated marks for omitted patches (`54a3bf4`).
+
+### Fixed
+
+- reopen a withheld approval only when the base newly marks the file (`dc10f98`).
+- an unreadable base keeps every omitted file unread (`66ff3a9`).
+
+### Documentation
+
+- say a changed ignore list reopens every unread-file withholding (`22cd45a`).
+- show how Code review rules cover performance and scope (`55e40a6`).
 
 ## [2.5.1] - 2026-11-06
 
