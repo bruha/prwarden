@@ -566,6 +566,28 @@ the base branch's text and the comment shows with the file it came from, and the
 verifier confirms it like any other finding. A repository without a "Code review"
 section is reviewed exactly as before.
 
+PR Warden's own code level reports correctness, reliability, data-loss, concurrency,
+and security defects. It does not report performance or a pull request's scope,
+because without a project's own standard either one is a matter of taste, and taste
+is noise. A rule is how a project sets that standard. Each finding sits on one added
+line, so write a rule that a single line can break:
+
+```markdown
+## Code review
+
+- No database query or network call inside a loop over a request's items.
+- Every list endpoint is paginated, with a maximum page size.
+- No synchronous file or network I/O in a request handler.
+- A pull request changes one feature or fixes one bug; refactors and dependency
+  upgrades go in pull requests of their own.
+```
+
+A performance rule like the first three works well, because the line that breaks it
+shows it. A scope rule like the last one works less well: the finding lands on a
+line that plainly belongs to the unrelated part of the change, or nowhere. A rule
+too vague to check on a line, such as "code must be fast" or "keep pull requests
+small", is either thrown out by the verifier or becomes noise.
+
 The controller validates cited evidence against the exact PR worktree and uses
 a separate adversarial verification pass for candidate findings, optionally on a
 second engine and model. That pass judges each candidate by reference and never
