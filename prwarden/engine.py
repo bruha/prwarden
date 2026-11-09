@@ -1111,7 +1111,8 @@ def _scope_rule(pull_request: PullRequest, material: ReviewMaterial) -> str:
   or a document that follows from an explained change is explained. Cite a changed
   line of that file; the consequence is the behaviour it changes that nobody asked
   for, reached the way any other consequence must be, and `why_not_preference`
-  names what the stated intent asks for instead."""
+  names, by reference and without quoting it, the description or issue whose
+  stated intent this file falls outside."""
 
 
 def _scope_rejection(material: ReviewMaterial) -> str:

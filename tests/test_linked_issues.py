@@ -370,6 +370,8 @@ class PromptTests(unittest.TestCase):
         )
 
         self.assertIn("`change_outside_stated_intent`: a changed file", stated)
+        self.assertIn("by reference and without quoting it", stated)
+        self.assertNotIn("asks for instead", stated)
         self.assertNotIn("`change_outside_stated_intent`: a changed file", unstated)
         self.assertIn("`change_outside_stated_intent`: a changed file", issue_only)
 
