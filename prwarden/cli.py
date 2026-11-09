@@ -62,6 +62,7 @@ from .github import (
     has_current_review,
     hide_earlier_lgtm_comments,
     list_changed_files,
+    list_closing_issues,
     list_open_prs,
     list_own_advisory_notes,
     list_pull_request_checks,
@@ -80,6 +81,7 @@ from .models import (
     DesignAssessment,
     DocsAssessment,
     DiffBudget,
+    LinkedIssue,
     Finding,
     PriorReviewComment,
     PullRequest,
@@ -88,6 +90,7 @@ from .models import (
     ReviewMaterial,
     ReviewRules,
 )
+from .linked_issues import find_jira_keys, read_work_item
 from .metrics import ReviewMetrics
 from .paths import PACKAGE_ROOT
 from .review import (
@@ -1728,6 +1731,40 @@ def _omitted_file_now_ignored(
     return True
 
 
+def _read_linked_issues(
+    repository: Repository, pull_request: PullRequest
+) -> "tuple[LinkedIssue, ...]":
+    """Return the issues the pull request names, as the intent behind the change.
+
+    The GitHub issues GitHub records it as closing, and the Jira work items of the
+    repository's own projects that its title, description, or branch name names,
+    read through the operator's `acli`. This is context, never a gate: an issue that
+    cannot be read is reported and left out, and the review goes ahead as it did
+    before issues were read.
+    """
+
+    issues: "list[LinkedIssue]" = []
+    try:
+        issues.extend(list_closing_issues(repository, pull_request))
+    except CommandError as error:
+        print(f"      -> Could not read the GitHub issues this closes: {error}")
+    keys = find_jira_keys(
+        (pull_request.title, pull_request.body, pull_request.head_ref),
+        repository.jira_projects,
+    )
+    for key in keys:
+        try:
+            issues.append(read_work_item(key))
+        except (CommandError, ValueError) as error:
+            print(f"      -> Could not read Jira work item {key}: {error}")
+    if issues:
+        print(
+            "      -> Reading what this was asked to do in "
+            + ", ".join(issue.reference for issue in issues)
+        )
+    return tuple(issues)
+
+
 def _bundled_material(
     files: "list[dict[str, Any]]",
     settings: Settings,
@@ -2531,7 +2568,11 @@ def _process_pull_request(
                 partial_budget,
             )
         checks = list_pull_request_checks(repository, pull_request)
-        material = replace(material, checks=checks)
+        material = replace(
+            material,
+            checks=checks,
+            linked_issues=_read_linked_issues(repository, pull_request),
+        )
         if checks:
             print(
                 f"      -> Considering {len(checks)} exact-head GitHub "

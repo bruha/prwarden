@@ -108,6 +108,13 @@ webhook URL Slack shows. Setup sends a test message through it before keeping it
 and asks which repositories report there, so a repository whose team is in another
 workspace stays out of it. `prwarden setup --slack` does this step alone later.
 
+Next it asks whether your pull requests name Jira work items. If they do, setup
+checks for Atlassian's own CLI, `acli`, offers to install it, and signs it in to
+Jira, either in the browser or with an API token: setup opens Atlassian's page for
+making one and hands the token you paste straight to `acli`, which keeps it. Then
+it asks for the project keys your pull requests use and which repositories use
+them. `prwarden setup --jira` does this step alone later.
+
 Setup writes `.env` and `repositories.json` to `~/.config/prwarden`, then offers a
 dry-run preview of one pull request, which spends credits and posts nothing, live
 delivery, and a schedule. `prwarden doctor` checks the result at any time and
@@ -216,6 +223,10 @@ readable over that account's SSH key or credentials.
 { "slug": "your-name/private-app", "path": "~/src/private-app", "slack": false,
   "github_account": "your-name" }
 ```
+
+An entry may set `"jira_projects"` to the Jira project keys its pull requests name
+work items in, such as `["APP", "WEB"]`; see
+[what the pull request was asked to do](#what-the-pull-request-was-asked-to-do).
 
 Important `.env` settings:
 
@@ -544,6 +555,32 @@ what the product is, what its money or units mean, what a reader is assumed to k
 It is framed as untrusted context in the prompt, capped, and may add background
 rather than authority, so it can never relax a review rule. A repository without the
 file costs nothing.
+
+### What the pull request was asked to do
+
+A diff shows what changed, not why. Every level also reads the issues a pull
+request names, as the intent behind it:
+
+- the GitHub issues GitHub records it as closing, such as one its description
+  closes with `Fixes #12`;
+- the Jira work items its title, description, or branch name names, for a
+  repository whose entry lists their projects in `"jira_projects"`. They are read
+  with Atlassian's own CLI, `acli`, signed in with `prwarden setup --jira` or
+  `acli jira auth login`; PR Warden never sees or stores the credential.
+
+Up to three of each are read, their text capped, and framed as untrusted content
+that can never relax a review rule. A finding names an issue by its reference and
+never quotes it, because a pull-request comment can reach readers the tracker does
+not. An issue that cannot be read is reported in the run log and left out; the
+review goes ahead as it would without it. Only the project keys a repository lists
+are looked for, because a bare `KEY-123` pattern also matches `UTF-8` and
+`ISO-8601`.
+
+With that intent stated, by the description or a linked issue, the advisory design
+level also checks scope: a changed file nothing stated explains, and that no
+explained change needs, is reported as `change_outside_stated_intent`. A test, a
+type, a migration, a lockfile, or a document that follows from an explained change
+counts as explained. Like every design note it never blocks a merge.
 
 A repository can also set the rules its reviews hold the code to. Write them under a
 "Code review" heading in its agent instructions, such as `AGENTS.md`, `CLAUDE.md`,

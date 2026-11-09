@@ -95,6 +95,7 @@ class WizardTests(unittest.TestCase):
         "",  # acme/app: let PR Warden clone it
         None,  # owner/private: the clone, filled in by the test
         "",  # no Slack
+        "",  # no Jira
         "n",  # no preview
         "n",  # stay dry
     ]
@@ -154,7 +155,7 @@ class WizardTests(unittest.TestCase):
 
     def test_going_live_opens_the_gate_and_offers_the_schedule(self) -> None:
         with patch("prwarden.setup_wizard.schedule.install", return_value=0) as install:
-            self.run_wizard(self.answers(a8="y") + ["y"])
+            self.run_wizard(self.answers(a9="y") + ["y"])
 
         with patch.dict(os.environ, {}, clear=True):
             values = load_env_file(self.locations.env_file)
@@ -486,6 +487,203 @@ class ConnectSlackTests(unittest.TestCase):
 
         with self.assertRaisesRegex(SetupError, "run `prwarden setup` first"):
             self.connect([])
+
+
+class JiraSetupTests(unittest.TestCase):
+    """Jira is reached through acli, which keeps its own sign-in."""
+
+    ACLI = "/opt/homebrew/bin/acli"
+
+    def state(self, installed=True, signed_in=False):
+        from prwarden import tools
+
+        return ToolState(
+            tools.JIRA_TOOL, self.ACLI if installed else None, "1.3", signed_in
+        )
+
+    def ask(self, answers, states, slugs=("acme/app", "acme/web")):
+        prompter = ScriptedPrompter(answers)
+        runs, inputs = [], []
+        with patch(
+            "prwarden.setup_wizard.tools.check", side_effect=list(states)
+        ), patch(
+            "prwarden.setup_wizard.open_in_browser", return_value=True
+        ) as opened:
+            result = setup_wizard.ask_jira(
+                prompter,
+                list(slugs),
+                run=lambda command: runs.append(tuple(command)) or 0,
+                run_with_input=lambda command, text: inputs.append(
+                    (tuple(command), text)
+                )
+                or 0,
+            )
+        self.assertEqual(prompter.answers, [], "every scripted answer was asked for")
+        return result, prompter, runs, inputs, opened
+
+    def test_declining_leaves_jira_off_and_checks_nothing(self) -> None:
+        result, _, runs, inputs, _ = self.ask(["n"], [])
+
+        self.assertIsNone(result)
+        self.assertEqual((runs, inputs), ([], []))
+
+    def test_signing_in_with_the_browser(self) -> None:
+        result, _, runs, inputs, _ = self.ask(
+            ["y", "1", "app, web", "2"],
+            [self.state(), self.state(signed_in=True)],
+        )
+
+        self.assertEqual(result, (["APP", "WEB"], ["acme/web"]))
+        self.assertEqual(runs, [(self.ACLI, "jira", "auth", "login", "--web")])
+        self.assertEqual(inputs, [])
+
+    def test_signing_in_with_a_token_passes_it_only_on_standard_input(self) -> None:
+        token = "ATATT3xFfGF0-token-value"
+        result, prompter, runs, inputs, opened = self.ask(
+            [
+                "y",
+                "2",
+                "y",
+                "https://Acme.atlassian.net/jira/software",
+                "dev@example.com",
+                token,
+                "APP",
+                "",
+            ],
+            [self.state(), self.state(signed_in=True)],
+        )
+
+        self.assertEqual(result, (["APP"], ["acme/app", "acme/web"]))
+        opened.assert_called_once_with(setup_wizard.ATLASSIAN_TOKEN_PAGE)
+        self.assertEqual(runs, [])
+        command, text = inputs[0]
+        self.assertEqual(
+            command,
+            (
+                self.ACLI,
+                "jira",
+                "auth",
+                "login",
+                "--site",
+                "acme.atlassian.net",
+                "--email",
+                "dev@example.com",
+                "--token",
+            ),
+        )
+        self.assertEqual(text, token + "\n")
+        self.assertFalse(any(token in line for line in prompter.transcript))
+
+    def test_a_site_that_is_not_jira_cloud_is_asked_for_again(self) -> None:
+        result, prompter, _, inputs, _ = self.ask(
+            ["y", "2", "n", "jira.example.com", ""],
+            [self.state(), self.state()],
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(inputs, [])
+        self.assertIn("A Jira Cloud site ends in .atlassian.net.", prompter.transcript)
+        self.assertTrue(
+            any(
+                setup_wizard.ATLASSIAN_TOKEN_PAGE in line
+                for line in prompter.transcript
+            )
+        )
+
+    def test_a_sign_in_that_did_not_take_leaves_jira_off(self) -> None:
+        result, prompter, _, _, _ = self.ask(
+            ["y", "1"], [self.state(), self.state()]
+        )
+
+        self.assertIsNone(result)
+        self.assertTrue(
+            any("still not signed in" in line for line in prompter.transcript)
+        )
+
+    def test_a_missing_acli_is_installed_with_homebrew_first(self) -> None:
+        from prwarden import tools
+
+        plan = tools.InstallPlan(
+            ("/opt/homebrew/bin/brew", "install", "atlassian/acli/acli"),
+            "brew install atlassian/acli/acli",
+        )
+        with patch("prwarden.setup_wizard.tools.install_plan", return_value=plan):
+            result, _, runs, _, _ = self.ask(
+                ["y", "y", "APP"],
+                [self.state(installed=False), self.state(signed_in=True)],
+                slugs=("acme/app",),
+            )
+
+        self.assertEqual(result, (["APP"], ["acme/app"]))
+        self.assertEqual(runs, [plan.command])
+
+    def test_a_project_key_jira_could_not_have_is_asked_for_again(self) -> None:
+        result, prompter, _, _, _ = self.ask(
+            ["y", "APP-1 web", "web"],
+            [self.state(signed_in=True)],
+            slugs=("acme/app",),
+        )
+
+        self.assertEqual(result, (["WEB"], ["acme/app"]))
+        self.assertTrue(any("APP-1" in line for line in prompter.transcript))
+
+    def test_the_projects_are_written_for_the_chosen_repositories_only(self) -> None:
+        entries = [
+            {"slug": "acme/app"},
+            {"slug": "acme/web", "jira_projects": ["OLD"]},
+            {"slug": "acme/lib", "jira_projects": ["LIB"]},
+        ]
+
+        setup_wizard.apply_jira(entries, ["APP", "WEB"], ["acme/app", "acme/web"])
+
+        self.assertEqual(
+            entries,
+            [
+                {"slug": "acme/app", "jira_projects": ["APP", "WEB"]},
+                {"slug": "acme/web", "jira_projects": ["APP", "WEB"]},
+                {"slug": "acme/lib", "jira_projects": ["LIB"]},
+            ],
+        )
+
+    def test_setup_jira_connects_jira_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            locations = Locations(
+                "user", root / "config", root / "state", root / "checkouts"
+            )
+            locations.config_directory.mkdir()
+            locations.env_file.write_text("GITHUB_REVIEWER_USERNAME=reviewer\n")
+            locations.env_file.chmod(0o600)
+            locations.repositories_file.write_text(
+                json.dumps([{"slug": "acme/app"}, {"slug": "acme/web"}])
+            )
+            prompter = ScriptedPrompter([])
+            with patch(
+                "prwarden.setup_wizard.default_locations", return_value=locations
+            ), patch(
+                "prwarden.setup_wizard.ask_jira", return_value=(["APP"], ["acme/web"])
+            ) as ask:
+                result = setup_wizard.main(["--jira"], prompter)
+
+            entries = json.loads(locations.repositories_file.read_text())
+            backups = list(
+                locations.config_directory.glob("repositories.json.before-setup-*")
+            )
+            env = locations.env_file.read_text()
+
+        self.assertEqual(result, 0)
+        ask.assert_called_once_with(prompter, ["acme/app", "acme/web"])
+        self.assertEqual(
+            entries,
+            [{"slug": "acme/app"}, {"slug": "acme/web", "jira_projects": ["APP"]}],
+        )
+        self.assertEqual(len(backups), 1)
+        # Jira needs no secret of PR Warden's own: acli keeps its sign-in.
+        self.assertEqual(env, "GITHUB_REVIEWER_USERNAME=reviewer\n")
+        self.assertIn(
+            "Jira is on for 1 of 2 repositories, from the next run.",
+            prompter.transcript,
+        )
 
 
 class MainTests(unittest.TestCase):

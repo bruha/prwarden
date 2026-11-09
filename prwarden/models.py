@@ -22,6 +22,9 @@ class Repository:
     # named no local checkout. Such a clone is fetched as the account above, with
     # GitHub CLI's credentials, since it has none of its own.
     managed_checkout: bool = False
+    # The Jira project keys this repository's pull requests name work items in.
+    # Only these are looked up: a bare pattern also matches `UTF-8` and `ISO-8601`.
+    jira_projects: "tuple[str, ...]" = ()
 
 
 @dataclass(frozen=True)
@@ -34,6 +37,22 @@ class PullRequest:
     url: str
     head_ref: str = ""
     base_ref: str = ""
+
+
+@dataclass(frozen=True)
+class LinkedIssue:
+    """An issue a pull request names, read as the intent behind the change.
+
+    A GitHub issue the pull request closes, or a Jira work item it names. Its text
+    is untrusted: anyone who can edit the issue wrote it.
+    """
+
+    source: str
+    reference: str
+    title: str
+    state: str = ""
+    kind: str = ""
+    body: str = ""
 
 
 @dataclass(frozen=True)
@@ -367,3 +386,7 @@ class ReviewMaterial:
     max_docs_findings: int = 3
     # Read from the base branch, so the change under review cannot write its own.
     review_rules: Optional[ReviewRules] = None
+    # The issues the pull request names, as the intent behind it: GitHub issues it
+    # closes and Jira work items it names. Read once per pull request and shared by
+    # every level and bundle, like the background note.
+    linked_issues: "tuple[LinkedIssue, ...]" = ()

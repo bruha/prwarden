@@ -12,6 +12,7 @@ from .models import (
     DesignFinding,
     DocsFinding,
     Finding,
+    LinkedIssue,
     PriorReviewComment,
     PullRequest,
     PullRequestCheck,
@@ -896,6 +897,84 @@ def repository_account_problem(repository: Repository) -> Optional[str]:
     if not account:
         return None
     return _repository_account_failures.get(account.casefold())
+
+
+# A pull request closing more than a few issues is closing a list, and each costs
+# prompt room; the body is capped like a Jira work item's.
+MAX_CLOSING_ISSUES = 3
+MAX_CLOSING_ISSUE_BODY_CHARACTERS = 3000
+CLOSING_ISSUES_QUERY = (
+    "query($owner: String!, $name: String!, $number: Int!) {"
+    " repository(owner: $owner, name: $name) {"
+    " pullRequest(number: $number) {"
+    f" closingIssuesReferences(first: {MAX_CLOSING_ISSUES}) {{"
+    " nodes { number title body state repository { nameWithOwner } }"
+    " } } } }"
+)
+
+
+def list_closing_issues(
+    repository: Repository, pull_request: PullRequest
+) -> "tuple[LinkedIssue, ...]":
+    """Return the issues GitHub records this pull request as closing.
+
+    GitHub links an issue when the description says `Fixes #12`, or when someone
+    links it by hand, and the link may point at another repository. Only GitHub's
+    own record is read, never a number guessed from the text.
+    """
+
+    owner, name = repository.slug.split("/", 1)
+    output = _run_for(
+        repository,
+        [
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            f"query={CLOSING_ISSUES_QUERY}",
+            "-f",
+            f"owner={owner}",
+            "-f",
+            f"name={name}",
+            "-F",
+            f"number={pull_request.number}",
+        ],
+        retry_transient=True,
+    )
+    payload = _parse_json(
+        output, f"reading the issues {repository.slug}#{pull_request.number} closes"
+    )
+    try:
+        nodes = payload["data"]["repository"]["pullRequest"][
+            "closingIssuesReferences"
+        ]["nodes"]
+    except (KeyError, TypeError) as error:
+        raise CommandError(
+            f"GitHub returned no closing issues for {repository.slug}#"
+            f"{pull_request.number}"
+        ) from error
+    issues = []
+    for node in nodes if isinstance(nodes, list) else ():
+        if not isinstance(node, dict) or not isinstance(node.get("number"), int):
+            continue
+        source = node.get("repository")
+        slug = (
+            source.get("nameWithOwner") if isinstance(source, dict) else None
+        ) or repository.slug
+        body = node.get("body") if isinstance(node.get("body"), str) else ""
+        body = body.strip()
+        if len(body) > MAX_CLOSING_ISSUE_BODY_CHARACTERS:
+            body = body[: MAX_CLOSING_ISSUE_BODY_CHARACTERS - 1].rstrip() + "…"
+        issues.append(
+            LinkedIssue(
+                source="github",
+                reference=f"{slug}#{node['number']}",
+                title=" ".join(str(node.get("title") or "").split()),
+                state=str(node.get("state") or "").lower(),
+                body=body,
+            )
+        )
+    return tuple(issues[:MAX_CLOSING_ISSUES])
 
 
 def get_branch_head_sha(repository: Repository, branch: str) -> str:

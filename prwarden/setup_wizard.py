@@ -32,6 +32,7 @@ from typing import Callable, List, Optional, Sequence
 from . import __version__, delivery, github, schedule, tools
 from .commands import CommandError, run_cmd
 from .config import (
+    JIRA_PROJECT_KEY,
     ConfigError,
     default_locations,
     load_env_file,
@@ -126,9 +127,16 @@ class Prompter:
 
 
 def _install(
-    prompter: Prompter, tool: "tools.Tool", run: "tools.Runner"
+    prompter: Prompter,
+    tool: "tools.Tool",
+    run: "tools.Runner",
+    sign_in: bool = True,
 ) -> "tools.ToolState":
-    """Install one tool with its vetted command once the operator agrees."""
+    """Install one tool with its vetted command once the operator agrees.
+
+    ``sign_in`` offers the tool's own sign-in afterwards; a step with a sign-in of
+    its own to offer turns it off.
+    """
 
     plan = tools.install_plan(tool)
     if plan.command is None:
@@ -147,7 +155,7 @@ def _install(
         return state
     version = f" {state.version}" if state.version else ""
     prompter.say(f"{tool.name}{version} is installed.")
-    if state.signed_in is False:
+    if sign_in and state.signed_in is False:
         state = _sign_in(prompter, state, run)
     return state
 
@@ -659,6 +667,205 @@ def connect_slack(prompter: Prompter, locations: Locations) -> int:
     return 0
 
 
+# Jira --------------------------------------------------------------------------
+
+
+ATLASSIAN_TOKEN_PAGE = "https://id.atlassian.com/manage-profile/security/api-tokens"
+JIRA_SITE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*\.atlassian\.net")
+EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+
+
+def _ask_site(prompter: Prompter) -> str:
+    while True:
+        answer = prompter.text(
+            "Your Jira site, such as your-company.atlassian.net, or Enter to stop"
+        )
+        site = answer.strip().lower()
+        for prefix in ("https://", "http://"):
+            if site.startswith(prefix):
+                site = site[len(prefix):]
+        site = site.split("/", 1)[0]
+        if not site or JIRA_SITE.fullmatch(site):
+            return site
+        prompter.say("A Jira Cloud site ends in .atlassian.net.")
+
+
+def sign_in_jira(
+    prompter: Prompter,
+    state: "tools.ToolState",
+    run: "tools.Runner" = tools.run_in_terminal,
+    run_with_input: "Callable[[Sequence[str], str], int]" = tools.run_with_input,
+) -> "tools.ToolState":
+    """Sign `acli` in to Jira, in the browser or with an API token.
+
+    The browser needs nothing pasted. A token is for a machine where no browser can
+    open, or a site that allows only tokens: setup opens Atlassian's page for making
+    one, reads it hidden, and hands it to `acli` on standard input. PR Warden never
+    writes it anywhere; `acli` keeps it.
+    """
+
+    if state.path is None:
+        return state
+    prompter.say("acli signs in to Jira in one of two ways:")
+    prompter.say("  1. In the browser: acli opens Atlassian's sign-in page.")
+    prompter.say(
+        "  2. With an API token: setup opens Atlassian's page for one. Press Create "
+        "API token, name it PR Warden, copy it, and paste it here. It goes to acli "
+        "and nowhere else."
+    )
+    if prompter.choose("Which one? 1 or 2", ("1", "2"), "1") == "1":
+        run((state.path, "jira", "auth", "login", "--web"))
+    else:
+        if not (
+            prompter.confirm("Open the API token page in your browser now?", True)
+            and open_in_browser(ATLASSIAN_TOKEN_PAGE)
+        ):
+            prompter.say(f"Open this address in a browser: {ATLASSIAN_TOKEN_PAGE}")
+        site = _ask_site(prompter)
+        email = prompter.text("The email of that Atlassian account") if site else ""
+        if site and not EMAIL.fullmatch(email):
+            prompter.say("That is not an email address.")
+            site = ""
+        token = prompter.secret("Paste the API token (it stays hidden)") if site else ""
+        if site and token:
+            run_with_input(
+                (
+                    state.path,
+                    "jira",
+                    "auth",
+                    "login",
+                    "--site",
+                    site,
+                    "--email",
+                    email,
+                    "--token",
+                ),
+                token + "\n",
+            )
+    after = tools.check(state.tool)
+    if after.signed_in:
+        prompter.say("acli is signed in to Jira.")
+    else:
+        prompter.say(
+            "acli is still not signed in. Sign in later with: acli jira auth login "
+            "--web"
+        )
+    return after
+
+
+def ask_jira_projects(prompter: Prompter) -> "List[str]":
+    while True:
+        answer = prompter.text(
+            "Jira project keys your pull requests name, such as APP WEB, separated "
+            "by spaces, or Enter for none"
+        )
+        parts = answer.replace(",", " ").split()
+        keys = list(dict.fromkeys(part.upper() for part in parts))
+        invalid = [key for key in keys if not JIRA_PROJECT_KEY.fullmatch(key)]
+        if not invalid:
+            return keys
+        prompter.say(
+            f"Not a Jira project key: {', '.join(invalid)}. A key is a letter, then "
+            "up to nine letters, digits, or underscores."
+        )
+
+
+def ask_jira_repositories(prompter: Prompter, slugs: Sequence[str]) -> "List[str]":
+    if len(slugs) < 2:
+        return list(slugs)
+    for index, slug in enumerate(slugs, 1):
+        prompter.say(f"  {index}. {slug}")
+    while True:
+        answer = prompter.text(
+            "Which use them? Numbers separated by spaces, or Enter for all"
+        )
+        if not answer:
+            return list(slugs)
+        chosen = _numbers(answer, len(slugs))
+        if chosen:
+            return [slugs[index] for index in sorted(chosen)]
+        prompter.say(f"Choose numbers from 1 to {len(slugs)}.")
+
+
+def ask_jira(
+    prompter: Prompter,
+    slugs: Sequence[str],
+    run: "tools.Runner" = tools.run_in_terminal,
+    run_with_input: "Callable[[Sequence[str], str], int]" = tools.run_with_input,
+) -> "Optional[tuple[List[str], List[str]]]":
+    """Connect Jira through `acli`, and choose the projects and repositories.
+
+    Returns the project keys and the slugs that name them, or None when Jira stays
+    off.
+    """
+
+    prompter.say(
+        "Jira is optional. When a pull request names a Jira work item in its title, "
+        "description, or branch, the review reads it as the intent behind the "
+        "change, through Atlassian's own CLI, acli."
+    )
+    if not prompter.confirm("Do your pull requests name Jira work items?"):
+        return None
+    state = tools.check(tools.JIRA_TOOL)
+    if not state.installed:
+        state = _install(prompter, tools.JIRA_TOOL, run, sign_in=False)
+    if not state.installed:
+        return None
+    if not state.signed_in:
+        state = sign_in_jira(prompter, state, run, run_with_input)
+    if not state.signed_in:
+        return None
+    keys = ask_jira_projects(prompter)
+    if not keys:
+        return None
+    return keys, ask_jira_repositories(prompter, slugs)
+
+
+def apply_jira(
+    entries: "List[dict]", keys: Sequence[str], jira_slugs: Sequence[str]
+) -> None:
+    """Name the Jira projects for the entries chosen, leaving every other as it is."""
+
+    for entry in entries:
+        if entry.get("slug") in jira_slugs:
+            entry["jira_projects"] = list(keys)
+
+
+def connect_jira(prompter: Prompter, locations: Locations) -> int:
+    """Connect Jira to an existing configuration."""
+
+    env_file = locations.env_file.resolve()
+    if not env_file.exists():
+        raise SetupError(f"{env_file} does not exist; run `prwarden setup` first")
+    configured = load_env_file(env_file).get("REPOSITORIES_FILE")
+    repositories_file = (
+        resolve_path(configured, locations.config_directory)
+        if configured
+        else locations.repositories_file.resolve()
+    )
+    if not repositories_file.exists():
+        raise SetupError(
+            f"{repositories_file} does not exist; run `prwarden setup` first"
+        )
+    load_repositories(repositories_file, locations.checkouts_directory)
+    entries = json.loads(repositories_file.read_text(encoding="utf-8"))
+    connected = ask_jira(prompter, [entry["slug"] for entry in entries])
+    if connected is None:
+        prompter.say("Nothing changed.")
+        return 0
+    keys, slugs = connected
+    backup = _backup(repositories_file)
+    if backup:
+        prompter.say(f"Kept the previous {repositories_file.name} as {backup}")
+    apply_jira(entries, keys, slugs)
+    _write_private(repositories_file, json.dumps(entries, indent=2) + "\n")
+    prompter.say(
+        f"Jira is on for {len(slugs)} of {len(entries)} repositories, from the next "
+        "run."
+    )
+    return 0
+
+
 # The rest of setup -------------------------------------------------------------
 
 
@@ -734,6 +941,11 @@ def interactive(prompter: Prompter, locations: Locations) -> int:
         env_values["SLACK_WEBHOOK_URL"] = connected[0]
     else:
         prompter.say("Slack is off. Connect it later with: prwarden setup --slack")
+    jira = ask_jira(prompter, [entry["slug"] for entry in entries])
+    if jira:
+        apply_jira(entries, *jira)
+    else:
+        prompter.say("Jira is off. Connect it later with: prwarden setup --jira")
     write_configuration(locations, env_values, entries, prompter.say)
     preview(prompter, locations)
     go_live(prompter, locations)
@@ -814,6 +1026,11 @@ def main(argv: Sequence[str], prompter: Optional[Prompter] = None) -> int:
         help="connect Slack to the existing configuration, or replace its webhook",
     )
     choice.add_argument(
+        "--jira",
+        action="store_true",
+        help="connect Jira through acli, so reviews read the work items PRs name",
+    )
+    choice.add_argument(
         "--import",
         dest="import_from",
         type=Path,
@@ -831,6 +1048,8 @@ def main(argv: Sequence[str], prompter: Optional[Prompter] = None) -> int:
             prompter = Prompter()
         if args.slack:
             return connect_slack(prompter, locations)
+        if args.jira:
+            return connect_jira(prompter, locations)
         return interactive(prompter, locations)
     except (SetupError, ConfigError, CommandError, OSError, ValueError) as error:
         print(f"ERROR: {error}", file=sys.stderr)

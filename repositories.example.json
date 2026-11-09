@@ -2,7 +2,10 @@
   {
     "name": "example-app",
     "slug": "your-org/example-app",
-    "path": "~/src/example-app"
+    "path": "~/src/example-app",
+    "jira_projects": [
+      "APP"
+    ]
   },
   {
     "slug": "your-org/example-library"

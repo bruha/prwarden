@@ -151,6 +151,43 @@ def check_repository(repository: Repository) -> List[Check]:
     return [Check(OK, f"{label}: readable{account}; clone {_home_relative(path)}")]
 
 
+def check_jira(
+    settings: Settings, check: "Callable[[tools.Tool], tools.ToolState]" = tools.check
+) -> List[Check]:
+    """Check `acli` when a repository reads its pull requests' Jira work items.
+
+    A note, never a problem: a work item that cannot be read is left out of the
+    review, which goes ahead as it did before work items were read.
+    """
+
+    using = [
+        repository for repository in settings.repositories if repository.jira_projects
+    ]
+    if not using:
+        return []
+    count = (
+        f"{len(using)} of {len(settings.repositories)} repositories name Jira projects"
+    )
+    state = check(tools.JIRA_TOOL)
+    if not state.installed:
+        return [
+            Check(
+                NOTE,
+                f"Jira: {count}, but acli is not installed, so reviews read no work "
+                "items; install it with: brew install atlassian/acli/acli",
+            )
+        ]
+    if state.signed_in is not True:
+        return [
+            Check(
+                NOTE,
+                f"Jira: {count}, but acli is not signed in, so reviews read no work "
+                "items; sign in with: acli jira auth login --web",
+            )
+        ]
+    return [Check(OK, f"Jira: {count}; acli is signed in")]
+
+
 def check_delivery(settings: Settings, locations: Locations) -> List[Check]:
     checks = []
     if settings.dry_run:
@@ -237,6 +274,7 @@ def diagnose(env_file: Optional[Path]) -> "tuple[List[str], List[Check]]":
     if all(check.status != PROBLEM for check in github_checks):
         for repository in settings.repositories:
             checks += check_repository(repository)
+    checks += check_jira(settings)
     checks += check_delivery(settings, locations)
     checks += check_schedule()
     return header, checks

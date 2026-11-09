@@ -23,6 +23,7 @@ from prwarden.engine import (
     verification_engine_settings,
 )
 from prwarden.models import (
+    LinkedIssue,
     DocumentationFile,
     DependencyLink,
     Finding,
@@ -102,6 +103,10 @@ class OrchestrationTests(unittest.TestCase):
         checks = patch("prwarden.cli.list_pull_request_checks", return_value=())
         checks.start()
         self.addCleanup(checks.stop)
+        # Linked issues are read from GitHub and Jira, which no test has.
+        issues = patch("prwarden.cli._read_linked_issues", return_value=())
+        issues.start()
+        self.addCleanup(issues.stop)
         # Pinning asks the real GitHub CLI for a stored login, which no test has.
         pinning = patch("prwarden.cli.pin_github_account")
         pinning.start()
@@ -3210,6 +3215,7 @@ class OrchestrationTests(unittest.TestCase):
         max_review_bundles: int = 1,
         generated_marks: "Optional[dict]" = None,
         marks_unreadable: bool = False,
+        linked_issues: tuple = (),
     ) -> dict:
         repository = Repository("app", "owner/app", Path(directory))
         pull_request = PullRequest(
@@ -3244,6 +3250,8 @@ class OrchestrationTests(unittest.TestCase):
         ), patch(
             "prwarden.cli.list_pull_request_checks", return_value=()
         ), patch(
+            "prwarden.cli._read_linked_issues", return_value=linked_issues
+        ) as read_issues, patch(
             "prwarden.cli.get_pull_request_snapshot",
             return_value=replace(READY_SNAPSHOT, head_sha=head),
         ), patch(
@@ -3278,7 +3286,33 @@ class OrchestrationTests(unittest.TestCase):
             "submit_approval": submit_approval,
             "send_slack": send_slack,
             "read_marks": read_marks,
+            "read_issues": read_issues,
         }
+
+    def test_the_linked_issues_reach_every_bundle_the_engine_reviews(self) -> None:
+        """Read once per pull request and carried like the background note, so a
+        change read in bundles is judged against the same intent in each."""
+
+        issue = LinkedIssue("jira", "APP-12", "Export invoices as CSV", body="Asked.")
+        with tempfile.TemporaryDirectory() as directory:
+            engine = Mock()
+            engine.review.return_value = {
+                "verdict": "approve",
+                "approval_reason": "No qualifying defects remain.",
+                "findings": [],
+            }
+            result = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=600,
+                max_review_bundles=4,
+                linked_issues=(issue,),
+            )
+
+        result["read_issues"].assert_called_once()
+        self.assertEqual(engine.review.call_count, 2)
+        for call in engine.review.call_args_list:
+            self.assertEqual(call.args[2].linked_issues, (issue,))
 
     def test_a_bundled_review_reads_every_file_and_may_approve(self) -> None:
         """The point of bundling: a change too large for one review is still read.

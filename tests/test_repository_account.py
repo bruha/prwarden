@@ -191,6 +191,8 @@ class RepositoryAccountReviewTests(unittest.TestCase):
                     {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
                 ],
             ), patch("prwarden.cli.list_pull_request_checks", return_value=()), patch(
+                "prwarden.cli._read_linked_issues", return_value=()
+            ), patch(
                 "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
             ), patch("prwarden.cli.review_workspace") as workspace, patch(
                 "prwarden.cli.submit_approval", return_value="approval-1"

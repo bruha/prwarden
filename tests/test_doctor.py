@@ -179,5 +179,45 @@ class DispatchTests(unittest.TestCase):
         entry.assert_called_once_with(["--env-file", "x"])
 
 
+
+class JiraCheckTests(unittest.TestCase):
+    """Jira is context for a review, so its state is a note, never a problem."""
+
+    def settings(self, projects):
+        from tempfile import gettempdir
+
+        repository = Repository("app", "acme/app", Path("."), jira_projects=projects)
+        return settings_for(gettempdir(), repository)
+
+    def state(self, installed=True, signed_in=True):
+        from prwarden import tools
+
+        return tools.ToolState(
+            tools.JIRA_TOOL, "/opt/bin/acli" if installed else None, "1.3", signed_in
+        )
+
+    def test_nothing_is_checked_while_no_repository_names_a_project(self) -> None:
+        def unexpected(tool):
+            raise AssertionError("acli was checked")
+
+        self.assertEqual(doctor.check_jira(self.settings(()), unexpected), [])
+
+    def test_each_state_of_acli_is_reported(self) -> None:
+        settings = self.settings(("APP",))
+        for state, status, words in (
+            (self.state(), OK, "acli is signed in"),
+            (self.state(signed_in=False), NOTE, "acli jira auth login --web"),
+            (self.state(signed_in=None), NOTE, "not signed in"),
+            (self.state(installed=False), NOTE, "brew install atlassian/acli/acli"),
+        ):
+            with self.subTest(words=words):
+                checks = doctor.check_jira(settings, lambda tool, state=state: state)
+                self.assertEqual(statuses(checks), [status])
+                self.assertIn(words, checks[0].message)
+                self.assertIn(
+                    "1 of 1 repositories name Jira projects", checks[0].message
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

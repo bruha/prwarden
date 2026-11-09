@@ -34,6 +34,8 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
 - `prwarden/engine_*.py`: authenticated review-engine adapters.
 - `prwarden/github.py`: GitHub discovery, feedback, checks, and delivery.
 - `prwarden/github_status.py`: read-only lookup of announced GitHub incidents.
+- `prwarden/linked_issues.py`: the Jira work items a pull request names, read through
+  `acli`.
 - `prwarden/review.py`: diff construction and semantic response validation.
 - `prwarden/delivery.py`: Slack message formatting and delivery helpers.
 - `prwarden/comment_template.py`: validated GitHub comment templates and tag aliases.

@@ -112,6 +112,20 @@ TOOLS = (
     ),
 )
 TOOLS_BY_KEY = {tool.key: tool for tool in TOOLS}
+# Optional: only an installation that reads Jira work items needs it, so setup asks
+# about it in its own step rather than among the tools every installation needs.
+JIRA_TOOL = Tool(
+    key="acli",
+    name="Atlassian CLI",
+    command="acli",
+    engine=None,
+    homebrew=("install", "atlassian/acli/acli"),
+    installer=None,
+    status=("jira", "auth", "status"),
+    login=("jira", "auth", "login", "--web"),
+    login_hint="It opens your browser to sign in to Atlassian.",
+    instructions="https://developer.atlassian.com/cloud/acli/guides/install-acli/",
+)
 TOOLS_BY_ENGINE = {tool.engine: tool for tool in TOOLS if tool.engine}
 
 
@@ -284,6 +298,22 @@ def run_in_terminal(command: Sequence[str]) -> int:
 
     try:
         return subprocess.run(list(command), check=False).returncode
+    except OSError as error:
+        raise CommandError(str(error), command=command[0]) from error
+
+
+def run_with_input(command: Sequence[str], text: str) -> int:
+    """Run a command attached to this terminal, with ``text`` on its standard input.
+
+    For a secret a CLI reads from standard input, so it never appears in an argument
+    list, where any process on the machine could read it, and is never written to a
+    file by this tool.
+    """
+
+    try:
+        return subprocess.run(
+            list(command), input=text, text=True, check=False
+        ).returncode
     except OSError as error:
         raise CommandError(str(error), command=command[0]) from error
 

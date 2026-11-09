@@ -669,6 +669,33 @@ is module state, so advisory cases run one at a time. A baseline that fails to a
 judged nothing and is recorded as an error, never as a rejection, and a level that
 fails makes the run exit 1.
 
+### Linked issues
+
+Every level is given the issues the pull request names, read once per pull request
+before any level runs and shared by every bundle: up to three issues GitHub records
+it as closing (`list_closing_issues`, GraphQL `closingIssuesReferences`, as the
+repository's account), and up to three Jira work items of the projects the
+repository's entry lists in `jira_projects` that its title, description, or head
+branch names (`linked_issues.find_jira_keys`). A work item is read with
+`acli jira workitem view KEY --json` in the scrubbed environment every agent CLI
+gets, after its key is checked against Jira's own shape so nothing a pull request
+says reaches `acli` as an option. A description in Atlassian Document Format is
+reduced to its text, and every body is capped at 3,000 characters.
+
+Issues are context, never a gate. An issue that cannot be read, because GitHub
+fails, `acli` is missing or signed out, or the answer is not the work item asked
+for, is reported in the run log and left out, and the review proceeds as it would
+without it. The prompts frame them inside a contained `linked-issues` block as
+untrusted content that never relaxes a rule and is never quoted in a finding, since
+a finding can reach readers the tracker does not. Without any, every prompt is the
+one it was before issues were read.
+
+When the description or a linked issue states the intent, the design level may
+report `change_outside_stated_intent`: a changed file nothing stated explains and no
+explained change requires. Its verifier rejects one whose change is explained, its
+own test, type, migration, lockfile, configuration entry, or document included.
+Without a stated intent the category is not offered.
+
 ### Repository background
 
 Every level is given the reviewed head's own `.prwarden/background.md` when it

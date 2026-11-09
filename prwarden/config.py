@@ -39,6 +39,9 @@ EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 # The adapters that pass effort to their CLI. Effort named for any other engine
 # would be dropped without a word, so it is refused instead.
 EFFORT_ENGINES = frozenset(("antigravity", "claude", "codex", "kiro"))
+# A Jira project key, as Jira requires one: a letter, then letters, digits, or
+# underscores, ten characters at most.
+JIRA_PROJECT_KEY = re.compile(r"[A-Z][A-Z0-9_]{1,9}")
 GITHUB_USERNAME_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?")
 GITHUB_USERNAME_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("gh api user", ("gh", "api", "user", "--jq", ".login")),
@@ -293,6 +296,17 @@ def load_repositories(
                     f"{label}.github_account is invalid: {error}"
                 ) from error
 
+        jira_projects = item.get("jira_projects", [])
+        if not isinstance(jira_projects, list) or not all(
+            isinstance(project, str)
+            and JIRA_PROJECT_KEY.fullmatch(project.strip().upper())
+            for project in jira_projects
+        ):
+            raise ConfigError(
+                f"{label}.jira_projects must be a list of Jira project keys, such as "
+                '["APP", "WEB"], when provided'
+            )
+
         checkout: Optional[Path] = None
         managed = False
         if configured_path:
@@ -308,6 +322,9 @@ def load_repositories(
                 slack=slack,
                 github_account=github_account,
                 managed_checkout=managed,
+                jira_projects=tuple(
+                    dict.fromkeys(project.strip().upper() for project in jira_projects)
+                ),
             )
         )
     return repositories
