@@ -9,8 +9,31 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 2.6.0 55e40a6709aec106824c605f447f6b6219001f71 -->
+<!-- release-baseline: 2.7.0 e598b80f7c0ae987566d32cd70ff14e7a4935b9f -->
 ## [Unreleased]
+
+## [2.7.0] - 2026-11-11
+
+### Added
+
+- read the issues a pull request names, with Jira through acli (`4f42582`).
+- read the base branch's history of the files a change edits (`a55f982`).
+
+### Fixed
+
+- have a scope note name the issue rather than restate it (`a7eb14d`).
+- never approve a head whose checks failed (`aa74f9e`).
+- give replayed files the status GitHub reports (`da3d63e`).
+
+### Documentation
+
+- name the threat model's functions without line numbers (`85a065a`).
+- say how setup handles a pasted Jira token (`bf1eff3`).
+- describe setup's Jira step and the scope prompt without issues (`e598b80`).
+
+### Maintenance
+
+- run Python 3.9 on Ubuntu 24.04 (`7c85254`).
 
 ## [2.6.0] - 2026-11-09
 
