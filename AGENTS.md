@@ -109,11 +109,10 @@ PR Warden reviews this repository's pull requests against the rules below, read 
 `main`, and reports an added line that breaks one as a defect. To change a rule,
 merge that change first.
 
-- Code runs on Python 3.9: no `X | Y` unions outside quoted annotations, no `match`
-  statements, no parenthesized multi-item `with` statements, no expression spanning
-  lines inside an f-string's braces, and no standard-library API newer than 3.9,
-  such as `zip(strict=...)`, `dataclass(slots=...)` or `kw_only`, `typing.Self`, or
-  `datetime.UTC`.
+- Code runs on Python 3.11: no PEP 695 `type` statements or `def f[T]()` type
+  parameters, no f-string that reuses its own quote character or spans lines inside
+  its braces, and no standard-library API newer than 3.11, such as
+  `typing.override`, `itertools.batched`, or `Path.walk`.
 - Code under `prwarden/` imports only the standard library and `prwarden` itself,
   and tests use only `unittest` and the standard library.
 - An error is never turned into an empty or clean result: a failure path never
