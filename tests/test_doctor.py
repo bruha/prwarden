@@ -230,6 +230,20 @@ class SchedulePythonTests(unittest.TestCase):
         self.assertEqual(statuses(checks), [PROBLEM])
         self.assertIn("/gone/python3", checks[0].message)
 
+    def test_a_python_that_cannot_be_executed_is_a_problem_not_a_crash(self) -> None:
+        """Through the real `run_cmd`, which passes such an OSError through."""
+
+        interpreter = self.home / "python3"
+        interpreter.write_text("not a program\n", encoding="utf-8")
+        interpreter.chmod(0o644)
+        self.launch_agent(str(interpreter), "-m", "prwarden", "--live")
+
+        with patch("prwarden.schedule._platform", return_value="launchd"):
+            checks = doctor.check_schedule_python(self.home)
+
+        self.assertEqual(statuses(checks), [PROBLEM])
+        self.assertIn("does not run", checks[0].message)
+
     def test_no_schedule_checks_nothing(self) -> None:
         self.assertEqual(self.check("3.9"), [])
         self.assertEqual(self.probed, [])

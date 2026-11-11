@@ -271,7 +271,7 @@ def check_schedule_python(
     try:
         version = run([interpreter, "-c", PYTHON_VERSION_PROBE], timeout_seconds=30)
         parsed = tuple(int(part) for part in version.strip().split("."))
-    except (CommandError, ValueError) as error:
+    except (CommandError, OSError, ValueError) as error:
         return [
             Check(
                 PROBLEM,
