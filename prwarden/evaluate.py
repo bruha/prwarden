@@ -247,7 +247,48 @@ def _numstat_records(checkout: Path, base: str, head: str) -> "list[dict[str, An
             record["previous_filename"] = previous_path
             record["status"] = "renamed"
         records.append(record)
+    statuses = _file_statuses(checkout, base, head)
+    for record in records:
+        status = statuses.get(record["filename"])
+        if status is not None:
+            record.setdefault("status", status)
     return records
+
+
+# GitHub's name for each status `git diff --name-status` reports by its letter.
+GIT_FILE_STATUSES = {
+    "A": "added",
+    "C": "copied",
+    "D": "removed",
+    "M": "modified",
+    "R": "renamed",
+    "T": "changed",
+}
+
+
+def _file_statuses(checkout: Path, base: str, head: str) -> "dict[str, str]":
+    """Return the status GitHub would report for each changed path, by its new name.
+
+    A live review reads it from GitHub's file list, and the controller decides with
+    it: which files are removed, and which have a history to read. A replay without
+    it would judge a different change than production did.
+    """
+
+    output = _git(checkout, "diff", "-M", "--name-status", "-z", base, head)
+    fields = [field for field in output.split("\0") if field != ""]
+    statuses: "dict[str, str]" = {}
+    index = 0
+    while index < len(fields):
+        letter = fields[index][:1]
+        # A rename or a copy names the old path and then the new one.
+        width = 3 if letter in ("R", "C") else 2
+        if index + width > len(fields):
+            break
+        status = GIT_FILE_STATUSES.get(letter)
+        if status is not None:
+            statuses[fields[index + width - 1]] = status
+        index += width
+    return statuses
 
 
 def _hunks(patch: str) -> Optional[str]:
@@ -1364,6 +1405,9 @@ def _prepared_case(
         background = read_background(exact_repository.path)
         if background:
             material = replace(material, background=background)
+        history = cli._read_file_history(repository, pull_request, files, case.base)
+        if history:
+            material = replace(material, file_history=history)
         # The rules the pinned base held, so a replay judges what production judged.
         review_rules = cli.read_review_rules(repository, pull_request, case.base)
         if review_rules.sections:

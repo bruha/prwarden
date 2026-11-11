@@ -80,6 +80,7 @@ from .models import (
     DesignAssessment,
     DocsAssessment,
     DiffBudget,
+    HistoryCommit,
     Finding,
     PriorReviewComment,
     PullRequest,
@@ -106,6 +107,7 @@ from .review import (
     read_background,
     collect_review_rules,
     format_byte_size,
+    history_paths,
     ignores_omitted_patch,
     is_review_rule_source,
     omitted_patch_paths,
@@ -126,6 +128,7 @@ from .workspace import (
     UnsupportedGitError,
     WorkspaceError,
     read_base_files,
+    read_file_history,
     read_generated_marks,
     review_workspace,
 )
@@ -1745,6 +1748,43 @@ def _omitted_file_now_ignored(
     return True
 
 
+def _read_file_history(
+    repository: Repository,
+    pull_request: PullRequest,
+    files: "list[dict[str, Any]]",
+    commit: Optional[str] = None,
+) -> "tuple[HistoryCommit, ...]":
+    """Return the base branch's recent commits on the files this change edits.
+
+    A commit message often says why a guard, a limit, or a workaround exists, which
+    no diff shows. Read from the base branch's tip, or ``commit`` when a replay pins
+    one, so the history is what the team merged rather than what the pull request
+    says. This is context, never a gate: history that cannot be read is reported
+    and left out, and the review goes ahead without it.
+    """
+
+    paths = history_paths(files)
+    if not paths:
+        return ()
+    base_ref = pull_request.base_ref
+    try:
+        if commit is None:
+            if not base_ref:
+                raise WorkspaceError("the pull request names no base branch")
+            commit = get_branch_head_sha(repository, base_ref)
+        commit = validate_object_name(commit, f"{repository.slug} base commit")
+        history = read_file_history(repository, commit, paths)
+    except (CommandError, WorkspaceError) as error:
+        print(f"      -> Could not read the history of the changed files: {error}")
+        return ()
+    if history:
+        print(
+            f"      -> Reading {len(history)} earlier "
+            f"commit{'s' if len(history) != 1 else ''} on the changed files"
+        )
+    return history
+
+
 def _bundled_material(
     files: "list[dict[str, Any]]",
     settings: Settings,
@@ -2573,7 +2613,11 @@ def _process_pull_request(
                 partial_budget,
             )
         checks = list_pull_request_checks(repository, pull_request)
-        material = replace(material, checks=checks)
+        material = replace(
+            material,
+            checks=checks,
+            file_history=_read_file_history(repository, pull_request, files),
+        )
         if checks:
             print(
                 f"      -> Considering {len(checks)} exact-head GitHub "
