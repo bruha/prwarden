@@ -405,22 +405,29 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(engine.review.call_args.args[2].file_history, (ENTRY,))
 
     def test_a_replay_reads_the_history_at_its_pinned_base(self) -> None:
-        case = ReplayCase(
-            "acme/app", 7, "a" * 40, "e" * 40, title="Title", base_ref="main"
-        )
-        with patch(
-            "prwarden.evaluate.changed_files", return_value=PATCHED_FILES
-        ), patch("prwarden.cli.review_workspace", self.workspace()), patch(
+        """Through the replay's own file list, which must say a file was modified."""
+
+        git(self.root, "init", "-q", "-b", "main")
+        git(self.root, "config", "user.email", "test@example.com")
+        git(self.root, "config", "user.name", "Test")
+        git(self.root, "add", "--", "app.py")
+        git(self.root, "commit", "-q", "-m", "Add app")
+        base = git(self.root, "rev-parse", "HEAD")
+        (self.root / "app.py").write_text("value = 2\n", encoding="utf-8")
+        git(self.root, "commit", "-q", "-am", "Change app")
+        head = git(self.root, "rev-parse", "HEAD")
+        case = ReplayCase("acme/app", 7, head, base, title="Title", base_ref="main")
+        with patch("prwarden.cli.review_workspace", self.workspace()), patch(
             "prwarden.evaluate.read_background", return_value=""
         ), patch(
-            "prwarden.cli._read_file_history", return_value=(ENTRY,)
+            "prwarden.cli.read_file_history", return_value=(ENTRY,)
         ) as read, patch(
             "prwarden.cli.read_review_rules", return_value=self.no_rules
         ), patch("sys.stdout", new_callable=StringIO):
             with _prepared_case(self.settings, case) as prepared:
                 material = prepared.material
 
-        self.assertEqual(read.call_args.args[3], "e" * 40)
+        read.assert_called_once_with(self.repository, base, ("app.py",))
         self.assertEqual(material.file_history, (ENTRY,))
 
 

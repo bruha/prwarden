@@ -562,7 +562,10 @@ The diff is rebuilt with `git diff <base> <head>`, per file, each patch trimmed 
 its first hunk header, because a `+++ b/path` line reaching the parser would be read
 as an added line and become a legal finding anchor. Line counts come from `--numstat`
 in its NUL-separated form, so a path containing a space or a quote survives, and a
-rename reports where it came from.
+rename reports where it came from. Each file's status, added, modified, removed, or
+renamed, comes from `--name-status` in the same form, named as GitHub names it,
+because the controller decides with it: a removed file is not reviewed line by line,
+and only a file that existed before has a history to read.
 
 A merged pull request stays replayable and needs no special handling: GitHub keeps the
 commit reachable through its pull-request ref, so fetching the pinned head by object
