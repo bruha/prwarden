@@ -1,15 +1,8 @@
 # Packaging only: PR Warden has no runtime dependency, and a source checkout runs
 # with `python3 -m prwarden` without installing anything. The build backend is
-# pinned. Releases, Homebrew, and pip on Python 3.10 or newer build with a current
-# setuptools; only a build from source on Python 3.9 takes 82.0.1, the last release
-# that runs there. Its two advisories, GHSA-h35f-9h28-mq5c and GHSA-xmj3-9gf7-h52w,
-# need a MANIFEST.in and namespace packages respectively, and this project has
-# neither.
+# pinned.
 [build-system]
-requires = [
-    "setuptools==84.2.1; python_version >= '3.10'",
-    "setuptools==82.0.1; python_version < '3.10'",
-]
+requires = ["setuptools==84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -19,7 +12,7 @@ description = "Self-hosted AI pull-request reviewer built on the AI and GitHub C
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 authors = [{ name = "Pylyp Borysov" }]
 keywords = ["ai", "code-review", "github", "llm", "pull-requests"]
 classifiers = [

@@ -95,8 +95,8 @@ that setting far enough would fail as an exec error rather than as a review erro
 
 | Check | Command | When |
 | --- | --- | --- |
-| Unit suite, 461 tests | `python3 -m unittest discover -s tests` | Every change, on 3.9 through 3.15 in CI |
-| Stock-interpreter compatibility | the same suite under `/usr/bin/python3` | Every change locally; CI covers 3.9 |
+| Unit suite, 461 tests | `python3 -m unittest discover -s tests` | Every change, on 3.11 through 3.15 in CI |
+| Oldest-interpreter compatibility | the same suite under `python3.11` | Syntax changes locally; CI covers 3.11 |
 | Syntax | `python3 -m compileall -q prwarden tests` | Every change |
 | Whitespace | `git diff --check` | Every change |
 | Dependencies | none to scan: no third-party runtime dependencies | By construction |

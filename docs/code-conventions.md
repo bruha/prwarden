@@ -2,8 +2,8 @@
 
 ## Python
 
-- Support Python 3.9 and newer. See
-  [Why Python 3.9](#why-python-39) for the reason and the cost.
+- Support Python 3.11 and newer. See
+  [Why Python 3.11](#why-python-311) for the reason and the cost.
 - Use four spaces, descriptive names, type hints on public and cross-module
   interfaces, and focused functions.
 - Prefer standard-library facilities and immutable values where practical.
@@ -16,53 +16,48 @@
   boundary must isolate one PR and the error is immediately reported or
   re-raised.
 
-### Why Python 3.9
+### Why Python 3.11
 
-`/usr/bin/python3` on current macOS is Python 3.9.6. Apple ships that
-interpreter as part of the Xcode Command Line Tools because Xcode's own tooling
-depends on it, pins the version, and rebuilds it against new compilers instead
-of upgrading it. Verified on macOS 26.5.2 with Command Line Tools 26.6.0, where
-`/usr/bin/python3` reports `3.9.6 (default, May 22 2026)` from
-`Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9`.
-The version cannot be upgraded in place; installing a newer Python adds a
-second, independent interpreter elsewhere, such as `/opt/homebrew/bin/python3`.
+3.11 is the oldest Python that still receives security fixes from python.org:
+3.9 reached end of life in October 2025 and 3.10 in October 2026. Homebrew installs
+PR Warden on its own current Python, and pip and pipx refuse a release on an
+interpreter older than `requires-python`, picking the last release that supports it.
 
-Combined with the no-third-party-runtime-dependency policy, a 3.9 floor lets
-anyone clone this repository onto a stock Mac and run it with no interpreter
-install, virtual environment, or package installation. That is the entire
-benefit, and it is the reason the floor is not treated as legacy debt.
+The floor was 3.9 until 3.0.0, so a clone could run on a stock Mac's
+`/usr/bin/python3`, which Apple pins to 3.9.6 as part of the Xcode Command Line
+Tools. Two things ended that. Homebrew and PyPI releases made a clone unnecessary
+for running it, and CI images began dropping 3.9: the Ubuntu 26.04 `ubuntu-latest`
+has no 3.9 for `actions/setup-python`. That stock interpreter no longer runs this
+tool; `python3 -m prwarden` on an older Python exits with a message naming the one
+it needs, before importing anything that newer syntax could break.
 
-The cost is accepted deliberately:
-
-- Python 3.9 reached upstream end of life in October 2025, so the stock
-  interpreter receives only Apple's own patches. Operators who care about that
-  should point their schedule at a maintained interpreter; see
-  [Scheduling on macOS](macos-scheduling.md).
-- Language features newer than 3.9 are unavailable, most often PEP 604 `X | Y`
-  unions in annotations, `match` statements, and PEP 701 multi-line expressions
-  inside f-strings. Use `Optional[...]` and `Union[...]`, and bind a local
-  before an f-string instead of breaking an expression across lines.
-- PEP 585 builtin generics such as `list[str]` and `tuple[int, ...]` are
-  available in 3.9 and are used directly.
+The cost of the floor is that syntax and standard-library APIs newer than 3.11 are
+unavailable, most often PEP 695 type parameters and `type` statements, PEP 701
+f-strings that reuse their own quote or span lines inside their braces,
+`typing.override`, and `itertools.batched`. Bind a local before an f-string instead
+of breaking an expression across lines. Older code written for 3.9, with
+`Optional[...]` and quoted annotations, stays valid and need not be rewritten.
 
 The floor is a verified contract, not an aspiration. `.github/workflows/test.yml`
-runs `compileall` and the unit suite on 3.9 through 3.15 for every push and pull
+runs `compileall` and the unit suite on 3.11 through 3.15 for every push and pull
 request, because the compatibility claim was documented before anything checked
 it and silently became false until a commit restored it and added the matrix
 (`771ce83`, in the history before 1.0.0, which was not published).
-Local checks on a newer interpreter cannot detect a 3.9 syntax regression, so
-run the suite under `/usr/bin/python3` when changing syntax-sensitive code:
+Local checks on a newer interpreter cannot detect a 3.11 syntax regression, so
+run the suite under a 3.11 interpreter when changing syntax-sensitive code, for
+example Homebrew's:
 
 ```sh
-/usr/bin/python3 -m compileall -q prwarden tests
-/usr/bin/python3 -m unittest discover -s tests
+python3.11 -m compileall -q prwarden tests
+python3.11 -m unittest discover -s tests
 ```
 
 Raising the floor is a legitimate decision, not a forbidden one. It requires
 updating this section, [AGENTS.md](../AGENTS.md), the
-[README](../README.md) requirements, the CI matrices, and `requires-python` and
-the pinned build backend in `pyproject.toml` in the same change, so the
-documented floor and the enforced floor never disagree again.
+[README](../README.md) requirements, the CI matrices, the version check in
+`prwarden/__main__.py`, and `requires-python` and the pinned build backend in
+`pyproject.toml` in the same change, so the documented floor and the enforced
+floor never disagree again.
 
 ## DRY
 

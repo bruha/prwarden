@@ -26,7 +26,7 @@ a problem instead, or reproduce it on a public example.
 
 A change follows [AGENTS.md](AGENTS.md) and the guides it links. In short:
 
-- Python 3.9 compatible, standard library only, no new runtime dependencies;
+- Python 3.11 compatible, standard library only, no new runtime dependencies;
 - one focused change, with its tests and documentation updated together;
 - a branch and commit messages in [Conventional Commits](https://www.conventionalcommits.org/)
   form, as in [the development workflow](docs/development-workflow.md);

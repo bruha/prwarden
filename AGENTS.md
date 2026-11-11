@@ -5,7 +5,7 @@ code, tests, documentation, configuration examples, or release metadata.
 
 ## Project purpose
 
-PR Warden is a dependency-free Python 3.9+ application that coordinates
+PR Warden is a dependency-free Python 3.11+ application that coordinates
 authenticated AI CLIs, GitHub CLI, Slack incoming webhooks, exact detached Git
 worktrees, and atomic local JSON state. The controller, not an AI provider,
 owns eligibility, prompt construction, response validation, duplicate handling,
@@ -92,12 +92,13 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
   is reported as text for the document, never as a code change and never as a defect.
 - Preserve provider neutrality: adapters translate the common contract;
   discovery, validation, state, routing, and delivery stay in the controller.
-- Preserve Python 3.9 compatibility and the no-third-party-runtime-dependency
+- Preserve Python 3.11 compatibility and the no-third-party-runtime-dependency
   policy unless a separately approved architectural change says otherwise.
-  Together they let a stock macOS `/usr/bin/python3`, which Apple pins to
-  3.9.6, run this tool with no setup; CI enforces 3.9 through 3.15. Avoid
-  `X | Y` annotations, `match`, and multi-line expressions inside f-strings,
-  and see [why Python 3.9](docs/code-conventions.md#why-python-39).
+  3.11 is the oldest Python that still gets security fixes; Homebrew and pipx
+  install PR Warden on a supported one, and CI enforces 3.11 through 3.15.
+  Avoid syntax and standard-library APIs newer than 3.11, such as PEP 695 type
+  parameters and multi-line expressions inside f-strings, and see
+  [why Python 3.11](docs/code-conventions.md#why-python-311).
 - Keep state and delivery changes atomic, bounded, idempotent, and testable.
 
 The complete operational contract is
@@ -109,11 +110,10 @@ PR Warden reviews this repository's pull requests against the rules below, read 
 `main`, and reports an added line that breaks one as a defect. To change a rule,
 merge that change first.
 
-- Code runs on Python 3.9: no `X | Y` unions outside quoted annotations, no `match`
-  statements, no parenthesized multi-item `with` statements, no expression spanning
-  lines inside an f-string's braces, and no standard-library API newer than 3.9,
-  such as `zip(strict=...)`, `dataclass(slots=...)` or `kw_only`, `typing.Self`, or
-  `datetime.UTC`.
+- Code runs on Python 3.11: no PEP 695 `type` statements or `def f[T]()` type
+  parameters, no f-string that reuses its own quote character or spans lines inside
+  its braces, and no standard-library API newer than 3.11, such as
+  `typing.override`, `itertools.batched`, or `Path.walk`.
 - Code under `prwarden/` imports only the standard library and `prwarden` itself,
   and tests use only `unittest` and the standard library.
 - An error is never turned into an empty or clean result: a failure path never

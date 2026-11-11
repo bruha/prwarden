@@ -20,12 +20,11 @@ Use the executable for the configured review engine instead of `agy` when
 another adapter is selected. Shell aliases are not available to either
 scheduler, so every executable and project path must be explicit.
 
-The examples below use `/opt/homebrew/bin/python3`. The stock
-`/usr/bin/python3` also runs this tool, because the project keeps a Python 3.9
-floor for exactly that reason
-([why](code-conventions.md#why-python-39)), but Apple pins it to 3.9.6 and
-Python 3.9 reached upstream end of life in October 2025. Use whichever absolute
-path `command -v python3` reports for the interpreter you choose.
+The examples below use `/opt/homebrew/bin/python3`, which must be Python 3.11 or
+newer. The stock `/usr/bin/python3` no longer runs this tool: Apple pins it to
+3.9.6, and the floor is 3.11 ([why](code-conventions.md#why-python-311)). Use
+whichever absolute path `command -v python3` reports for the interpreter you
+choose, and check it with `python3 --version`.
 
 Which one to schedule depends on where the checkouts live. macOS asks before a
 program reads `Documents`, `Desktop`, or `Downloads`, and it remembers the answer
@@ -35,9 +34,10 @@ at that prompt until somebody answers it, and launchd starts no other run of the
 while it waits: an upgrade on a Saturday evening held the following Monday's 08:00
 run until 08:33. Two ways to keep that from happening:
 
-- Schedule `/usr/bin/python3`. It is signed by Apple, and macOS matches a signed
+- Schedule an interpreter its publisher signs, such as the one python.org's
+  installer puts in `/Library/Frameworks/Python.framework`. macOS matches a signed
   program by its signing identity rather than by the file, so one approval should
-  outlast system and Xcode updates. The cost is running on 3.9.6.
+  outlast that interpreter's patch updates.
 - Keep Homebrew's interpreter and stop it moving underneath the schedule with
   `brew pin python@3.15` (the formula you use), then answer the prompt by hand
   after each upgrade you choose to make.
@@ -47,8 +47,8 @@ Checkouts outside the protected folders avoid the question entirely.
 An interpreter denied that access does not wait: it fails at once, and because it
 cannot read the project it cannot report anything, so the only trace is `No module
 named 'prwarden'` in the job's log. Check System Settings > Privacy & Security > Files &
-Folders for the interpreter, which `/usr/bin/python3` lists as `python3`, and enable
-the folder there before switching the job to it.
+Folders for the interpreter and enable the folder there before switching the job to
+it.
 
 ## Recommendation
 

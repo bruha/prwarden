@@ -37,8 +37,8 @@ and a command of your own can review.
 ## Install
 
 PR Warden is one command, `prwarden`, with no Python packages of its own to pull
-in. Install it with Homebrew on macOS or Linux, or from PyPI anywhere Python 3.9 or
-newer runs.
+in. Install it with Homebrew on macOS or Linux, or from PyPI anywhere Python 3.11
+or newer runs.
 
 ### Homebrew
 
@@ -56,9 +56,9 @@ brew uninstall prwarden    # remove it
 
 ### PyPI
 
-The [prwarden package](https://pypi.org/project/prwarden/) runs on any Python 3.9 or
-newer, the `python3` that comes with the macOS Command Line Tools included. Install
-it with [pipx](https://pipx.pypa.io/), which gives it an environment of its own and
+The [prwarden package](https://pypi.org/project/prwarden/) runs on any Python 3.11
+or newer; the `python3` that comes with the macOS Command Line Tools is 3.9 and too
+old, while Homebrew's is current. Install it with [pipx](https://pipx.pypa.io/), which gives it an environment of its own and
 puts `prwarden` on your `PATH`:
 
 ```sh
@@ -168,9 +168,9 @@ account's own pull requests, so a separate reviewer account works best.
 
 ## Requirements
 
-- Python 3.9 or newer, which includes the `python3` bundled with the macOS
-  Xcode Command Line Tools, so a stock Mac needs no interpreter install
-  ([why](docs/code-conventions.md#why-python-39))
+- Python 3.11 or newer, the oldest that still gets security fixes
+  ([why](docs/code-conventions.md#why-python-311)); Homebrew installs one with
+  PR Warden
 - [GitHub CLI](https://cli.github.com/) authenticated for each repository
 - An authenticated supported review CLI: Antigravity, Codex, Claude Code, Kiro,
   or a compatible custom command

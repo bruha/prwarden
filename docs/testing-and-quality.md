@@ -60,20 +60,20 @@ suite before requesting approval. Inspect `git status --short` and `git diff`
 so generated files, secrets, and unrelated edits do not enter the change.
 
 A local `python3` is usually newer than the supported floor, and it accepts
-syntax that fails on Python 3.9 without any warning. When a change touches
-syntax rather than only logic, also run the suite on the stock macOS
-interpreter, which is the oldest supported version
-([why](code-conventions.md#why-python-39)):
+syntax that fails on Python 3.11 without any warning. When a change touches
+syntax rather than only logic, also run the suite on Python 3.11, the oldest
+supported version ([why](code-conventions.md#why-python-311)), such as
+Homebrew's `python@3.11`:
 
 ```sh
-/usr/bin/python3 -m compileall -q prwarden tests
-/usr/bin/python3 -m unittest discover -s tests
+python3.11 -m compileall -q prwarden tests
+python3.11 -m unittest discover -s tests
 ```
 
-CI runs the same checks on 3.9 through 3.15, so a missed incompatibility fails
+CI runs the same checks on 3.11 through 3.15, so a missed incompatibility fails
 the pull request rather than reaching a release.
 
-A second CI job builds the wheel on Linux and macOS under 3.9 and 3.15, installs
+A second CI job builds the wheel on Linux and macOS under 3.11 and 3.15, installs
 it into a clean virtual environment, and runs `prwarden` from outside the checkout
 with an empty home directory. A file the package needs but does not ship, or a
 lookup that still assumes a checkout, fails there instead of in a user's install.
