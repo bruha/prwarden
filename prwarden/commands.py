@@ -56,6 +56,10 @@ TRANSIENT_COMMAND_ERROR_MARKERS = (
     "temporarily unavailable",
     "tls handshake timeout",
     "unexpected eof",
+    # Git over SSH: GitHub closing or dropping the connection, often under load.
+    "connection closed by remote host",
+    "early eof",
+    "the remote end hung up unexpectedly",
 )
 
 
