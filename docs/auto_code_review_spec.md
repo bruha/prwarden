@@ -174,6 +174,11 @@ Concurrency changes scheduling only. Every guarantee elsewhere in this
 specification continues to hold per pull request:
 
 - Each review fetches its own immutable head into its own detached worktree.
+  A fetch only reads, so one that times out or loses its connection to GitHub is
+  tried once more after 15 seconds, and the run log names the retry; a commit
+  GitHub does not have, or a refused login, fails at once. Each attempt has 180
+  seconds. The same holds for the base-branch fetches behind the review rules,
+  the generated-file marks, and the file history.
 - Git operations against one shared local checkout are serialized, because Git
   refuses concurrent index, ref, and worktree updates in one repository.
 - Delivery state remains atomic: the in-memory records are serialized in the
