@@ -55,12 +55,14 @@ python3.11 -m compileall -q prwarden tests
 python3.11 -m unittest discover -s tests
 ```
 
-Raising the floor is a legitimate decision, not a forbidden one. It requires
-updating this section, [AGENTS.md](../AGENTS.md), the
+Raising the floor is a legitimate decision, not a forbidden one. Its rule in
+[AGENTS.md](../AGENTS.md)'s Code review section changes first, in a pull request of
+its own, because PR Warden reads that rule from `main` and judges the raise against
+it. The raise itself then updates this section, the rest of AGENTS.md, the
 [README](../README.md) requirements, the CI matrices, `MINIMUM_PYTHON` in
 `prwarden/__init__.py`, and `requires-python` and the pinned build backend in
-`pyproject.toml` in the same change, so the documented floor and the enforced
-floor never disagree again.
+`pyproject.toml` in one change, so the documented floor and the enforced floor
+never disagree again.
 
 ## DRY
 
