@@ -579,7 +579,9 @@ request names, as the intent behind it:
 - the Jira work items its title, description, or branch name names, for a
   repository whose entry lists their projects in `"jira_projects"`. They are read
   with Atlassian's own CLI, `acli`, signed in with `prwarden setup --jira` or
-  `acli jira auth login`; PR Warden never sees or stores the credential.
+  `acli jira auth login`. Setup's API-token sign-in reads the token hidden and hands
+  it to `acli` on standard input; PR Warden never prints or stores it, and a review
+  uses only `acli`'s own sign-in.
 
 Up to three of each are read, their text capped, and framed as untrusted content
 that can never relax a review rule. A finding names an issue by its reference and

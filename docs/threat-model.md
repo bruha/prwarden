@@ -32,7 +32,7 @@ follows its shape deliberately so the two can be read side by side.
 | Coding-agent CLI | Semi-trusted | Authenticated by the operator, but it is a general tool with its own capabilities and its own sandbox |
 | Model response | **Untrusted** | Validated in full before anything is delivered |
 | GitHub API via `gh` | Semi-trusted | Data shapes are validated; the binary is the operator's |
-| Linked issues and Jira work items | **Untrusted** | Anyone who can edit an issue wrote it; read through `gh` and the operator's `acli`, whose sign-in PR Warden never sees |
+| Linked issues and Jira work items | **Untrusted** | Anyone who can edit an issue wrote it; read through `gh` and the operator's `acli`, whose sign-in PR Warden never stores: `prwarden setup --jira` hands a pasted API token to `acli` on standard input and keeps no copy |
 | Slack webhook | Write-only sink | Never read from; the URL is a secret |
 | State file | Trusted | Local, atomic, lock-guarded |
 
