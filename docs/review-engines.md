@@ -48,11 +48,35 @@ current models.
 adapter translates the common schema first: every property is required, one the
 common contract leaves optional may be `null`, and those nulls are removed from the
 answer before the controller validates it. The controller still rejects a repeated
-blocking reference itself. When Codex fails, it has already written the whole prompt
-to standard error, so the adapter reports only the `ERROR:` lines that follow that
-echo, the API's own message where one is given, at most 500 characters. The prompt
-carries the pull request's description, where a pasted log can start with `ERROR:`
-too; where the echo is not found verbatim, no line the prompt holds is reported.
+blocking reference itself.
+
+Codex has no file-reading tool of its own: it reads with shell commands, and every
+prompt forbids terminal commands, a rule written for the engines that read through
+tools. Told nothing more, Codex read no file and approved on the diff alone, in
+about 30 seconds, giving as its reason that it could not read the workspace. So the
+adapter ends the prompt with a note that, in Codex, a command that only reads, such
+as `cat`, `rg`, or `sed -n`, run inside the workspace, is the file reading the prompt
+allows, and that nothing else may run: no build, test, script, interpreter, package
+manager, git, or network command, and nothing the head ships. The read-only,
+no-network sandbox enforces what the note cannot. On the same pull request Codex
+then ran 28 reading commands over six minutes.
+
+The adapter also checks that it did. `codex exec --json` prints each command as an
+event, and the answer goes to a file of its own (`--output-last-message`). A clean
+answer, which nothing checks after the engine (an approval, a sound design,
+consistent documentation, or a verification that confirms no candidate), is refused
+as an engine failure when no command Codex ran succeeded. A finding stands either
+way, because the controller validates its citations against the worktree and a
+verifier judges it.
+
+When Codex fails with `--json`, it reports why as error events on standard output,
+and the adapter relays those messages. A failure before any event, such as a
+directory Codex does not trust, is on standard error; there Codex may first echo the
+whole prompt, so the adapter reports only the `ERROR:` lines that follow that echo,
+the API's own message where one is given. Either way it relays at most 500
+characters. The prompt carries the pull request's description, where a pasted log
+can start with `ERROR:` too; where the echo is not found verbatim, no line the prompt
+holds is reported.
 
 Skipping the user configuration also keeps a reviewed head's own
 `.codex/config.toml` out. Codex loads that file only for a project the user

@@ -46,7 +46,12 @@ from prwarden.engine import (
 import prwarden.engine_antigravity as engine_antigravity
 from prwarden.engine_antigravity import AntigravityEngine
 from prwarden.engine_claude import ClaudeEngine
-from prwarden.engine_codex import CodexEngine, strict_output_schema
+from prwarden.engine_codex import (
+    CODEX_READING_NOTE,
+    CodexEngine,
+    is_clean_result,
+    strict_output_schema,
+)
 from prwarden.engine_command import CommandEngine
 from prwarden.engine_kiro import (
     KIRO_WORKSPACE_FILES,
@@ -86,6 +91,34 @@ def as_streams(runner):
         if isinstance(output, tuple):
             return output
         return output, ""
+
+    return run
+
+
+# What `codex exec --json` prints when Codex reads a file: the command, as an event.
+CODEX_READ_EVENT = json.dumps(
+    {
+        "type": "item.completed",
+        "item": {
+            "id": "item_1",
+            "type": "command_execution",
+            "command": "/bin/zsh -lc 'cat app.py'",
+            "aggregated_output": "value = 1\n",
+            "exit_code": 0,
+            "status": "completed",
+        },
+    }
+)
+
+
+def codex_answering(answer, events=(CODEX_READ_EVENT,)):
+    """Stand in for `codex exec --json`: the answer in its file, events on stdout."""
+
+    def run(args, **_kwargs):
+        path = Path(args[args.index("--output-last-message") + 1])
+        text = answer if isinstance(answer, str) else json.dumps(answer)
+        path.write_text(text, encoding="utf-8")
+        return "\n".join(events)
 
     return run
 
@@ -1565,7 +1598,8 @@ class ReviewEngineTests(unittest.TestCase):
                 directory, repository, engine="codex", command=("codex",)
             )
             with patch(
-                "prwarden.engine_codex.run_cmd", return_value='{"findings": []}'
+                "prwarden.engine_codex.run_cmd",
+                side_effect=codex_answering({"findings": []}),
             ) as run:
                 output = CodexEngine(settings).review(*self.input(repository))
 
@@ -1600,7 +1634,8 @@ class ReviewEngineTests(unittest.TestCase):
                 review_effort="xhigh",
             )
             with patch(
-                "prwarden.engine_codex.run_cmd", return_value='{"findings": []}'
+                "prwarden.engine_codex.run_cmd",
+                side_effect=codex_answering({"findings": []}),
             ) as run:
                 CodexEngine(settings).review(*self.input(repository))
 
@@ -1629,7 +1664,7 @@ class ReviewEngineTests(unittest.TestCase):
                 with self.subTest(level=level):
                     with patch(
                         "prwarden.engine_codex.run_cmd",
-                        return_value='{"findings": []}',
+                        side_effect=codex_answering({"findings": []}),
                     ) as run:
                         CodexEngine(settings).review(
                             repository,
@@ -1710,7 +1745,7 @@ class ReviewEngineTests(unittest.TestCase):
             def answers(args, **kwargs):
                 path = Path(args[args.index("--output-schema") + 1])
                 sent["schema"] = json.loads(path.read_text(encoding="utf-8"))
-                return json.dumps(answer)
+                return codex_answering(answer)(args, **kwargs)
 
             with patch("prwarden.engine_codex.run_cmd", side_effect=answers):
                 output = CodexEngine(settings).review(*self.input(repository))
@@ -1883,6 +1918,147 @@ class ReviewEngineTests(unittest.TestCase):
                     EngineError, r"^Command timed out after 900s: codex$"
                 ):
                     CodexEngine(settings).review(*self.input(repository))
+
+    def test_codex_is_told_how_it_reads_and_answers_through_its_own_file(self):
+        """Codex reads only through shell commands, which every prompt forbids, so
+        it read nothing and approved on the diff alone in about 30 seconds."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            settings = self.settings(
+                directory, repository, engine="codex", command=("codex",)
+            )
+            with patch(
+                "prwarden.engine_codex.run_cmd",
+                side_effect=codex_answering({"verdict": "approve"}),
+            ) as run:
+                output = CodexEngine(settings).review(*self.input(repository))
+
+        args = run.call_args.args[0]
+        self.assertIn("--json", args)
+        self.assertIn("--output-last-message", args)
+        self.assertEqual(args[-1], "-")
+        prompt = run.call_args.kwargs["input_text"]
+        self.assertTrue(prompt.endswith(CODEX_READING_NOTE))
+        self.assertIn("IS the read-only\nworkspace file search", prompt)
+        self.assertEqual(output, {"verdict": "approve"})
+
+    def test_a_codex_clean_result_without_reading_is_refused(self):
+        """Nothing checks a clean answer after the engine, so one given without
+        reading would approve, or settle a level, on the diff alone."""
+
+        failed_read = CODEX_READ_EVENT.replace('"exit_code": 0', '"exit_code": 1')
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            settings = self.settings(
+                directory, repository, engine="codex", command=("codex",)
+            )
+            for name, events in (("no command", ()), ("a failed one", (failed_read,))):
+                with self.subTest(name):
+                    with patch(
+                        "prwarden.engine_codex.run_cmd",
+                        side_effect=codex_answering({"verdict": "approve"}, events),
+                    ):
+                        with self.assertRaisesRegex(
+                            EngineError, "clean result without reading the workspace"
+                        ):
+                            CodexEngine(settings).review(*self.input(repository))
+
+    def test_a_codex_finding_without_reading_is_left_to_its_checks(self):
+        """A finding is validated against the workspace and verified anyway."""
+
+        answer = {"verdict": "do_not_approve", "findings": [{"title": "Bug"}]}
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            settings = self.settings(
+                directory, repository, engine="codex", command=("codex",)
+            )
+            with patch(
+                "prwarden.engine_codex.run_cmd",
+                side_effect=codex_answering(answer, ()),
+            ):
+                output = CodexEngine(settings).review(*self.input(repository))
+
+        self.assertEqual(output, answer)
+
+    def test_every_level_s_clean_answer_is_recognised(self):
+        rejected = {"ref": "C1", "verdict": "rejected"}
+        confirmed = {"ref": "C2", "verdict": "confirmed"}
+        cases = {
+            "code approval": ({"verdict": "approve", "findings": []}, True),
+            "code findings": ({"verdict": "do_not_approve"}, False),
+            "sound design": ({"verdict": "sound", "findings": []}, True),
+            "flawed design": ({"verdict": "flawed"}, False),
+            "consistent documentation": ({"verdict": "consistent"}, True),
+            "stale documentation": ({"verdict": "stale"}, False),
+            "verification rejecting all": ({"judgments": [rejected]}, True),
+            "verification confirming one": (
+                {"judgments": [rejected, confirmed]},
+                False,
+            ),
+            "code verification approving": (
+                {"verdict": "approve", "judgments": [rejected]},
+                True,
+            ),
+        }
+        for name, (payload, clean) in cases.items():
+            with self.subTest(name):
+                self.assertIs(is_clean_result(payload), clean)
+
+    def test_a_codex_failure_reported_as_events_is_relayed(self):
+        """With `--json`, Codex reports a failure on standard output, not error."""
+
+        events = "\n".join(
+            json.dumps(event)
+            for event in (
+                {"type": "thread.started"},
+                {"type": "error", "message": "The 'x' model is not supported."},
+                {
+                    "type": "turn.failed",
+                    "error": {"message": "The 'x' model is not supported."},
+                },
+            )
+        )
+        failure = CommandError(
+            "codex exited with 1: no error output",
+            command="codex",
+            output=events,
+            returncode=1,
+            error_output="",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            settings = self.settings(
+                directory, repository, engine="codex", command=("codex",)
+            )
+            with patch("prwarden.engine_codex.run_cmd", side_effect=failure):
+                with self.assertRaises(EngineError) as raised:
+                    CodexEngine(settings).review(*self.input(repository))
+
+        self.assertEqual(
+            str(raised.exception),
+            "codex exited with 1: The 'x' model is not supported.",
+        )
+
+    def test_a_codex_answer_missing_from_its_file_comes_from_events_or_fails(self):
+        message = json.dumps(
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": '{"verdict": "flawed"}'},
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            settings = self.settings(
+                directory, repository, engine="codex", command=("codex",)
+            )
+            with patch("prwarden.engine_codex.run_cmd", return_value=message):
+                output = CodexEngine(settings).review(*self.input(repository))
+            with patch("prwarden.engine_codex.run_cmd", return_value=""):
+                with self.assertRaisesRegex(EngineError, "^Codex returned no answer$"):
+                    CodexEngine(settings).review(*self.input(repository))
+
+        self.assertEqual(output, {"verdict": "flawed"})
 
     def test_claude_adapter_extracts_structured_output(self):
         with tempfile.TemporaryDirectory() as directory:

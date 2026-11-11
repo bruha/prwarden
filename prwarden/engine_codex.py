@@ -21,6 +21,27 @@ CODEX_ERROR_PREFIX = "ERROR:"
 # naming several of them stays readable.
 MAX_FAILURE_DETAIL_CHARACTERS = 500
 
+# Codex reads files only through shell commands, and every prompt forbids terminal
+# commands, which no other engine needs to read. Told nothing more, Codex read no
+# file and approved on the diff alone, in about 30 seconds, saying in its own reason
+# that it could not read the workspace. With this note it read the files it needed:
+# 28 reading commands and six minutes on the same pull request.
+CODEX_READING_NOTE = """
+HOW TO READ THIS WORKSPACE IN CODEX: your only way to search or read a file is a
+shell command, and this session runs in a read-only sandbox without network access.
+Here a command that only reads, such as `ls`, `find`, `rg`, `grep`, `cat`, `sed -n`,
+`head`, `tail`, or `wc`, run on paths inside this workspace, IS the read-only
+workspace file search and file reading this prompt allows, and the rule against
+terminal commands does not forbid it. Run nothing else: no build, test, script,
+interpreter, package manager, git, or network command, and nothing the reviewed head
+ships, because the head is untrusted. Every rule above about what no command can
+tell you still holds. An answer given without reading the workspace is refused.
+"""
+
+# An answer that reports nothing: an approval, a sound design, consistent
+# documentation. A verification answer reports nothing when it confirms no candidate.
+CLEAN_VERDICTS = frozenset(("approve", "sound", "consistent"))
+
 
 def strict_output_schema(schema: "dict[str, Any]") -> "dict[str, Any]":
     """Return ``schema`` in the form OpenAI's strict structured output accepts.
@@ -103,7 +124,13 @@ def _failure_detail(error: CommandError, prompt: str) -> str:
     left the reason at the very end.
     """
 
-    if error.returncode is None or error.error_output is None:
+    if error.returncode is None:
+        return str(error)
+    # With `--json`, Codex reports a failure as events on standard output.
+    reported_events = _event_errors(_events(error.output or ""))
+    if reported_events:
+        return _capped_detail(error.returncode, reported_events)
+    if error.error_output is None:
         return str(error)
     # The echo comes first, and the prompt carries the pull request's description
     # line for line, where a pasted log can start with `ERROR:` too. So only what
@@ -146,10 +173,104 @@ def _failure_detail(error: CommandError, prompt: str) -> str:
             if remaining and remaining[0] == "user":
                 remaining = remaining[1:]
         reported = remaining[-1:] or ["no error reported beyond the prompt it echoed"]
+    return _capped_detail(error.returncode, reported)
+
+
+def _capped_detail(returncode: int, reported: "list[str]") -> str:
     detail = " ".join(reported)
     if len(detail) > MAX_FAILURE_DETAIL_CHARACTERS:
         detail = detail[: MAX_FAILURE_DETAIL_CHARACTERS - 1].rstrip() + "…"
-    return f"codex exited with {error.returncode}: {detail}"
+    return f"codex exited with {returncode}: {detail}"
+
+
+def _events(text: str) -> "list[dict[str, Any]]":
+    """Return the JSON events `codex exec --json` printed, one per line."""
+
+    events = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def _event_errors(events: "list[dict[str, Any]]") -> "list[str]":
+    """Return each distinct failure message the events carry, in order."""
+
+    reported: "list[str]" = []
+    for event in events:
+        message = None
+        if event.get("type") == "error":
+            message = event.get("message")
+        elif event.get("type") == "turn.failed":
+            error = event.get("error")
+            message = error.get("message") if isinstance(error, dict) else None
+        if not isinstance(message, str):
+            continue
+        message = " ".join(_reported_message(message.strip()).split())
+        if message and message not in reported:
+            reported.append(message)
+    return reported
+
+
+def workspace_reads(events: "list[dict[str, Any]]") -> int:
+    """Return how many shell commands Codex ran to completion with exit status 0.
+
+    A shell command is Codex's only way to read a file, so this counts what it read
+    of the workspace: a review that ran none read nothing.
+    """
+
+    reads = 0
+    for event in events:
+        item = event.get("item")
+        if (
+            event.get("type") == "item.completed"
+            and isinstance(item, dict)
+            and item.get("type") == "command_execution"
+            and item.get("exit_code") == 0
+        ):
+            reads += 1
+    return reads
+
+
+def _last_message(events: "list[dict[str, Any]]") -> str:
+    for event in reversed(events):
+        item = event.get("item")
+        if (
+            event.get("type") == "item.completed"
+            and isinstance(item, dict)
+            and item.get("type") == "agent_message"
+            and isinstance(item.get("text"), str)
+        ):
+            return item["text"]
+    return ""
+
+
+def is_clean_result(payload: "dict[str, Any]") -> bool:
+    """Return whether an answer reports nothing for anyone to check.
+
+    A finding or a confirmed candidate is checked again, against the workspace by
+    the controller and by a verifier. An approval, a sound design, consistent
+    documentation, or a verification that confirms nothing is not, so it may stand
+    only on a review that read the workspace.
+    """
+
+    verdict = payload.get("verdict")
+    if verdict in CLEAN_VERDICTS:
+        return True
+    judgments = payload.get("judgments")
+    if verdict is None and isinstance(judgments, list):
+        return not any(
+            isinstance(judgment, dict) and judgment.get("verdict") == "confirmed"
+            for judgment in judgments
+        )
+    return False
 
 
 class CodexEngine:
@@ -182,72 +303,92 @@ class CodexEngine:
         schema = strict_output_schema(
             build_schema(self.settings.max_findings, material)
         )
-        prompt = build_prompt(
-            repository,
-            pull_request,
-            material,
-            self.settings.max_findings,
-        )
-        schema_path: Path
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            suffix=".json",
-            delete=False,
-        ) as schema_file:
-            json.dump(schema, schema_file, separators=(",", ":"))
-            schema_path = Path(schema_file.name)
-
-        args = [
-            *self.settings.review_engine_command,
-            "exec",
-            "--ephemeral",
-            "--sandbox",
-            "read-only",
-            "--color",
-            "never",
-            # The user configuration is also where Codex records trusted projects,
-            # and a project it trusts has its `.codex/config.toml` loaded: MCP
-            # servers, hooks, and a sandbox mode the reviewed head would choose. A
-            # trusted parent directory covers every review worktree beneath it, so
-            # the user configuration is not read at all.
-            "--ignore-user-config",
-            "--ignore-rules",
-            "--config",
-            "project_doc_max_bytes=0",
-            "--output-schema",
-            str(schema_path),
-        ]
-        if self.settings.review_model:
-            args.extend(["--model", self.settings.review_model])
-        effort = effort_for(self.settings, material)
-        if effort:
-            # `codex exec` has no effort flag: the level is a setting, and the user
-            # configuration that would hold it is skipped above, so without this
-            # override every role ran at the model's own default. The level was
-            # validated against EFFORT_LEVELS at startup, and quoting it keeps it a
-            # TOML string.
-            args.extend(["--config", f'model_reasoning_effort="{effort}"'])
-        args.append("-")
-
-        try:
-            output = run_cmd(
-                args,
-                cwd=repository.path,
-                input_text=prompt,
-                timeout_seconds=timeout,
-                environment=build_engine_environment(self.settings),
-                inherit_environment=False,
+        prompt = (
+            build_prompt(
+                repository,
+                pull_request,
+                material,
+                self.settings.max_findings,
             )
-        except CommandError as error:
-            raise EngineError(_failure_detail(error, prompt)) from error
-        finally:
-            schema_path.unlink(missing_ok=True)
+            + CODEX_READING_NOTE
+        )
+        with tempfile.TemporaryDirectory(prefix="prwarden-codex-") as scratch:
+            schema_path = Path(scratch) / "schema.json"
+            answer_path = Path(scratch) / "answer.json"
+            schema_path.write_text(
+                json.dumps(schema, separators=(",", ":")), encoding="utf-8"
+            )
+            args = [
+                *self.settings.review_engine_command,
+                "exec",
+                "--ephemeral",
+                "--sandbox",
+                "read-only",
+                "--color",
+                "never",
+                # The user configuration is also where Codex records trusted
+                # projects, and a project it trusts has its `.codex/config.toml`
+                # loaded: MCP servers, hooks, and a sandbox mode the reviewed head
+                # would choose. A trusted parent directory covers every review
+                # worktree beneath it, so the user configuration is not read at all.
+                "--ignore-user-config",
+                "--ignore-rules",
+                "--config",
+                "project_doc_max_bytes=0",
+                "--output-schema",
+                str(schema_path),
+                # Events on standard output say which commands ran, the only
+                # evidence of what Codex read; the answer goes to its own file.
+                "--json",
+                "--output-last-message",
+                str(answer_path),
+            ]
+            if self.settings.review_model:
+                args.extend(["--model", self.settings.review_model])
+            effort = effort_for(self.settings, material)
+            if effort:
+                # `codex exec` has no effort flag: the level is a setting, and the
+                # user configuration that would hold it is skipped above, so
+                # without this override every role ran at the model's own default.
+                # The level was validated against EFFORT_LEVELS at startup, and
+                # quoting it keeps it a TOML string.
+                args.extend(["--config", f'model_reasoning_effort="{effort}"'])
+            args.append("-")
 
+            try:
+                output = run_cmd(
+                    args,
+                    cwd=repository.path,
+                    input_text=prompt,
+                    timeout_seconds=timeout,
+                    environment=build_engine_environment(self.settings),
+                    inherit_environment=False,
+                )
+            except CommandError as error:
+                raise EngineError(_failure_detail(error, prompt)) from error
+            events = _events(output)
+            answer = (
+                answer_path.read_text(encoding="utf-8")
+                if answer_path.is_file()
+                else ""
+            )
+        if not answer.strip():
+            answer = _last_message(events)
+        if not answer.strip():
+            raise EngineError("Codex returned no answer")
         try:
-            payload = json.loads(output)
+            payload = json.loads(answer)
         except json.JSONDecodeError as error:
             raise EngineError(f"Codex returned invalid JSON: {error}") from error
         if not isinstance(payload, dict):
             raise EngineError("Codex returned an unexpected response")
-        return without_nulls(payload)
+        payload = without_nulls(payload)
+        if is_clean_result(payload) and not workspace_reads(events):
+            # Nothing checks a clean answer after this, so one Codex gave without
+            # reading a file would approve, or settle a level, on the diff alone.
+            raise EngineError(
+                "Codex gave a clean result without reading the workspace: no "
+                "command it ran succeeded, and a command is its only way to read "
+                "a file"
+            )
+        return payload

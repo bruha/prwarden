@@ -961,7 +961,12 @@ Built-in adapters:
   runs the MCP servers and hooks a head names there outside its sandbox.
 - `codex`: uses non-interactive, ephemeral, read-only Codex execution with a
   required output schema. It never reads the user configuration, where trusted
-  projects are recorded, so a head's `.codex/config.toml` is never loaded.
+  projects are recorded, so a head's `.codex/config.toml` is never loaded. Codex
+  reads files only through shell commands, so its prompt ends with a note that a
+  command that only reads, inside the workspace, is the reading the prompt allows,
+  and that nothing else may run. A clean answer (an approval, a sound design,
+  consistent documentation, or a verification confirming no candidate) is refused
+  as an engine failure when `--json` events show no command that succeeded.
 - `claude`: uses Claude Code print and safe modes with read-only tools and a
   required output schema. It reads only the operator's own settings and no MCP
   configuration, because safe mode still loads a head's project settings.
