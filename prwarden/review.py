@@ -29,6 +29,7 @@ from .models import (
     FindingEvidence,
     MovedFile,
     PriorReviewComment,
+    PullRequestCheck,
     RejectedDesignCandidate,
     RejectedDocsCandidate,
     RemovedFile,
@@ -40,6 +41,12 @@ from .models import (
 
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 ALLOWED_SEVERITIES = {"critical", "high", "medium", "low"}
+# A check whose conclusion says this head did not pass it. `cancelled`, `skipped`,
+# and `neutral` are not here: a run cancelled because no runner came, or skipped by
+# its own conditions, says nothing about the code.
+FAILED_CHECK_CONCLUSIONS = frozenset(
+    ("failure", "timed_out", "startup_failure", "action_required")
+)
 BUILD_CHECK_NAME = re.compile(r"build|compile|typecheck|type[-\s]check|tsc\b", re.I)
 BUILD_FAILURE_CLAIM = re.compile(
     r"\bTS\d{4}\b"
@@ -208,6 +215,23 @@ def ignores_omitted_patch(
     if mark is not None:
         return mark
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
+
+
+def failed_checks(checks: "Sequence[PullRequestCheck]") -> "tuple[str, ...]":
+    """Return the name of each check that failed at this head, sorted, once each.
+
+    A check still running has no conclusion yet, so only a finished one can fail.
+    """
+
+    return tuple(
+        sorted(
+            {
+                check.name
+                for check in checks
+                if (check.conclusion or "").lower() in FAILED_CHECK_CONCLUSIONS
+            }
+        )
+    )
 
 
 def omitted_patch_paths(files: "list[dict[str, Any]]") -> "tuple[str, ...]":

@@ -450,7 +450,11 @@ rather than advisory notes nobody checked.
 - Documentation the change outdated is reported as one advisory pull-request comment
   proposing the replacement text, never as an inline comment and never as a reason to
   withhold an approval.
-- A clean, mergeable team PR receives a bodyless GitHub approval.
+- A clean, mergeable team PR receives a bodyless GitHub approval, unless one of its
+  checks failed at that head. The checks are read again just before approving,
+  since CI often finishes during a review; the approval, or the `LGTM` for your own
+  PR, waits until a re-run passes or a new head arrives, and findings are still
+  delivered. A cancelled, skipped, or unfinished check does not hold it back.
 - The authenticated reviewer's own PR is never self-approved; findings or a
   clean mergeable `LGTM` result go to Slack. An `LGTM` reached by rejecting
   candidates also reports how many verification threw out, which distinguishes

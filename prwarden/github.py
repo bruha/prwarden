@@ -765,6 +765,62 @@ def list_pull_request_checks(
                 conclusion=conclusion if isinstance(conclusion, str) else None,
             )
         )
+    return tuple(checks) + _list_commit_statuses(repository, pull_request)
+
+
+# A commit status reports one of four states; the three settled ones read as a
+# check run's conclusion, so both kinds of check are judged alike.
+STATUS_CONCLUSIONS = {"success": "success", "failure": "failure", "error": "failure"}
+
+
+def _list_commit_statuses(
+    repository: Repository,
+    pull_request: PullRequest,
+) -> tuple[PullRequestCheck, ...]:
+    """Return the commit statuses on the exact head, as checks.
+
+    Many CI services, and branch protection, report through the older status API
+    rather than as check runs, and GitHub shows both in a pull request's checks.
+    The combined status holds the latest status of each context.
+    """
+
+    output = _run_for(
+        repository,
+        [
+            "gh",
+            "api",
+            f"repos/{repository.slug}/commits/{pull_request.head_sha}/status"
+            "?per_page=100",
+        ],
+        timeout_seconds=120,
+        retry_transient=True,
+    )
+    payload = _parse_json(
+        output,
+        f"listing commit statuses for {repository.slug}#{pull_request.number}",
+    )
+    statuses = payload.get("statuses") if isinstance(payload, dict) else None
+    if not isinstance(statuses, list):
+        raise CommandError("GitHub returned an invalid combined commit status")
+    checks = []
+    for record in statuses:
+        if not isinstance(record, dict):
+            continue
+        context = record.get("context")
+        state = record.get("state")
+        if not isinstance(context, str) or not isinstance(state, str):
+            raise CommandError(
+                f"GitHub returned an invalid commit status for "
+                f"{repository.slug}#{pull_request.number}"
+            )
+        conclusion = STATUS_CONCLUSIONS.get(state)
+        checks.append(
+            PullRequestCheck(
+                name=context,
+                status="completed" if conclusion else "in_progress",
+                conclusion=conclusion,
+            )
+        )
     return tuple(checks)
 
 

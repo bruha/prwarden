@@ -100,6 +100,7 @@ from .review import (
     build_review_material,
     collect_rejection_reasons,
     discover_documentation,
+    failed_checks,
     documentation_change_fingerprint,
     dominant_directories,
     read_background,
@@ -209,6 +210,22 @@ def _recorded_unread_paths(record: "dict[str, Any]") -> "tuple[str, ...]":
     if not all(isinstance(path, str) and path for path in recorded):
         return ()
     return tuple(recorded)
+
+
+def _recorded_failed_checks(record: "dict[str, Any]") -> "tuple[str, ...]":
+    """Return the checks a stored withheld approval was withheld over."""
+
+    recorded = record.get("failed_checks")
+    if not isinstance(recorded, list) or not recorded:
+        return ()
+    if not all(isinstance(name, str) and name for name in recorded):
+        return ()
+    return tuple(recorded)
+
+
+def _describe_failed_checks(names: "Sequence[str]") -> str:
+    word = "check" if len(names) == 1 else "checks"
+    return f"{word} {', '.join(names)}"
 
 
 def _unread_settings_fingerprint(settings: Settings) -> str:
@@ -2413,7 +2430,32 @@ def _process_pull_request(
                     "MAX_DIFF_BYTES, or --force reopens it"
                 )
                 return
-            if not valid_recorded_blockers:
+            recorded_failed = _recorded_failed_checks(record)
+            if recorded_failed:
+                # Another review of this head would be withheld again while any of
+                # its checks still fails, so it is not spent until one could pass.
+                try:
+                    failing = failed_checks(
+                        list_pull_request_checks(repository, pull_request)
+                    )
+                except CommandError as error:
+                    print(
+                        "      -> Skipped: approval stays withheld; this head's "
+                        f"checks could not be read: {error}"
+                    )
+                    return
+                if failing:
+                    print(
+                        "      -> Skipped: approval stays withheld while "
+                        f"{_describe_failed_checks(failing)} failed at this head; a "
+                        "re-run that passes, a later head, or --force reopens it"
+                    )
+                    return
+                print(
+                    "      -> No check fails at this head any more; reconsidering "
+                    "withheld approval"
+                )
+            elif not valid_recorded_blockers:
                 print(
                     "      -> Stored withheld approval lacks validated blockers; "
                     "reconsidering"
@@ -2920,6 +2962,32 @@ def _process_pull_request(
                 print(
                     "      -> Recorded as merge_conflict; this head remains retryable"
                 )
+            return
+        # Read again rather than reusing the checks the review started with: CI
+        # often finishes while a review runs, and an approval speaks for the head
+        # as it is now. A failed check is the head failing a test the team chose,
+        # which no review verdict outweighs.
+        try:
+            failing = failed_checks(list_pull_request_checks(repository, pull_request))
+        except CommandError as error:
+            store.set_status(state_key, "failed", error=str(error))
+            raise
+        if failing:
+            _print_findings(findings, False)
+            reason = f"GitHub {_describe_failed_checks(failing)} failed at this head"
+            print(f"      -> Approval withheld: {reason}")
+            store.set_status(
+                state_key,
+                "approval_withheld",
+                reason=reason,
+                blocking_comment_ids=[],
+                feedback_fingerprint=_feedback_fingerprint(latest_prior_comments),
+                failed_checks=list(failing),
+            )
+            print(
+                "      -> Recorded as approval_withheld; a re-run that passes or a "
+                "later head reopens it"
+            )
             return
 
     if clean_candidate:

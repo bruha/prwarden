@@ -23,6 +23,7 @@ from prwarden.engine import (
     verification_engine_settings,
 )
 from prwarden.models import (
+    PullRequestCheck,
     DocumentationFile,
     DependencyLink,
     Finding,
@@ -3210,6 +3211,7 @@ class OrchestrationTests(unittest.TestCase):
         max_review_bundles: int = 1,
         generated_marks: "Optional[dict]" = None,
         marks_unreadable: bool = False,
+        checks=(),
     ) -> dict:
         repository = Repository("app", "owner/app", Path(directory))
         pull_request = PullRequest(
@@ -3242,8 +3244,13 @@ class OrchestrationTests(unittest.TestCase):
                 else changed_files
             ),
         ), patch(
-            "prwarden.cli.list_pull_request_checks", return_value=()
-        ), patch(
+            "prwarden.cli.list_pull_request_checks",
+            **(
+                {"side_effect": checks}
+                if isinstance(checks, list)
+                else {"return_value": checks}
+            ),
+        ) as list_checks, patch(
             "prwarden.cli.get_pull_request_snapshot",
             return_value=replace(READY_SNAPSHOT, head_sha=head),
         ), patch(
@@ -3278,6 +3285,7 @@ class OrchestrationTests(unittest.TestCase):
             "submit_approval": submit_approval,
             "send_slack": send_slack,
             "read_marks": read_marks,
+            "list_checks": list_checks,
         }
 
     def test_a_bundled_review_reads_every_file_and_may_approve(self) -> None:
@@ -3969,6 +3977,144 @@ class OrchestrationTests(unittest.TestCase):
             result["record"]["unread_generated_marks"],
             {self.GENERATED: "unavailable"},
         )
+
+    CLEAN_CHANGE = [{"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}]
+    FAILED = (PullRequestCheck("compile-code", "completed", "failure"),)
+    PASSED = (PullRequestCheck("compile-code", "completed", "success"),)
+
+    def test_a_failed_check_withholds_the_approval(self) -> None:
+        """A dependency pull request [pr:kwc5] was approved while its required build
+        check failed on exactly the defect the reviewer had raised and the verifier
+        rejected. No review verdict outweighs the head failing the team's own test."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                self.approving_engine(),
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.FAILED,
+            )
+
+        result["submit_approval"].assert_not_called()
+        self.assertEqual(result["record"]["status"], "approval_withheld")
+        self.assertEqual(result["record"]["failed_checks"], ["compile-code"])
+        self.assertIn(
+            "Approval withheld: GitHub check compile-code failed at this head",
+            result["terminal"],
+        )
+
+    def test_the_checks_are_read_again_just_before_approving(self) -> None:
+        """CI often finishes while a review runs: the checks the review started
+        with can all be pending and then fail before the approval would land."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                self.approving_engine(),
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=[(), self.FAILED],
+            )
+
+        self.assertEqual(result["list_checks"].call_count, 2)
+        result["submit_approval"].assert_not_called()
+
+    def test_a_cancelled_or_skipped_check_does_not_withhold(self) -> None:
+        """A run cancelled because no runner came says nothing about the code."""
+
+        checks = (
+            PullRequestCheck("install (macos)", "completed", "cancelled"),
+            PullRequestCheck("deploy", "completed", "skipped"),
+            PullRequestCheck("e2e", "in_progress", None),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                self.approving_engine(),
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=checks,
+            )
+
+        result["submit_approval"].assert_called_once()
+
+    def test_a_finding_is_still_delivered_over_a_failed_check(self) -> None:
+        """Only the approval depends on the checks; a confirmed defect does not."""
+
+        engine = Mock()
+        engine.review.side_effect = [finding_response("app.py", 1), CONFIRMED_JUDGMENT]
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "app.py").write_text("value = 1\n", encoding="utf-8")
+            result = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.FAILED,
+            )
+
+        result["submit_review"].assert_called_once()
+        result["submit_approval"].assert_not_called()
+
+    def test_a_withheld_approval_waits_for_the_check_to_pass(self) -> None:
+        """Re-reviewing while the check still fails would spend a review to record
+        the same answer; a re-run that passes reopens it and may approve."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            engine = self.approving_engine()
+            self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.FAILED,
+            )
+            still = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.FAILED,
+            )
+            self.assertIn(
+                "Skipped: approval stays withheld while check compile-code failed",
+                still["terminal"],
+            )
+            self.assertEqual(engine.review.call_count, 1)
+
+            passed = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.PASSED,
+            )
+
+        self.assertIn("No check fails at this head any more", passed["terminal"])
+        self.assertEqual(engine.review.call_count, 2)
+        passed["submit_approval"].assert_called_once()
+
+    def test_unreadable_checks_keep_a_withheld_approval_without_a_review(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            engine = self.approving_engine()
+            self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.FAILED,
+            )
+            again = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=[CommandError("gh exited with 1: HTTP 502")],
+            )
+
+        self.assertIn("checks could not be read", again["terminal"])
+        self.assertEqual(engine.review.call_count, 1)
 
     def test_a_larger_budget_reopens_a_pull_request_left_unread(self) -> None:
         """Changing what can be read must make the approval reachable again."""

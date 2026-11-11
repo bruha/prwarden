@@ -14,6 +14,17 @@ review-engine adapter, and route confirmed correctness or security findings:
   mergeability checks, send an `LGTM` Slack message stating that the PR can be
   merged once required checks and branch protections pass. Never approve it on
   GitHub because authors cannot approve their own pull requests.
+- No clean result, approval or `LGTM`, is delivered while a check on the exact
+  head has failed. Just before delivering one, the controller reads the head's
+  check runs and commit statuses again, because CI often finishes while a review
+  runs, and a conclusion of `failure`, `timed_out`, `startup_failure`, or
+  `action_required`, or a status of `failure` or `error`, withholds it: the head
+  failed a test the team chose, and no review verdict outweighs that. A cancelled,
+  skipped, neutral, or still-running check does not withhold, since it says nothing
+  about the code. Findings are delivered as usual. The record names the failed
+  checks, and while any check on that head still fails a later run skips it without
+  reviewing; a re-run that passes, a later head, or `--force` reopens it. Checks
+  that cannot be read keep it skipped.
 - Configured reviewer's pull requests in a repository with `"slack": false`: the
   same results on the pull request instead, because the webhook belongs to a
   workspace that project is not part of. Findings are one GitHub review with inline

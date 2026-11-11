@@ -1562,5 +1562,31 @@ class DependencyEvidenceTests(unittest.TestCase):
                 )
 
 
+
+class FailedCheckTests(unittest.TestCase):
+    def test_only_settled_failures_count_each_once(self) -> None:
+        from prwarden.models import PullRequestCheck
+        from prwarden.review import failed_checks
+
+        checks = (
+            PullRequestCheck("compile-code", "completed", "failure"),
+            PullRequestCheck("compile-code", "completed", "failure"),
+            PullRequestCheck("e2e", "completed", "TIMED_OUT"),
+            PullRequestCheck("approve-workflows", "completed", "action_required"),
+            PullRequestCheck("boot", "completed", "startup_failure"),
+            PullRequestCheck("macos", "completed", "cancelled"),
+            PullRequestCheck("docs", "completed", "skipped"),
+            PullRequestCheck("info", "completed", "neutral"),
+            PullRequestCheck("lint", "completed", "success"),
+            PullRequestCheck("slow", "in_progress", None),
+        )
+
+        self.assertEqual(
+            failed_checks(checks),
+            ("approve-workflows", "boot", "compile-code", "e2e"),
+        )
+        self.assertEqual(failed_checks(()), ())
+
+
 if __name__ == "__main__":
     unittest.main()
