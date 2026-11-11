@@ -9,8 +9,26 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 2.7.0 e598b80f7c0ae987566d32cd70ff14e7a4935b9f -->
+<!-- release-baseline: 3.0.0 57f0ac233721a3783406b33e62fa885439111bee -->
 ## [Unreleased]
+
+## [3.0.0] - 2026-11-11
+
+### Breaking Changes
+
+- require Python 3.11 or newer (`c6ce89c`).
+
+### Fixed
+
+- try a GitHub fetch once more when it times out (`16d40da`).
+- check the Python floor on every entry point, and in doctor (`9d3ac7d`).
+- report a scheduled Python that cannot be executed (`57f0ac2`).
+
+### Documentation
+
+- hold reviewed code to Python 3.11 (`468880c`).
+- describe the threat model's subprocess calls as they are (`cb6236f`).
+- say a floor raise changes its review rule first (`489a6ca`).
 
 ## [2.7.0] - 2026-11-11
 
