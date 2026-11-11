@@ -139,6 +139,15 @@ be mistaken for one.
   operator then picks the repositories that report there, and every other entry is
   written `"slack": false`. `setup --slack` changes nothing when declined, and
   otherwise keeps the `.env` and repository list it rewrites beside them.
+- Connecting Jira, in `setup` or alone with `setup --jira`, is asked for too. A yes
+  installs `acli` when it is missing, after the operator has seen the command, and
+  signs it in when it is not: in the browser, or with an API token that is read
+  hidden and handed to `acli` on standard input, never printed or stored. The
+  operator then names the project keys, each checked against Jira's key shape, and
+  the repositories whose pull requests name them, which get `"jira_projects"`.
+  Declining, or an `acli` that stays missing or signed out, leaves Jira off;
+  `setup --jira` then changes nothing, and otherwise keeps the repository list it
+  rewrites beside it.
 - `doctor` only reads: no post, clone, or model call. It shows which tools are
   installed and signed in, and exits 1 for anything that would stop reviews or
   delivery, a configured engine that is signed out and two schedules running at
@@ -701,8 +710,10 @@ fails, `acli` is missing or signed out, or the answer is not the work item asked
 for, is reported in the run log and left out, and the review proceeds as it would
 without it. The prompts frame them inside a contained `linked-issues` block as
 untrusted content that never relaxes a rule and is never quoted in a finding, since
-a finding can reach readers the tracker does not. Without any, every prompt is the
-one it was before issues were read.
+a finding can reach readers the tracker does not. Without any, no prompt carries a
+`linked-issues` block, and the code and documentation prompts are the ones they were
+before issues were read; the design prompt still offers the scope check below when
+the description alone states the intent.
 
 When the description or a linked issue states the intent, the design level may
 report `change_outside_stated_intent`: a changed file nothing stated explains and no
