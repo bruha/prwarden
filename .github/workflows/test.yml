@@ -9,7 +9,10 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # setup-python has no Python 3.9 for Ubuntu 26.04, which ubuntu-latest became in
+    # November 2026, so 3.9 runs on the newest Ubuntu that still has it. A stock
+    # macOS /usr/bin/python3 is 3.9, so 3.9 stays tested.
+    runs-on: ${{ matrix.python-version == '3.9' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -37,6 +40,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         python-version: ["3.9", "3.15"]
+        # As in the test job: ubuntu-latest has no Python 3.9.
+        exclude:
+          - os: ubuntu-latest
+            python-version: "3.9"
+        include:
+          - os: ubuntu-24.04
+            python-version: "3.9"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
