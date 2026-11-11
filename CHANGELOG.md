@@ -9,8 +9,15 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.0.0 57f0ac233721a3783406b33e62fa885439111bee -->
+<!-- release-baseline: 3.0.1 5c0af7ef7a915bf168ab4f5c5000e0e8402c2371 -->
 ## [Unreleased]
+
+## [3.0.1] - 2026-11-11
+
+### Fixed
+
+- never let a Codex review that read nothing give a clean result (`abf786d`).
+- judge a Codex answer clean by what it carries, not its verdict (`5c0af7e`).
 
 ## [3.0.0] - 2026-11-11
 
