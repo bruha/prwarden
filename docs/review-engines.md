@@ -62,12 +62,15 @@ no-network sandbox enforces what the note cannot. On the same pull request Codex
 then ran 28 reading commands over six minutes.
 
 The adapter also checks that it did. `codex exec --json` prints each command as an
-event, and the answer goes to a file of its own (`--output-last-message`). A clean
-answer, which nothing checks after the engine (an approval, a sound design,
-consistent documentation, or a verification that confirms no candidate), is refused
-as an engine failure when no command Codex ran succeeded. A finding stands either
-way, because the controller validates its citations against the worktree and a
-verifier judges it.
+event, and the answer goes to a file of its own (`--output-last-message`). An
+answer that raises no finding and confirms no candidate is taken on trust, whatever
+its verdict says: an approval, a sound design, consistent documentation, a
+withholding that rests only on a prior comment, or a verification that confirms
+nothing. Such an answer is refused as an engine failure when no command Codex ran
+succeeded. It is decided by what the answer carries, not by each level's verdict
+words, so a level added later is covered too. A finding stands either way, because
+the controller validates its citations against the worktree and a verifier judges
+it.
 
 When Codex fails with `--json`, it reports why as error events on standard output,
 and the adapter relays those messages. A failure before any event, such as a

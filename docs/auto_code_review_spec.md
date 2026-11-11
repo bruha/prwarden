@@ -964,9 +964,9 @@ Built-in adapters:
   projects are recorded, so a head's `.codex/config.toml` is never loaded. Codex
   reads files only through shell commands, so its prompt ends with a note that a
   command that only reads, inside the workspace, is the reading the prompt allows,
-  and that nothing else may run. A clean answer (an approval, a sound design,
-  consistent documentation, or a verification confirming no candidate) is refused
-  as an engine failure when `--json` events show no command that succeeded.
+  and that nothing else may run. An answer that raises no finding and confirms no
+  candidate, whatever its verdict, is refused as an engine failure when `--json`
+  events show no command that succeeded.
 - `claude`: uses Claude Code print and safe modes with read-only tools and a
   required output schema. It reads only the operator's own settings and no MCP
   configuration, because safe mode still loads a head's project settings.

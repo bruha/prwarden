@@ -38,9 +38,6 @@ ships, because the head is untrusted. Every rule above about what no command can
 tell you still holds. An answer given without reading the workspace is refused.
 """
 
-# An answer that reports nothing: an approval, a sound design, consistent
-# documentation. A verification answer reports nothing when it confirms no candidate.
-CLEAN_VERDICTS = frozenset(("approve", "sound", "consistent"))
 
 
 def strict_output_schema(schema: "dict[str, Any]") -> "dict[str, Any]":
@@ -253,24 +250,27 @@ def _last_message(events: "list[dict[str, Any]]") -> str:
 
 
 def is_clean_result(payload: "dict[str, Any]") -> bool:
-    """Return whether an answer reports nothing for anyone to check.
+    """Return whether an answer raises nothing for anyone to check.
 
-    A finding or a confirmed candidate is checked again, against the workspace by
-    the controller and by a verifier. An approval, a sound design, consistent
-    documentation, or a verification that confirms nothing is not, so it may stand
-    only on a review that read the workspace.
+    A finding is validated against the workspace and judged by a verifier, and a
+    confirmed candidate has been both. An answer with neither is taken on trust,
+    whatever its verdict says: an approval, a sound design, consistent
+    documentation, a withholding that rests only on a prior comment, or a
+    verification that confirms nothing. Decided by what the answer carries rather
+    than by each level's verdict words, so a level or verdict added later is
+    covered without a change here.
     """
 
-    verdict = payload.get("verdict")
-    if verdict in CLEAN_VERDICTS:
-        return True
+    findings = payload.get("findings")
+    if isinstance(findings, list) and findings:
+        return False
     judgments = payload.get("judgments")
-    if verdict is None and isinstance(judgments, list):
-        return not any(
-            isinstance(judgment, dict) and judgment.get("verdict") == "confirmed"
-            for judgment in judgments
-        )
-    return False
+    if isinstance(judgments, list) and any(
+        isinstance(judgment, dict) and judgment.get("verdict") == "confirmed"
+        for judgment in judgments
+    ):
+        return False
+    return True
 
 
 class CodexEngine:
@@ -384,8 +384,9 @@ class CodexEngine:
             raise EngineError("Codex returned an unexpected response")
         payload = without_nulls(payload)
         if is_clean_result(payload) and not workspace_reads(events):
-            # Nothing checks a clean answer after this, so one Codex gave without
-            # reading a file would approve, or settle a level, on the diff alone.
+            # Nothing checks an answer that raises nothing, so one Codex gave
+            # without reading a file would approve, settle a level, or discard the
+            # candidates it was asked to verify, on the diff alone.
             raise EngineError(
                 "Codex gave a clean result without reading the workspace: no "
                 "command it ran succeeded, and a command is its only way to read "

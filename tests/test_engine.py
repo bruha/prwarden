@@ -1982,28 +1982,69 @@ class ReviewEngineTests(unittest.TestCase):
         self.assertEqual(output, answer)
 
     def test_every_level_s_clean_answer_is_recognised(self):
+        """By what an answer carries, never by its verdict word."""
+
         rejected = {"ref": "C1", "verdict": "rejected"}
         confirmed = {"ref": "C2", "verdict": "confirmed"}
         cases = {
             "code approval": ({"verdict": "approve", "findings": []}, True),
-            "code findings": ({"verdict": "do_not_approve"}, False),
+            "code findings": (
+                {"verdict": "do_not_approve", "findings": [{"title": "Bug"}]},
+                False,
+            ),
+            "withholding on a prior comment alone": (
+                {
+                    "verdict": "do_not_approve",
+                    "blocking_comment_ids": ["P1"],
+                    "findings": [],
+                },
+                True,
+            ),
             "sound design": ({"verdict": "sound", "findings": []}, True),
-            "flawed design": ({"verdict": "flawed"}, False),
+            "flawed design": ({"verdict": "flawed", "findings": [{"t": 1}]}, False),
             "consistent documentation": ({"verdict": "consistent"}, True),
-            "stale documentation": ({"verdict": "stale"}, False),
+            "stale documentation": ({"verdict": "stale", "findings": [{}]}, False),
             "verification rejecting all": ({"judgments": [rejected]}, True),
             "verification confirming one": (
                 {"judgments": [rejected, confirmed]},
                 False,
             ),
-            "code verification approving": (
-                {"verdict": "approve", "judgments": [rejected]},
+            "code verification withholding but confirming nothing": (
+                {
+                    "verdict": "do_not_approve",
+                    "blocking_comment_ids": ["P1"],
+                    "judgments": [rejected],
+                },
                 True,
             ),
         }
         for name, (payload, clean) in cases.items():
             with self.subTest(name):
                 self.assertIs(is_clean_result(payload), clean)
+
+    def test_every_schema_carries_what_the_clean_check_reads(self):
+        """A level whose answer raised something under another name, or whose
+        verifier confirmed under another word, would read as clean unread."""
+
+        material = self.input(Repository("app", "owner/app", Path(".")))[2]
+        schemas = {
+            "code": build_schema(10, material),
+            "design": build_design_schema(4),
+            "docs": build_docs_schema(4),
+            "code verification": build_code_verification_schema(2),
+            "design verification": build_design_verification_schema(2),
+            "docs verification": build_docs_verification_schema(2),
+        }
+        for name, schema in schemas.items():
+            with self.subTest(name):
+                properties = schema["properties"]
+                if name.endswith("verification"):
+                    judgment = properties["judgments"]["items"]["properties"]
+                    self.assertIn("confirmed", judgment["verdict"]["enum"])
+                    self.assertNotIn("findings", properties)
+                else:
+                    self.assertEqual(properties["findings"]["type"], "array")
+                    self.assertNotIn("judgments", properties)
 
     def test_a_codex_failure_reported_as_events_is_relayed(self):
         """With `--json`, Codex reports a failure on standard output, not error."""
@@ -2052,7 +2093,10 @@ class ReviewEngineTests(unittest.TestCase):
             settings = self.settings(
                 directory, repository, engine="codex", command=("codex",)
             )
-            with patch("prwarden.engine_codex.run_cmd", return_value=message):
+            with patch(
+                "prwarden.engine_codex.run_cmd",
+                return_value=CODEX_READ_EVENT + "\n" + message,
+            ):
                 output = CodexEngine(settings).review(*self.input(repository))
             with patch("prwarden.engine_codex.run_cmd", return_value=""):
                 with self.assertRaisesRegex(EngineError, "^Codex returned no answer$"):
