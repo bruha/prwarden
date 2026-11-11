@@ -340,14 +340,38 @@ def read_base_files(
     return documents
 
 
+FETCH_TIMEOUT_SECONDS = 180
+# One more attempt after a fetch that failed for a reason that passes. A fetch only
+# reads, so repeating it is safe, and the usual reason one fails is a slow or
+# dropped connection to GitHub: two scheduled runs each lost a review to a PR-head
+# fetch that hit its timeout, and the same fetch took seconds on the next run.
+FETCH_RETRIES = 1
+
+
+def _fetch(repository: Repository, fetch: "list[str]") -> None:
+    """Run one `git fetch` against GitHub, retried once when the failure is transient.
+
+    A timeout, a reset connection, or GitHub closing the SSH handshake counts; a
+    missing commit or a refused login fails at once, as before.
+    """
+
+    options = {
+        "timeout_seconds": FETCH_TIMEOUT_SECONDS,
+        "retry_transient": True,
+        "retry_attempts": FETCH_RETRIES,
+    }
+    if repository.managed_checkout:
+        run_git_for(repository, fetch, **options)
+    else:
+        run_cmd(["git", *fetch], **options)
+
+
 def _fetch_trusted_commit(repository: Repository, fetch: "list[str]") -> None:
     """Fetch a trusted commit into the local checkout; the caller holds its lock."""
 
     if repository.managed_checkout:
         ensure_managed_checkout(repository)
-        run_git_for(repository, fetch, timeout_seconds=180)
-    else:
-        run_cmd(["git", *fetch], timeout_seconds=180)
+    _fetch(repository, fetch)
 
 
 HISTORY_COMMITS_PER_FILE = 3
@@ -611,10 +635,7 @@ class ReviewWorkspace:
         try:
             # A clone of the operator's fetches with the operator's own Git
             # credentials; a managed clone has none, so GitHub CLI supplies them.
-            if self.repository.managed_checkout:
-                run_git_for(self.repository, fetch, timeout_seconds=180)
-            else:
-                run_cmd(["git", *fetch], timeout_seconds=180)
+            _fetch(self.repository, fetch)
             run_cmd(
                 [
                     "git",

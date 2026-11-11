@@ -1,14 +1,15 @@
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Optional
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from prwarden.commands import CommandError
 from prwarden.models import DependencyLink, PullRequest, Repository
-from prwarden.workspace import WorkspaceError, review_workspace
+from prwarden.workspace import WorkspaceError, read_base_files, review_workspace
 
 
 class ReviewWorkspaceTests(unittest.TestCase):
@@ -174,6 +175,107 @@ class ReviewWorkspaceTests(unittest.TestCase):
                         Path(directory) / "worktrees",
                     ):
                         pass
+
+
+class FetchRetryTests(unittest.TestCase):
+    """A fetch only reads, so one that fails for a reason that passes is tried again.
+
+    Driven below `run_cmd`, at `subprocess.run`, so the retry that runs is the real
+    one rather than a stand-in.
+    """
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        checkout = self.root / "checkout"
+        checkout.mkdir()
+        self.repository = Repository("app", "owner/app", checkout)
+        self.pull_request = PullRequest(7, "Title", "", "author", "a" * 40, "url")
+        self.fetches: "list[list[str]]" = []
+        self.results: "list[object]" = []
+
+    def run_process(self, args, **kwargs):
+        command = list(args)
+        if "fetch" in command:
+            self.fetches.append(command)
+            result = self.results.pop(0)
+            if result == "timeout":
+                raise subprocess.TimeoutExpired(command, kwargs.get("timeout"))
+            code, error = result
+            return subprocess.CompletedProcess(command, code, "", error)
+        output = ""
+        if command[-2:] == ["rev-parse", "--is-inside-work-tree"]:
+            output = "true\n"
+        elif command[-3:] == ["remote", "get-url", "origin"]:
+            output = "git@github.com:owner/app.git\n"
+        elif "worktree" in command and "add" in command:
+            Path(command[-2]).mkdir(parents=True)
+        elif "worktree" in command and "remove" in command:
+            shutil.rmtree(command[-1], ignore_errors=True)
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    def review(self, *results) -> "tuple[Optional[Path], Mock]":
+        self.results = list(results)
+        with patch(
+            "prwarden.commands.subprocess.run", side_effect=self.run_process
+        ), patch("prwarden.commands.time.sleep") as sleep, patch(
+            "prwarden.commands.progress.notify"
+        ):
+            with review_workspace(
+                self.repository, self.pull_request, self.root / "worktrees"
+            ) as exact:
+                return exact.path, sleep
+
+    def test_a_fetch_that_times_out_once_is_tried_again(self) -> None:
+        path, sleep = self.review("timeout", (0, ""))
+
+        self.assertIsNotNone(path)
+        self.assertEqual(len(self.fetches), 2)
+        self.assertEqual(self.fetches[0], self.fetches[1])
+        sleep.assert_called_once()
+
+    def test_a_dropped_ssh_connection_is_tried_again(self) -> None:
+        for message in (
+            "kex_exchange_identification: Connection closed by remote host\n"
+            "fatal: Could not read from remote repository.",
+            "fatal: the remote end hung up unexpectedly",
+            "fatal: early EOF\nfatal: index-pack failed",
+        ):
+            with self.subTest(message=message.splitlines()[0]):
+                self.fetches = []
+
+                path, _ = self.review((128, message), (0, ""))
+
+                self.assertIsNotNone(path)
+                self.assertEqual(len(self.fetches), 2)
+
+    def test_a_fetch_that_keeps_failing_is_an_error_after_two_attempts(self) -> None:
+        with self.assertRaisesRegex(WorkspaceError, "Cannot prepare PR head"):
+            self.review("timeout", "timeout")
+
+        self.assertEqual(len(self.fetches), 2)
+
+    def test_a_commit_github_does_not_have_is_not_asked_for_twice(self) -> None:
+        missing = (128, "fatal: remote error: upload-pack: not our ref " + "a" * 40)
+
+        with patch("prwarden.commands.time.sleep") as sleep:
+            with self.assertRaisesRegex(WorkspaceError, "not our ref"):
+                self.review(missing)
+
+        self.assertEqual(len(self.fetches), 1)
+        sleep.assert_not_called()
+
+    def test_a_base_branch_fetch_is_tried_again_too(self) -> None:
+        self.results = ["timeout", (0, "")]
+        with patch(
+            "prwarden.commands.subprocess.run", side_effect=self.run_process
+        ), patch("prwarden.commands.time.sleep"), patch(
+            "prwarden.commands.progress.notify"
+        ):
+            read_base_files(self.repository, "b" * 40, ("AGENTS.md",), bool)
+
+        self.assertEqual(len(self.fetches), 2)
 
 
 class DependencyLinkTests(unittest.TestCase):
