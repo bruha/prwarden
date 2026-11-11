@@ -102,6 +102,10 @@ class OrchestrationTests(unittest.TestCase):
         checks = patch("prwarden.cli.list_pull_request_checks", return_value=())
         checks.start()
         self.addCleanup(checks.stop)
+        # The base branch's history is read from GitHub and Git, which no test has.
+        history = patch("prwarden.cli._read_file_history", return_value=())
+        history.start()
+        self.addCleanup(history.stop)
         # Pinning asks the real GitHub CLI for a stored login, which no test has.
         pinning = patch("prwarden.cli.pin_github_account")
         pinning.start()
@@ -3243,6 +3247,8 @@ class OrchestrationTests(unittest.TestCase):
             ),
         ), patch(
             "prwarden.cli.list_pull_request_checks", return_value=()
+        ), patch(
+            "prwarden.cli._read_file_history", return_value=()
         ), patch(
             "prwarden.cli.get_pull_request_snapshot",
             return_value=replace(READY_SNAPSHOT, head_sha=head),

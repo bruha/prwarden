@@ -1364,6 +1364,9 @@ def _prepared_case(
         background = read_background(exact_repository.path)
         if background:
             material = replace(material, background=background)
+        history = cli._read_file_history(repository, pull_request, files, case.base)
+        if history:
+            material = replace(material, file_history=history)
         # The rules the pinned base held, so a replay judges what production judged.
         review_rules = cli.read_review_rules(repository, pull_request, case.base)
         if review_rules.sections:

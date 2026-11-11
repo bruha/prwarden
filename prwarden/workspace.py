@@ -12,7 +12,7 @@ from typing import Callable, Optional, Sequence, Type
 
 from .commands import CommandError, run_cmd
 from .github import run_git_for
-from .models import DependencyLink, PullRequest, Repository
+from .models import DependencyLink, HistoryCommit, PullRequest, Repository
 
 
 class WorkspaceError(RuntimeError):
@@ -348,6 +348,122 @@ def _fetch_trusted_commit(repository: Repository, fetch: "list[str]") -> None:
         run_git_for(repository, fetch, timeout_seconds=180)
     else:
         run_cmd(["git", *fetch], timeout_seconds=180)
+
+
+HISTORY_COMMITS_PER_FILE = 3
+MAX_HISTORY_COMMITS = 12
+MAX_HISTORY_SUBJECT_CHARACTERS = 200
+MAX_HISTORY_BODY_CHARACTERS = 500
+# Git refuses a commit message holding a NUL byte, so with `-z` each field ends in
+# one and each commit has exactly five; output that does not split that way is an
+# error, never a guess. A whitespace separator would not do: the command's
+# output is stripped, and Python counts the ASCII unit and record separators as
+# whitespace, which would lose the last commit when its body is empty.
+HISTORY_FORMAT = "%H%x00%ct%x00%cs%x00%s%x00%b"
+HISTORY_FIELDS = 5
+
+
+def _capped(text: str, limit: int) -> str:
+    text = text.strip()
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def read_file_history(
+    repository: Repository,
+    commit: str,
+    paths: "Sequence[str]",
+    per_file: int = HISTORY_COMMITS_PER_FILE,
+) -> "tuple[HistoryCommit, ...]":
+    """Return the latest commits reachable from ``commit`` that touched ``paths``.
+
+    ``commit`` is the base branch's tip, a trusted commit, so the history is what
+    the team merged, never what the pull request wrote. Read from the local
+    checkout's objects with merges left out, since a merge's message says which
+    branch arrived and not why the code changed. A commit touching several of the
+    paths is returned once, naming them all, newest first, at most
+    MAX_HISTORY_COMMITS in all. Each path goes after `--`, so no file name is read
+    as an option.
+    """
+
+    if not paths:
+        return ()
+    checkout = repository.path
+    if checkout is None:
+        raise WorkspaceError(
+            f"Repository {repository.slug} needs a local checkout path"
+        )
+    fetch = [
+        "-C",
+        str(checkout),
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-write-fetch-head",
+        "origin",
+        commit,
+    ]
+    entries: "dict[str, list]" = {}
+    order: "list[str]" = []
+    try:
+        with _checkout_lock(checkout):
+            _fetch_trusted_commit(repository, fetch)
+            for path in paths:
+                output = run_cmd(
+                    [
+                        "git",
+                        "-C",
+                        str(checkout),
+                        "log",
+                        "-z",
+                        "--no-merges",
+                        "--no-show-signature",
+                        f"--max-count={per_file}",
+                        f"--format={HISTORY_FORMAT}",
+                        commit,
+                        "--",
+                        path,
+                    ]
+                )
+                fields = output.split("\0")
+                if fields[-1] == "":
+                    fields.pop()
+                if len(fields) % HISTORY_FIELDS:
+                    raise WorkspaceError(
+                        f"Cannot read the history of {repository.slug}: "
+                        "git log printed an unexpected format"
+                    )
+                for start in range(0, len(fields), HISTORY_FIELDS):
+                    sha, stamp, date, subject, body = fields[
+                        start : start + HISTORY_FIELDS
+                    ]
+                    if not sha or not stamp.isdigit():
+                        raise WorkspaceError(
+                            f"Cannot read the history of {repository.slug}: "
+                            "git log printed an unexpected format"
+                        )
+                    if sha not in entries:
+                        entries[sha] = [int(stamp), date, subject, body, []]
+                        order.append(sha)
+                    if path not in entries[sha][4]:
+                        entries[sha][4].append(path)
+    except (CommandError, UnicodeDecodeError) as error:
+        raise WorkspaceError(
+            f"Cannot read the history of {repository.slug} at {commit[:12]}: {error}"
+        ) from error
+    # The sort is stable, so commits made in the same second keep Git's order.
+    order.sort(key=lambda sha: entries[sha][0], reverse=True)
+    return tuple(
+        HistoryCommit(
+            commit=sha[:12],
+            date=entries[sha][1],
+            subject=_capped(
+                " ".join(entries[sha][2].split()), MAX_HISTORY_SUBJECT_CHARACTERS
+            ),
+            body=_capped(entries[sha][3], MAX_HISTORY_BODY_CHARACTERS),
+            paths=tuple(entries[sha][4]),
+        )
+        for sha in order[:MAX_HISTORY_COMMITS]
+    )
 
 
 def read_generated_marks(

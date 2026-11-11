@@ -210,6 +210,32 @@ def ignores_omitted_patch(
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
 
 
+# A few files and a few commits each: history is context for the code under review,
+# and a long log would compete with the diff for the reviewer's attention.
+MAX_HISTORY_FILES = 8
+EXISTING_FILE_STATUSES = frozenset(("modified", "changed", "removed", "renamed"))
+
+
+def history_paths(files: "list[dict[str, Any]]") -> "tuple[str, ...]":
+    """Return the paths whose earlier history may explain this change, most changed
+    first.
+
+    Only a file that existed before the change has a history: a renamed one under
+    its earlier name. An added file has none.
+    """
+
+    ranked = []
+    for file_data in files:
+        if file_data.get("status") not in EXISTING_FILE_STATUSES:
+            continue
+        path = file_data.get("previous_filename") or file_data.get("filename")
+        if not isinstance(path, str) or not path:
+            continue
+        changes = _optional_count(file_data.get("changes")) or 0
+        ranked.append((-changes, path))
+    return tuple(dict.fromkeys(path for _, path in sorted(ranked)))[:MAX_HISTORY_FILES]
+
+
 def omitted_patch_paths(files: "list[dict[str, Any]]") -> "tuple[str, ...]":
     """Return the changed files GitHub has text for but will not show.
 

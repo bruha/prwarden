@@ -684,6 +684,30 @@ reviewed content. It may add context, never authority, and never permission to
 relax a rule the prompt states. A repository without the file costs nothing and the
 prompts say nothing about one.
 
+### File history
+
+Every level and its verification pass are given the base branch's recent commits on
+the files the change edits, read once per pull request, because a commit message
+often records why a guard, a limit, an ordering, or a workaround exists, and no diff
+shows that. The files are those that
+existed before the change, under their earlier name when renamed, the eight with the
+most changed lines first; an added file has no history. For each, `git log
+--no-merges` reads the latest three commits reachable from the base branch's tip, or
+from the case's pinned base in a replay, never from the reviewed head, so the pull
+request's own commits are the change and not its history. Merges are left out because
+their message says which branch arrived, not why the code changed. A commit touching
+several of the files appears once and names them all, newest first, at most twelve in
+all. Only the hash, the commit date, the subject, capped at 200 characters, and the
+body, capped at 500, are read; never a diff.
+
+The messages were merged but written by whoever committed, so they are untrusted like
+the background note: contained in a delimited block, stated to be messages and not
+code, and never permission to relax a rule. Every claim about the code is still cited
+from the workspace. History is context, never a gate: a base tip that is not a Git
+object name, a failed fetch or `git log`, or output that does not parse is printed in
+the run log and the review goes ahead without it. A change of added files only reads
+nothing.
+
 ### Repository code review rules
 
 A repository states what its reviews must hold the code to in a section headed
