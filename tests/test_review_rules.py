@@ -520,6 +520,8 @@ class OrchestrationTests(unittest.TestCase):
             ), patch(
                 "prwarden.cli._read_linked_issues", return_value=()
             ), patch(
+                "prwarden.cli._read_file_history", return_value=()
+            ), patch(
                 "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
             ), patch(
                 "prwarden.cli.review_workspace"

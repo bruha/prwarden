@@ -461,7 +461,11 @@ rather than advisory notes nobody checked.
 - Documentation the change outdated is reported as one advisory pull-request comment
   proposing the replacement text, never as an inline comment and never as a reason to
   withhold an approval.
-- A clean, mergeable team PR receives a bodyless GitHub approval.
+- A clean, mergeable team PR receives a bodyless GitHub approval, unless one of its
+  checks failed at that head. The checks are read again just before approving,
+  since CI often finishes during a review; the approval, or the `LGTM` for your own
+  PR, waits until a re-run passes or a new head arrives, and findings are still
+  delivered. A cancelled, skipped, or unfinished check does not hold it back.
 - The authenticated reviewer's own PR is never self-approved; findings or a
   clean mergeable `LGTM` result go to Slack. An `LGTM` reached by rejecting
   candidates also reports how many verification threw out, which distinguishes
@@ -556,6 +560,15 @@ It is framed as untrusted context in the prompt, capped, and may add background
 rather than authority, so it can never relax a review rule. A repository without the
 file costs nothing.
 
+Every level also reads why the changed code is as it is: the latest three commits on
+the base branch that touched each file the change edits, for its eight most-changed
+files and at most twelve commits in all. A commit message often says why a guard, a
+limit, or a workaround exists, so a change that removes one can be checked against
+the reason it was added. Only the messages are read, never their diffs, and merges
+are left out. They are framed as untrusted context like the background note, and
+history that cannot be read is reported in the run log and left out, never a reason
+to stop the review.
+
 ### What the pull request was asked to do
 
 A diff shows what changed, not why. Every level also reads the issues a pull
@@ -624,6 +637,24 @@ shows it. A scope rule like the last one works less well: the finding lands on a
 line that plainly belongs to the unrelated part of the change, or nowhere. A rule
 too vague to check on a line, such as "code must be fast" or "keep pull requests
 small", is either thrown out by the verifier or becomes noise.
+
+Database migrations suit rules well, because the migration file itself shows the
+break:
+
+```markdown
+## Code review
+
+- Never edit a migration that has been merged; add a new one.
+- A migration that drops a column or a table, or rewrites existing rows, says in a
+  comment how to undo it.
+- A migration never renames or drops a column in the same pull request as the code
+  that stops reading it; the code change merges and deploys first.
+```
+
+An edit to a merged migration lands on its changed lines, and a file the base branch
+already has is a merged one. A missing undo comment lands on the line that drops or
+rewrites. The last rule is a scope rule, so it is caught only when both changes are in
+one pull request.
 
 The controller validates cited evidence against the exact PR worktree and uses
 a separate adversarial verification pass for candidate findings, optionally on a

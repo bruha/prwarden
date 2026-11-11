@@ -56,6 +56,21 @@ class LinkedIssue:
 
 
 @dataclass(frozen=True)
+class HistoryCommit:
+    """An earlier commit on the base branch that touched a file the change edits.
+
+    Its message often says why the code is as it is. The message is untrusted text,
+    written by whoever committed, and describes an earlier change, not this one.
+    """
+
+    commit: str
+    date: str
+    subject: str
+    body: str = ""
+    paths: "tuple[str, ...]" = ()
+
+
+@dataclass(frozen=True)
 class PullRequestSnapshot:
     head_sha: str
     state: str
@@ -390,3 +405,6 @@ class ReviewMaterial:
     # closes and Jira work items it names. Read once per pull request and shared by
     # every level and bundle, like the background note.
     linked_issues: "tuple[LinkedIssue, ...]" = ()
+    # The base branch's recent commits on the files this change edits, read once per
+    # pull request and shared by every level and bundle.
+    file_history: "tuple[HistoryCommit, ...]" = ()

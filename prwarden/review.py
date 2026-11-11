@@ -29,6 +29,7 @@ from .models import (
     FindingEvidence,
     MovedFile,
     PriorReviewComment,
+    PullRequestCheck,
     RejectedDesignCandidate,
     RejectedDocsCandidate,
     RemovedFile,
@@ -40,6 +41,12 @@ from .models import (
 
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 ALLOWED_SEVERITIES = {"critical", "high", "medium", "low"}
+# A check whose conclusion says this head did not pass it. `cancelled`, `skipped`,
+# and `neutral` are not here: a run cancelled because no runner came, or skipped by
+# its own conditions, says nothing about the code.
+FAILED_CHECK_CONCLUSIONS = frozenset(
+    ("failure", "timed_out", "startup_failure", "action_required")
+)
 BUILD_CHECK_NAME = re.compile(r"build|compile|typecheck|type[-\s]check|tsc\b", re.I)
 BUILD_FAILURE_CLAIM = re.compile(
     r"\bTS\d{4}\b"
@@ -208,6 +215,49 @@ def ignores_omitted_patch(
     if mark is not None:
         return mark
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
+
+
+def failed_checks(checks: "Sequence[PullRequestCheck]") -> "tuple[str, ...]":
+    """Return the name of each check that failed at this head, sorted, once each.
+
+    A check still running has no conclusion yet, so only a finished one can fail.
+    """
+
+    return tuple(
+        sorted(
+            {
+                check.name
+                for check in checks
+                if (check.conclusion or "").lower() in FAILED_CHECK_CONCLUSIONS
+            }
+        )
+    )
+
+
+# A few files and a few commits each: history is context for the code under review,
+# and a long log would compete with the diff for the reviewer's attention.
+MAX_HISTORY_FILES = 8
+EXISTING_FILE_STATUSES = frozenset(("modified", "changed", "removed", "renamed"))
+
+
+def history_paths(files: "list[dict[str, Any]]") -> "tuple[str, ...]":
+    """Return the paths whose earlier history may explain this change, most changed
+    first.
+
+    Only a file that existed before the change has a history: a renamed one under
+    its earlier name. An added file has none.
+    """
+
+    ranked = []
+    for file_data in files:
+        if file_data.get("status") not in EXISTING_FILE_STATUSES:
+            continue
+        path = file_data.get("previous_filename") or file_data.get("filename")
+        if not isinstance(path, str) or not path:
+            continue
+        changes = _optional_count(file_data.get("changes")) or 0
+        ranked.append((-changes, path))
+    return tuple(dict.fromkeys(path for _, path in sorted(ranked)))[:MAX_HISTORY_FILES]
 
 
 def omitted_patch_paths(files: "list[dict[str, Any]]") -> "tuple[str, ...]":

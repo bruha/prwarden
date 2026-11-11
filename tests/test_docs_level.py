@@ -1072,6 +1072,8 @@ class DocsOrchestrationTests(unittest.TestCase):
         ), patch(
             "prwarden.cli._read_linked_issues", return_value=()
         ), patch(
+            "prwarden.cli._read_file_history", return_value=()
+        ), patch(
             "prwarden.cli.get_pull_request_snapshot",
             return_value=PullRequestSnapshot(
                 head_sha=head,
@@ -1625,6 +1627,8 @@ class DocsOrchestrationTests(unittest.TestCase):
                 "prwarden.cli.list_pull_request_checks", return_value=()
             ), patch(
                 "prwarden.cli._read_linked_issues", return_value=()
+            ), patch(
+                "prwarden.cli._read_file_history", return_value=()
             ), patch(
                 "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
             ), patch(

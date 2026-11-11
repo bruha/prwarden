@@ -163,6 +163,36 @@ class LocalDiffTests(unittest.TestCase):
 
             self.assertIn("two words.py", names)
 
+    def test_each_file_carries_the_status_github_reports(self) -> None:
+        """The controller decides with it: what was removed, what has a history."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.repository(directory)
+            (root / "gone.py").write_text("gone = 1\n", encoding="utf-8")
+            (root / "moved.py").write_text("moved = 1\n" * 5, encoding="utf-8")
+            base = self.commit(root, "more files")
+            (root / "app.py").write_text("value = 2\n", encoding="utf-8")
+            (root / "new.py").write_text("added = 1\n", encoding="utf-8")
+            (root / "gone.py").unlink()
+            # Named to sort first, so a misread rename would shift every later path.
+            git(root, "mv", "moved.py", "a moved.py")
+            head = self.commit(root, "every kind of change")
+
+            statuses = {
+                record["filename"]: record["status"]
+                for record in changed_files(root, base, head)
+            }
+
+            self.assertEqual(
+                statuses,
+                {
+                    "app.py": "modified",
+                    "new.py": "added",
+                    "gone.py": "removed",
+                    "a moved.py": "renamed",
+                },
+            )
+
     def test_a_rename_reports_where_it_came_from(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = self.repository(directory)

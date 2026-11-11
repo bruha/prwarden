@@ -876,13 +876,60 @@ class GitHubFeedbackTests(unittest.TestCase):
                 }
             ]
         )
-        with patch("prwarden.github.run_cmd", return_value=response) as run:
+        statuses = json.dumps({"state": "success", "statuses": []})
+        with patch(
+            "prwarden.github.run_cmd", side_effect=[response, statuses]
+        ) as run:
             checks = list_pull_request_checks(repository, pull_request)
 
         self.assertEqual(checks[0].name, "Build and typecheck")
         self.assertEqual(checks[0].conclusion, "success")
-        self.assertIn("commits/sha/check-runs", " ".join(run.call_args.args[0]))
-        self.assertTrue(run.call_args.kwargs["retry_transient"])
+        self.assertIn("commits/sha/check-runs", " ".join(run.call_args_list[0].args[0]))
+        self.assertTrue(run.call_args_list[0].kwargs["retry_transient"])
+
+    def test_commit_statuses_are_listed_as_checks(self):
+        """Many CI services report through the status API, and GitHub shows them
+        among a pull request's checks, so a failure there is a failed check."""
+
+        repository = Repository("app", "owner/app")
+        pull_request = PullRequest(7, "Title", "", "author", "sha", "url")
+        runs = json.dumps([{"check_runs": []}])
+        statuses = json.dumps(
+            {
+                "state": "failure",
+                "statuses": [
+                    {"context": "ci/circleci: test", "state": "failure"},
+                    {"context": "ci/jenkins", "state": "error"},
+                    {"context": "deploy/preview", "state": "pending"},
+                    {"context": "lint", "state": "success"},
+                ],
+            }
+        )
+        with patch(
+            "prwarden.github.run_cmd", side_effect=[runs, statuses]
+        ) as run:
+            checks = list_pull_request_checks(repository, pull_request)
+
+        self.assertIn("commits/sha/status", " ".join(run.call_args_list[1].args[0]))
+        self.assertEqual(
+            [(check.name, check.status, check.conclusion) for check in checks],
+            [
+                ("ci/circleci: test", "completed", "failure"),
+                ("ci/jenkins", "completed", "failure"),
+                ("deploy/preview", "in_progress", None),
+                ("lint", "completed", "success"),
+            ],
+        )
+
+    def test_an_unreadable_combined_status_is_an_error(self):
+        repository = Repository("app", "owner/app")
+        pull_request = PullRequest(7, "Title", "", "author", "sha", "url")
+        with patch(
+            "prwarden.github.run_cmd",
+            side_effect=[json.dumps([{"check_runs": []}]), "[]"],
+        ):
+            with self.assertRaises(CommandError):
+                list_pull_request_checks(repository, pull_request)
 
 
 class GitHubAccountPinningTests(unittest.TestCase):

@@ -82,6 +82,7 @@ from .models import (
     DocsAssessment,
     DiffBudget,
     LinkedIssue,
+    HistoryCommit,
     Finding,
     PriorReviewComment,
     PullRequest,
@@ -103,11 +104,13 @@ from .review import (
     build_review_material,
     collect_rejection_reasons,
     discover_documentation,
+    failed_checks,
     documentation_change_fingerprint,
     dominant_directories,
     read_background,
     collect_review_rules,
     format_byte_size,
+    history_paths,
     ignores_omitted_patch,
     is_review_rule_source,
     omitted_patch_paths,
@@ -128,6 +131,7 @@ from .workspace import (
     UnsupportedGitError,
     WorkspaceError,
     read_base_files,
+    read_file_history,
     read_generated_marks,
     review_workspace,
 )
@@ -212,6 +216,22 @@ def _recorded_unread_paths(record: "dict[str, Any]") -> "tuple[str, ...]":
     if not all(isinstance(path, str) and path for path in recorded):
         return ()
     return tuple(recorded)
+
+
+def _recorded_failed_checks(record: "dict[str, Any]") -> "tuple[str, ...]":
+    """Return the checks a stored withheld approval was withheld over."""
+
+    recorded = record.get("failed_checks")
+    if not isinstance(recorded, list) or not recorded:
+        return ()
+    if not all(isinstance(name, str) and name for name in recorded):
+        return ()
+    return tuple(recorded)
+
+
+def _describe_failed_checks(names: "Sequence[str]") -> str:
+    word = "check" if len(names) == 1 else "checks"
+    return f"{word} {', '.join(names)}"
 
 
 def _unread_settings_fingerprint(settings: Settings) -> str:
@@ -1765,6 +1785,43 @@ def _read_linked_issues(
     return tuple(issues)
 
 
+def _read_file_history(
+    repository: Repository,
+    pull_request: PullRequest,
+    files: "list[dict[str, Any]]",
+    commit: Optional[str] = None,
+) -> "tuple[HistoryCommit, ...]":
+    """Return the base branch's recent commits on the files this change edits.
+
+    A commit message often says why a guard, a limit, or a workaround exists, which
+    no diff shows. Read from the base branch's tip, or ``commit`` when a replay pins
+    one, so the history is what the team merged rather than what the pull request
+    says. This is context, never a gate: history that cannot be read is reported
+    and left out, and the review goes ahead without it.
+    """
+
+    paths = history_paths(files)
+    if not paths:
+        return ()
+    base_ref = pull_request.base_ref
+    try:
+        if commit is None:
+            if not base_ref:
+                raise WorkspaceError("the pull request names no base branch")
+            commit = get_branch_head_sha(repository, base_ref)
+        commit = validate_object_name(commit, f"{repository.slug} base commit")
+        history = read_file_history(repository, commit, paths)
+    except (CommandError, WorkspaceError) as error:
+        print(f"      -> Could not read the history of the changed files: {error}")
+        return ()
+    if history:
+        print(
+            f"      -> Reading {len(history)} earlier "
+            f"commit{'s' if len(history) != 1 else ''} on the changed files"
+        )
+    return history
+
+
 def _bundled_material(
     files: "list[dict[str, Any]]",
     settings: Settings,
@@ -2450,7 +2507,32 @@ def _process_pull_request(
                     "MAX_DIFF_BYTES, or --force reopens it"
                 )
                 return
-            if not valid_recorded_blockers:
+            recorded_failed = _recorded_failed_checks(record)
+            if recorded_failed:
+                # Another review of this head would be withheld again while any of
+                # its checks still fails, so it is not spent until one could pass.
+                try:
+                    failing = failed_checks(
+                        list_pull_request_checks(repository, pull_request)
+                    )
+                except CommandError as error:
+                    print(
+                        "      -> Skipped: approval stays withheld; this head's "
+                        f"checks could not be read: {error}"
+                    )
+                    return
+                if failing:
+                    print(
+                        "      -> Skipped: approval stays withheld while "
+                        f"{_describe_failed_checks(failing)} failed at this head; a "
+                        "re-run that passes, a later head, or --force reopens it"
+                    )
+                    return
+                print(
+                    "      -> No check fails at this head any more; reconsidering "
+                    "withheld approval"
+                )
+            elif not valid_recorded_blockers:
                 print(
                     "      -> Stored withheld approval lacks validated blockers; "
                     "reconsidering"
@@ -2572,6 +2654,7 @@ def _process_pull_request(
             material,
             checks=checks,
             linked_issues=_read_linked_issues(repository, pull_request),
+            file_history=_read_file_history(repository, pull_request, files),
         )
         if checks:
             print(
@@ -2961,6 +3044,32 @@ def _process_pull_request(
                 print(
                     "      -> Recorded as merge_conflict; this head remains retryable"
                 )
+            return
+        # Read again rather than reusing the checks the review started with: CI
+        # often finishes while a review runs, and an approval speaks for the head
+        # as it is now. A failed check is the head failing a test the team chose,
+        # which no review verdict outweighs.
+        try:
+            failing = failed_checks(list_pull_request_checks(repository, pull_request))
+        except CommandError as error:
+            store.set_status(state_key, "failed", error=str(error))
+            raise
+        if failing:
+            _print_findings(findings, False)
+            reason = f"GitHub {_describe_failed_checks(failing)} failed at this head"
+            print(f"      -> Approval withheld: {reason}")
+            store.set_status(
+                state_key,
+                "approval_withheld",
+                reason=reason,
+                blocking_comment_ids=[],
+                feedback_fingerprint=_feedback_fingerprint(latest_prior_comments),
+                failed_checks=list(failing),
+            )
+            print(
+                "      -> Recorded as approval_withheld; a re-run that passes or a "
+                "later head reopens it"
+            )
             return
 
     if clean_candidate:

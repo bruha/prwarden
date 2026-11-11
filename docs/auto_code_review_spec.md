@@ -14,6 +14,17 @@ review-engine adapter, and route confirmed correctness or security findings:
   mergeability checks, send an `LGTM` Slack message stating that the PR can be
   merged once required checks and branch protections pass. Never approve it on
   GitHub because authors cannot approve their own pull requests.
+- No clean result, approval or `LGTM`, is delivered while a check on the exact
+  head has failed. Just before delivering one, the controller reads the head's
+  check runs and commit statuses again, because CI often finishes while a review
+  runs, and a conclusion of `failure`, `timed_out`, `startup_failure`, or
+  `action_required`, or a status of `failure` or `error`, withholds it: the head
+  failed a test the team chose, and no review verdict outweighs that. A cancelled,
+  skipped, neutral, or still-running check does not withhold, since it says nothing
+  about the code. Findings are delivered as usual. The record names the failed
+  checks, and while any check on that head still fails a later run skips it without
+  reviewing; a re-run that passes, a later head, or `--force` reopens it. Checks
+  that cannot be read keep it skipped.
 - Configured reviewer's pull requests in a repository with `"slack": false`: the
   same results on the pull request instead, because the webhook belongs to a
   workspace that project is not part of. Findings are one GitHub review with inline
@@ -562,7 +573,10 @@ The diff is rebuilt with `git diff <base> <head>`, per file, each patch trimmed 
 its first hunk header, because a `+++ b/path` line reaching the parser would be read
 as an added line and become a legal finding anchor. Line counts come from `--numstat`
 in its NUL-separated form, so a path containing a space or a quote survives, and a
-rename reports where it came from.
+rename reports where it came from. Each file's status, added, modified, removed, or
+renamed, comes from `--name-status` in the same form, named as GitHub names it,
+because the controller decides with it: a removed file is not reviewed line by line,
+and only a file that existed before has a history to read.
 
 A merged pull request stays replayable and needs no special handling: GitHub keeps the
 commit reachable through its pull-request ref, so fetching the pinned head by object
@@ -710,6 +724,30 @@ prompt, and named in the sentence that forbids following instructions found in
 reviewed content. It may add context, never authority, and never permission to
 relax a rule the prompt states. A repository without the file costs nothing and the
 prompts say nothing about one.
+
+### File history
+
+Every level and its verification pass are given the base branch's recent commits on
+the files the change edits, read once per pull request, because a commit message
+often records why a guard, a limit, an ordering, or a workaround exists, and no diff
+shows that. The files are those that
+existed before the change, under their earlier name when renamed, the eight with the
+most changed lines first; an added file has no history. For each, `git log
+--no-merges` reads the latest three commits reachable from the base branch's tip, or
+from the case's pinned base in a replay, never from the reviewed head, so the pull
+request's own commits are the change and not its history. Merges are left out because
+their message says which branch arrived, not why the code changed. A commit touching
+several of the files appears once and names them all, newest first, at most twelve in
+all. Only the hash, the commit date, the subject, capped at 200 characters, and the
+body, capped at 500, are read; never a diff.
+
+The messages were merged but written by whoever committed, so they are untrusted like
+the background note: contained in a delimited block, stated to be messages and not
+code, and never permission to relax a rule. Every claim about the code is still cited
+from the workspace. History is context, never a gate: a base tip that is not a Git
+object name, a failed fetch or `git log`, or output that does not parse is printed in
+the run log and the review goes ahead without it. A change of added files only reads
+nothing.
 
 ### Repository code review rules
 

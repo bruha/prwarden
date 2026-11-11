@@ -89,6 +89,8 @@ class MergeConflictStateTests(unittest.TestCase):
         ), patch(
             "prwarden.cli._read_linked_issues", return_value=()
         ), patch(
+            "prwarden.cli._read_file_history", return_value=()
+        ), patch(
             "prwarden.cli.get_pull_request_snapshot", side_effect=read_snapshot
         ) as snapshot, patch(
             "prwarden.cli.time.sleep"
