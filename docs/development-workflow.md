@@ -156,7 +156,10 @@ The hooks then refuse a commit whose added lines, file names, or message contain
 any of those terms, a reference missing from the map, or a malformed one, and
 print where each one is. Check the whole tree with
 `python3 -m prwarden.public_safety check --all`. Without the word list the check fails
-rather than passing, because it has nothing to compare against.
+rather than passing, because it has nothing to compare against. The hooks run the
+first `python3` on `PATH`, which must be Python 3.11 or newer: an older one, such as
+macOS's `/usr/bin/python3`, refuses every commit with a message naming the Python it
+needs.
 
 ## AI-assisted development process
 

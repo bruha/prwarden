@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from prwarden.__main__ import MINIMUM_PYTHON
+import prwarden
+from prwarden import MINIMUM_PYTHON
 from prwarden.paths import PACKAGE_ROOT
 
 
@@ -69,29 +70,27 @@ class PythonFloorTests(unittest.TestCase):
                 self.assertEqual(oldest, MINIMUM_PYTHON)
 
     def test_an_older_python_is_told_what_it_needs_before_any_import(self) -> None:
-        sys.modules.pop("prwarden.__main__", None)
+        """Checked when the package is imported, so every entry point is covered:
+        `python3 -m prwarden`, the public-safety hooks, release, and evaluate."""
+
+        self.addCleanup(importlib.reload, prwarden)
         with patch.object(sys, "version_info", (3, 9, 6, "final", 0)), patch.object(
             sys, "version", "3.9.6 (default, May 22 2026)"
-        ), patch("prwarden.cli.main") as main:
+        ):
             with self.assertRaises(SystemExit) as raised:
-                importlib.import_module("prwarden.__main__")
-        sys.modules.pop("prwarden.__main__", None)
+                importlib.reload(prwarden)
 
         message = str(raised.exception.code)
         self.assertIn("needs Python 3.11 or newer", message)
         self.assertIn("this is Python 3.9.6", message)
         self.assertIn("brew install bruha/tap/prwarden", message)
-        main.assert_not_called()
 
-    def test_a_supported_python_imports_the_entry_point(self) -> None:
-        sys.modules.pop("prwarden.__main__", None)
-        with patch("prwarden.cli.main") as main:
-            module = importlib.import_module("prwarden.__main__")
-        sys.modules.pop("prwarden.__main__", None)
+    def test_a_supported_python_imports_the_package(self) -> None:
+        version = prwarden.__version__
 
-        self.assertIs(module.main, main)
-        main.assert_not_called()
+        importlib.reload(prwarden)
 
+        self.assertEqual(prwarden.__version__, version)
 
 if __name__ == "__main__":
     unittest.main()

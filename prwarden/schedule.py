@@ -518,6 +518,61 @@ def status(
     return 0
 
 
+def scheduled_command(home: Optional[Path] = None) -> "Optional[list[str]]":
+    """Return the command this machine's schedule runs, or None without one.
+
+    The arguments are read back from the LaunchAgent or the systemd service as
+    written, without the `caffeinate` launchd runs them under.
+    """
+
+    home = Path.home() if home is None else home
+    if _platform() == "launchd":
+        path = launchd_plist_path(home)
+        if not path.exists():
+            return None
+        with path.open("rb") as handle:
+            plist = plistlib.load(handle)
+        arguments = [str(argument) for argument in plist.get("ProgramArguments", [])]
+        if arguments[:3] == ["/usr/bin/caffeinate", "-i", "-s"]:
+            arguments = arguments[3:]
+        return arguments
+    service = systemd_directory(home) / f"{SYSTEMD_UNIT}.service"
+    if not service.exists():
+        return None
+    for line in service.read_text(encoding="utf-8").splitlines():
+        if line.startswith("ExecStart="):
+            return [
+                part.replace("%%", "%").replace("$$", "$")
+                for part in shlex.split(line[len("ExecStart="):])
+            ]
+    return None
+
+
+def command_interpreter(command: Sequence[str]) -> Optional[str]:
+    """Return the Python a scheduled command runs on, when it names one.
+
+    A schedule from a source checkout runs `<python> -m prwarden`. An installed
+    copy runs the `prwarden` script, whose first line names its interpreter. One
+    that finds Python through `env` names none this can check.
+    """
+
+    if len(command) >= 3 and list(command[1:3]) == ["-m", "prwarden"]:
+        return command[0]
+    if not command or Path(command[0]).name != "prwarden":
+        return None
+    try:
+        with open(command[0], "rb") as handle:
+            first_line = handle.readline(400)
+    except OSError:
+        return None
+    if not first_line.startswith(b"#!"):
+        return None
+    words = first_line[2:].decode("utf-8", "replace").split()
+    if not words or Path(words[0]).name == "env":
+        return None
+    return words[0]
+
+
 def remove(
     args: argparse.Namespace,
     print_line: Callable[[str], None] = print,

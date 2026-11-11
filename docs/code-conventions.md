@@ -28,8 +28,11 @@ The floor was 3.9 until 3.0.0, so a clone could run on a stock Mac's
 Tools. Two things ended that. Homebrew and PyPI releases made a clone unnecessary
 for running it, and CI images began dropping 3.9: the Ubuntu 26.04 `ubuntu-latest`
 has no 3.9 for `actions/setup-python`. That stock interpreter no longer runs this
-tool; `python3 -m prwarden` on an older Python exits with a message naming the one
-it needs, before importing anything that newer syntax could break.
+tool. The package checks the version when it is first imported, so
+`python3 -m prwarden`, the public-safety hooks, and every other entry point exit on
+an older Python with a message naming the one it needs, before importing anything
+newer syntax could break, and `prwarden doctor` reports a schedule still installed
+on one.
 
 The cost of the floor is that syntax and standard-library APIs newer than 3.11 are
 unavailable, most often PEP 695 type parameters and `type` statements, PEP 701
@@ -54,8 +57,8 @@ python3.11 -m unittest discover -s tests
 
 Raising the floor is a legitimate decision, not a forbidden one. It requires
 updating this section, [AGENTS.md](../AGENTS.md), the
-[README](../README.md) requirements, the CI matrices, the version check in
-`prwarden/__main__.py`, and `requires-python` and the pinned build backend in
+[README](../README.md) requirements, the CI matrices, `MINIMUM_PYTHON` in
+`prwarden/__init__.py`, and `requires-python` and the pinned build backend in
 `pyproject.toml` in the same change, so the documented floor and the enforced
 floor never disagree again.
 

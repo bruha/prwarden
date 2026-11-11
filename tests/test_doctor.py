@@ -1,4 +1,5 @@
 import os
+import plistlib
 import tempfile
 import unittest
 from dataclasses import replace
@@ -113,7 +114,9 @@ class ScheduleTests(unittest.TestCase):
                 print_line("Runs Mon-Fri at 08:00")
             return 0 if installed else 1
 
-        with patch("prwarden.doctor.schedule.status", side_effect=status):
+        with patch("prwarden.doctor.schedule.status", side_effect=status), patch(
+            "prwarden.doctor.check_schedule_python", return_value=[]
+        ):
             return doctor.check_schedule()
 
     def test_two_schedules_are_a_problem_and_one_of_either_kind_is_not(self) -> None:
@@ -121,6 +124,115 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(statuses(self.check(installed=True, other=False)), [OK])
         self.assertEqual(statuses(self.check(installed=False, other=True)), [OK])
         self.assertEqual(statuses(self.check(installed=False, other=False)), [NOTE])
+
+    def test_an_installed_schedule_also_has_its_python_checked(self) -> None:
+        old = Check(PROBLEM, "schedule: runs Python 3.9")
+
+        def status(_args, print_line):
+            print_line("Runs Mon-Fri at 08:00")
+            return 0
+
+        with patch("prwarden.doctor.schedule.status", side_effect=status), patch(
+            "prwarden.doctor.check_schedule_python", return_value=[old]
+        ):
+            checks = doctor.check_schedule()
+
+        self.assertEqual(statuses(checks), [OK, PROBLEM])
+        self.assertIs(checks[1], old)
+
+
+class SchedulePythonTests(unittest.TestCase):
+    """A schedule on a Python below the floor stops before it can report anything."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.home = Path(temporary.name)
+        self.probed: "list[list[str]]" = []
+
+    def launch_agent(self, *arguments: str) -> None:
+        directory = self.home / "Library" / "LaunchAgents"
+        directory.mkdir(parents=True)
+        with (directory / "io.github.bruha.prwarden.plist").open("wb") as handle:
+            plistlib.dump(
+                {"ProgramArguments": ["/usr/bin/caffeinate", "-i", "-s", *arguments]},
+                handle,
+            )
+
+    def check(self, version="3.15", platform="launchd", error=None):
+        def run(args, **_options):
+            self.probed.append(list(args))
+            if error is not None:
+                raise error
+            return version
+
+        with patch("prwarden.schedule._platform", return_value=platform), patch.dict(
+            os.environ, {"XDG_CONFIG_HOME": str(self.home / ".config")}
+        ):
+            return doctor.check_schedule_python(self.home, run)
+
+    def test_a_clone_scheduled_on_an_old_python_is_a_problem(self) -> None:
+        self.launch_agent("/usr/bin/python3", "-m", "prwarden", "--live")
+
+        checks = self.check("3.9")
+
+        self.assertEqual(statuses(checks), [PROBLEM])
+        self.assertIn("runs Python 3.9 (/usr/bin/python3)", checks[0].message)
+        self.assertIn("needs 3.11 or newer", checks[0].message)
+        self.assertEqual(self.probed[0][:2], ["/usr/bin/python3", "-c"])
+
+    def test_a_supported_python_says_nothing(self) -> None:
+        self.launch_agent("/opt/python/bin/python3", "-m", "prwarden", "--live")
+
+        self.assertEqual(self.check("3.11"), [])
+        self.assertEqual(self.check("3.15"), [])
+
+    def test_an_installed_script_is_checked_through_its_first_line(self) -> None:
+        script = self.home / "bin" / "prwarden"
+        script.parent.mkdir()
+        script.write_text("#!/opt/old/bin/python3.10\nimport sys\n", encoding="utf-8")
+        self.launch_agent(str(script), "--live")
+
+        checks = self.check("3.10")
+
+        self.assertEqual(statuses(checks), [PROBLEM])
+        self.assertEqual(self.probed[0][0], "/opt/old/bin/python3.10")
+
+    def test_a_script_that_finds_python_through_env_is_not_guessed(self) -> None:
+        script = self.home / "bin" / "prwarden"
+        script.parent.mkdir()
+        script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        self.launch_agent(str(script), "--live")
+
+        self.assertEqual(self.check("3.9"), [])
+        self.assertEqual(self.probed, [])
+
+    def test_a_systemd_service_is_read_the_same_way(self) -> None:
+        units = self.home / ".config" / "systemd" / "user"
+        units.mkdir(parents=True)
+        (units / "prwarden.service").write_text(
+            "[Service]\n"
+            # Written with systemd's own escapes, which `schedule install` adds.
+            'ExecStart="/opt/py%%3/$$bin/python3" "-m" "prwarden" "--live"\n',
+            encoding="utf-8",
+        )
+
+        checks = self.check("3.10", platform="systemd")
+
+        self.assertEqual(statuses(checks), [PROBLEM])
+        self.assertEqual(self.probed[0][0], "/opt/py%3/$bin/python3")
+
+    def test_a_python_that_does_not_run_is_a_problem(self) -> None:
+        self.launch_agent("/gone/python3", "-m", "prwarden", "--live")
+
+        checks = self.check(error=CommandError("Required command not found"))
+
+        self.assertEqual(statuses(checks), [PROBLEM])
+        self.assertIn("/gone/python3", checks[0].message)
+
+    def test_no_schedule_checks_nothing(self) -> None:
+        self.assertEqual(self.check("3.9"), [])
+        self.assertEqual(self.probed, [])
 
 
 class MainTests(unittest.TestCase):

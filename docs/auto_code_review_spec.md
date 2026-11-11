@@ -150,8 +150,10 @@ be mistaken for one.
   rewrites beside it.
 - `doctor` only reads: no post, clone, or model call. It shows which tools are
   installed and signed in, and exits 1 for anything that would stop reviews or
-  delivery, a configured engine that is signed out and two schedules running at
-  once included.
+  delivery, a configured engine that is signed out, two schedules running at
+  once, and a schedule whose Python is older than 3.11 included. That last one is
+  found by asking the scheduled interpreter, or the one an installed `prwarden`
+  script names on its first line, for its version.
 - `schedule install` writes a per-user LaunchAgent on macOS or a systemd user
   timer on Linux that runs `prwarden --live`, and refuses while the configuration
   keeps `AUTO_REVIEW_DRY_RUN` on: a dry run records nothing, so a scheduled one

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence
 
-from . import __version__, github, schedule, tools
+from . import MINIMUM_PYTHON, __version__, github, schedule, tools
 from .commands import CommandError, run_cmd
 from .config import ConfigError, Settings, default_locations, load_settings
 from .paths import LAYOUT_CHECKOUT, LAYOUT_HOME, Locations
@@ -239,10 +239,55 @@ def check_schedule() -> List[Check]:
         ]
     if installed:
         runs = next((line for line in lines if line.startswith("Runs ")), "Runs")
-        return [Check(OK, f"schedule: r{runs[1:]}")]
+        return [Check(OK, f"schedule: r{runs[1:]}")] + check_schedule_python()
     if others:
         return [Check(OK, f"schedule: {other} runs PR Warden") for other in others]
     return [Check(NOTE, "no schedule; add one with: prwarden schedule install")]
+
+
+# The command that prints an interpreter's version, run with the scheduled Python.
+PYTHON_VERSION_PROBE = "import sys; print('%d.%d' % sys.version_info[:2])"
+
+
+def check_schedule_python(
+    home: Optional[Path] = None,
+    run: "Callable[..., str]" = run_cmd,
+) -> List[Check]:
+    """Check that the schedule's Python is one PR Warden still runs on.
+
+    A schedule installed from a clone keeps the interpreter that installed it. One
+    older than the floor stops at the version check on every slot, before anything
+    could send an error notification, so this is the only place it shows.
+    """
+
+    try:
+        command = schedule.scheduled_command(home)
+    except (schedule.ScheduleError, OSError, ValueError) as error:
+        return [Check(NOTE, f"schedule: cannot read its command: {error}")]
+    interpreter = schedule.command_interpreter(command or ())
+    if interpreter is None:
+        return []
+    floor = "{0}.{1}".format(*MINIMUM_PYTHON)
+    try:
+        version = run([interpreter, "-c", PYTHON_VERSION_PROBE], timeout_seconds=30)
+        parsed = tuple(int(part) for part in version.strip().split("."))
+    except (CommandError, ValueError) as error:
+        return [
+            Check(
+                PROBLEM,
+                f"schedule: its Python, {interpreter}, does not run: {error}",
+            )
+        ]
+    if parsed >= MINIMUM_PYTHON:
+        return []
+    return [
+        Check(
+            PROBLEM,
+            f"schedule: runs Python {version.strip()} ({interpreter}), and PR Warden "
+            f"needs {floor} or newer, so every scheduled run stops at once; run "
+            f"`prwarden schedule install` again with Python {floor} or newer",
+        )
+    ]
 
 
 def diagnose(env_file: Optional[Path]) -> "tuple[List[str], List[Check]]":
