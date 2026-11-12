@@ -1408,6 +1408,12 @@ def _prepared_case(
         history = cli._read_file_history(repository, pull_request, files, case.base)
         if history:
             material = replace(material, file_history=history)
+        # What the pull request was asked to do, read as a live review reads it: a
+        # design replay without it cannot measure anything judged against intent.
+        # Issues are read as they stand today, since a case pins code, not trackers.
+        issues = cli._read_linked_issues(repository, pull_request)
+        if issues:
+            material = replace(material, linked_issues=issues)
         # The rules the pinned base held, so a replay judges what production judged.
         review_rules = cli.read_review_rules(repository, pull_request, case.base)
         if review_rules.sections:

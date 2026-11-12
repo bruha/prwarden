@@ -251,6 +251,11 @@ DOCS_LEVEL = "docs"
 
 BACKGROUND_FILE_LABEL = ".prwarden/background.md"
 
+# A behaviour the description or a linked issue asks for that nothing in the reviewed
+# head delivers. It is the one design claim about an absence, so it is the one shown
+# by searches the controller runs again rather than by a cited line alone.
+REQUESTED_BEHAVIOR_MISSING = "requested_behavior_missing"
+
 DESIGN_CATEGORIES = (
     "duplicates_existing_capability",
     "responsibility_in_wrong_place",
@@ -260,6 +265,7 @@ DESIGN_CATEGORIES = (
     "inconsistent_with_established_pattern",
     "coupling_or_extensibility",
     "change_outside_stated_intent",
+    REQUESTED_BEHAVIOR_MISSING,
 )
 
 DESIGN_FIELD_LIMITS = {
@@ -271,7 +277,16 @@ DESIGN_FIELD_LIMITS = {
     "alternative": 500,
     "reason": 700,
     "relevance": 400,
+    "pattern": 120,
+    "scope": 240,
+    "purpose": 200,
 }
+
+# How many searches one design finding may rest on, and how many files a search may
+# match and still show that something is missing: a pattern found in more files than
+# this is too common to say anything about what the workspace lacks.
+MAX_DESIGN_SEARCHES = 4
+MAX_SEARCH_MATCHES = 5
 
 DOCS_CATEGORIES = (
     "documented_behavior_no_longer_true",
@@ -680,9 +695,9 @@ def _design_correction(material: ReviewMaterial) -> str:
         return ""
     return f"""
 YOUR PREVIOUS RESPONSE WAS REJECTED by the controller, which validates every
-citation against this workspace: {material.validation_error}
+citation and search against this workspace: {material.validation_error}
 Correct that specific problem. Keep the findings you can still establish, drop the
-one you cannot, and re-check every citation before answering.
+one you cannot, and re-check every citation and search before answering.
 """
 
 
@@ -1059,11 +1074,11 @@ flow, what contracts it establishes, and how well it fits the code that already
 exists in this workspace.
 
 You are NOT reviewing visual or graphic design, styling, copy, naming, formatting,
-code style, comments, test coverage, or line-level bugs. A separate level already
-reports line-level correctness defects, so do not duplicate that work: a missing
-null check, an off-by-one, a missing await, or a wrong operator belongs to that
-level, not to you. Report a line-level bug only when it is a symptom of the
-structural choice you are describing.
+code style, comments, test coverage nobody asked for, or line-level bugs.
+A separate level already reports line-level correctness defects, so do not duplicate
+that work: a missing null check, an off-by-one, a missing await, or a wrong operator
+belongs to that level, not to you. Report a line-level bug only when it is a symptom
+of the structural choice you are describing.
 
 {_design_shared_rules(repository, pull_request, material)}
 
@@ -1075,14 +1090,7 @@ The diff is not the complete branch; read the current files:
 {contain_untrusted(material.diff)}
 
 HOW TO WORK
-1. Read the changed files completely, then read what they call and what calls them,
-   so you judge the change as a whole rather than as hunks.
-2. Search this workspace for code that already solves the same problem: an existing
-   helper, hook, service, provider, layer, or sibling component doing the same job.
-   Design review earns its keep here.
-3. Decide what the change is trying to achieve, then judge whether the chosen
-   structure is the cheapest correct way to achieve it in THIS codebase.
-4. Only then write findings.
+{_design_work_steps(pull_request, material)}
 
 WHAT COUNTS AS A DESIGN FLAW
 Report at most {material.max_design_findings}, and only where you can name a
@@ -1100,14 +1108,15 @@ concrete consequence that follows from the structure itself:
 - the change contradicts an established pattern its siblings here follow, so the
   codebase now has two ways to do one thing;
 - coupling that will force an unrelated change later, where you can name the future
-  caller or case that forces it.{_scope_rule(pull_request, material)}
+  caller or case that forces it.{_intent_rules(pull_request, material)}
 
 WHAT MAKES A FINDING USABLE
 - `consequence` must describe something that happens, or that someone will have to
   do, and it must be reachable in this workspace: name the route, page, caller, or
   deployment fact that makes it real. Never "this could become hard to maintain".
   A consequence that needs a coincidence, or a caller this workspace does not
-  contain, is not reachable and the finding must be omitted.
+  contain, is not reachable and the finding must be omitted.\
+{_requested_behavior_reach(pull_request, material)}
 - `why_not_preference` must explain why a reasonable engineer could not simply
   disagree with you: name the cost that exists whatever anyone's taste. If the only
   cost you can name is that the result would be cleaner, omit the finding.
@@ -1115,6 +1124,7 @@ WHAT MAKES A FINDING USABLE
 - `problem` describes the structure itself, without restating the diff.
 - Cite the line that shows the structure, and cite the existing code you compare it
   against when you claim this workspace already solves the problem.
+{_design_search_rule()}
 - If you cannot establish a finding from files you actually read here, omit it. An
   omitted finding costs nothing; a wrong one costs the reader's trust.
 - `understanding`: two sentences on what this change does and how it is reached, so
@@ -1156,6 +1166,187 @@ def _scope_rule(pull_request: PullRequest, material: ReviewMaterial) -> str:
   stated intent this file falls outside."""
 
 
+def _requested_behavior_rule(
+    pull_request: PullRequest, material: ReviewMaterial
+) -> str:
+    """Return the check for asked-for behaviour nothing delivers, given an intent.
+
+    A diff shows what was done, so a reviewer reading it judges what is there; what
+    was asked for and never written leaves no line to read. Only a list of what was
+    asked, searched for one item at a time, finds it, and only searches can show it.
+    """
+
+    if not has_stated_intent(pull_request, material):
+        return ""
+    return f"""
+- `{REQUESTED_BEHAVIOR_MISSING}`: a behaviour the pull-request description or a
+  linked issue asks this change to deliver, an acceptance criterion included, that
+  no code in this workspace delivers: a route or handler nothing calls, a client
+  call to an endpoint nothing serves, a setting or flag nothing reads, a screen
+  nothing links to, an event nothing emits or nothing handles, or a test the
+  description or an issue explicitly asks for that no assertion makes. Report it
+  only when the missing part belongs in this repository and in this change: the
+  description or issue does not leave it to a later change or to another
+  repository, and this repository is where that part would live, so a server route
+  with no caller here lacks nothing when its clients are kept elsewhere. Code the
+  base branch already had counts as delivering it. Cite the changed line closest to
+  the gap, such as the route nothing calls, and show the absence in `searches`. The
+  consequence is what the person who asked will not get; the absence is the claim,
+  so nothing has to reach it. `why_not_preference` names, by reference and without
+  quoting it, the description or issue that asks for it."""
+
+
+def _requested_behavior_reach(
+    pull_request: PullRequest, material: ReviewMaterial
+) -> str:
+    """Return how a missing behaviour is reached, when that check is offered.
+
+    Every other consequence is reached by a caller, which an absence has none of; the
+    general rule, read alone, would have the reviewer omit every such finding.
+    """
+
+    if not has_stated_intent(pull_request, material):
+        return ""
+    return f"""
+  A `{REQUESTED_BEHAVIOR_MISSING}` consequence is reached by the request that asks
+  for the behaviour, not by a caller."""
+
+
+def _intent_rules(pull_request: PullRequest, material: ReviewMaterial) -> str:
+    """Return the design categories judged against what the change was asked to do."""
+
+    return _scope_rule(pull_request, material) + _requested_behavior_rule(
+        pull_request, material
+    )
+
+
+def _design_work_steps(pull_request: PullRequest, material: ReviewMaterial) -> str:
+    """Return how the design reviewer works, in order.
+
+    With a stated intent there is a step for what was asked, before the structure is
+    judged: reading the change only ever shows what was done.
+    """
+
+    asked = ""
+    later = 3
+    if has_stated_intent(pull_request, material):
+        asked = """
+3. List each behaviour the pull-request description and the linked issues ask this
+   change to deliver, their acceptance criteria included, and find the code here
+   that delivers each one, from where it is reached to where it takes effect."""
+        later = 4
+    return f"""\
+1. Read the changed files completely, then read what they call and what calls them,
+   so you judge the change as a whole rather than as hunks.
+2. Search this workspace for code that already solves the same problem: an existing
+   helper, hook, service, provider, layer, or sibling component doing the same job.
+   Design review earns its keep here.{asked}
+{later}. Decide what the change is trying to achieve, then judge whether the chosen
+   structure is the cheapest correct way to achieve it in THIS codebase.
+{later + 1}. Only then write findings."""
+
+
+def _design_search_rule() -> str:
+    """Return how a design finding shows an absence, which every finding answers."""
+
+    return f"""\
+- `searches` is empty unless the finding claims this workspace lacks something.
+  Then it holds the searches that show it, at most {MAX_DESIGN_SEARCHES}, each
+  with a `pattern`, plain text rather than a regular expression, matched without
+  regard to case; the `scope` searched, a directory or file of this workspace or
+  `.` for all of it; its `purpose`, what it looked for; and `matched_files`, every
+  file it matched, as workspace-relative paths. The controller runs each search
+  again over every file in that scope, hidden ones included and installed
+  dependencies excluded, and rejects the whole response when the files differ. A
+  search matching more than {MAX_SEARCH_MATCHES} files shows nothing missing:
+  search for something more specific."""
+
+
+def _design_candidate_record(
+    reference: str, candidate: DesignFinding
+) -> "dict[str, Any]":
+    """Return one design candidate as the verifier reads it, under its reference."""
+
+    record: "dict[str, Any]" = {
+        "ref": reference,
+        "title": candidate.title,
+        "severity": candidate.severity,
+        "category": candidate.category,
+        "problem": candidate.problem,
+        "consequence": candidate.consequence,
+        "why_not_preference": candidate.why_not_preference,
+        "alternative": candidate.alternative,
+        "citations": [
+            {
+                "path": citation.path,
+                "line": citation.line,
+                "excerpt": citation.excerpt,
+                "relevance": citation.relevance,
+            }
+            for citation in candidate.citations
+        ],
+    }
+    # Only a candidate resting on searches carries them, so every other candidate
+    # reads exactly as it did before searches existed.
+    if candidate.searches:
+        record["searches"] = [
+            {
+                "pattern": search.pattern,
+                "scope": search.scope,
+                "purpose": search.purpose,
+                "matched_files": list(search.matched_files),
+            }
+            for search in candidate.searches
+        ]
+    return record
+
+
+def _requested_behavior_rejection(material: ReviewMaterial) -> str:
+    """Return the verifier's test of a missing behaviour, when a candidate needs it.
+
+    The controller has already run the candidate's own searches, so their results
+    are true; what it cannot know is whether they were the right searches. That is
+    the verifier's question, answered by searching under the names the reviewer did
+    not try.
+    """
+
+    if not any(
+        candidate.category == REQUESTED_BEHAVIOR_MISSING
+        for candidate in material.design_candidates
+    ):
+        return ""
+    return f"""
+- it is a `{REQUESTED_BEHAVIOR_MISSING}` candidate, and the behaviour is delivered
+  after all or was not asked of this change. Its searches were run again by the
+  controller and found what they list; search for the behaviour yourself under the
+  other names it could have here: a synonym, the route's path, the name of the
+  handler, endpoint, or event, the setting's key, the label a user sees. Reject it
+  when that finds code that delivers it, code the base branch already had included;
+  when neither the description nor a linked issue asks for it, or they leave it to a
+  later change or to another repository; or when this repository is not where that
+  part would live. Its consequence is the absence, so that nothing reaches the cited
+  line is its claim and never a reason to reject it. Name the searches you added in
+  `reason`, as patterns;"""
+
+
+def _requested_behavior_confirmation(material: ReviewMaterial) -> str:
+    """Return when a missing behaviour is confirmed, when a candidate claims one.
+
+    The general test asks for a consequence something reaches, which an absence can
+    never meet: read alone, it would reject every such candidate for being right.
+    """
+
+    if not any(
+        candidate.category == REQUESTED_BEHAVIOR_MISSING
+        for candidate in material.design_candidates
+    ):
+        return ""
+    return f"""
+A `{REQUESTED_BEHAVIOR_MISSING}` candidate is reached by the request itself: confirm
+it when its citations hold, the description or a linked issue asks this change for
+the behaviour, and neither its searches nor yours find code here that delivers it."""
+
+
 def _scope_rejection(material: ReviewMaterial) -> str:
     """Return the verifier's scope test, when a candidate needs it."""
 
@@ -1179,25 +1370,7 @@ def build_design_verification_prompt(
 
     candidates = json.dumps(
         [
-            {
-                "ref": reference,
-                "title": candidate.title,
-                "severity": candidate.severity,
-                "category": candidate.category,
-                "problem": candidate.problem,
-                "consequence": candidate.consequence,
-                "why_not_preference": candidate.why_not_preference,
-                "alternative": candidate.alternative,
-                "citations": [
-                    {
-                        "path": citation.path,
-                        "line": citation.line,
-                        "excerpt": citation.excerpt,
-                        "relevance": citation.relevance,
-                    }
-                    for citation in candidate.citations
-                ],
-            }
+            _design_candidate_record(reference, candidate)
             for reference, candidate in design_candidate_refs(
                 material.design_candidates
             ).items()
@@ -1205,7 +1378,7 @@ def build_design_verification_prompt(
         indent=1,
     )
     reason_limit = DESIGN_FIELD_LIMITS["reason"]
-    scope = _scope_rejection(material)
+    scope = _scope_rejection(material) + _requested_behavior_rejection(material)
     return f"""You are an adversarial verifier judging solution-design candidates
 another reviewer produced for one pull request. You do not review the pull request
 yourself and you never add a candidate of your own. Judge exactly the candidates
@@ -1249,7 +1422,7 @@ CONFIRM a candidate only when you read the cited files yourself, the citations h
 the consequence follows from the structure, and it is reachable in this workspace.
 In `reason`, name what you read and what settled it. State the reach you found, not
 the reach the candidate implies. A candidate you could not check is rejected, not
-confirmed.
+confirmed.{_requested_behavior_confirmation(material)}
 
 LENGTH LIMIT: `reason` accepts at most {reason_limit} characters, and a response
 that exceeds it is rejected in full, discarding the whole pass. Decide what settled
@@ -1397,6 +1570,40 @@ def build_design_schema(max_findings: int) -> dict[str, Any]:
         "required": ["path", "line", "excerpt", "relevance"],
         "additionalProperties": False,
     }
+    single_line = r"^[^\r\n]+$"
+    search = {
+        "type": "object",
+        "properties": {
+            "pattern": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": DESIGN_FIELD_LIMITS["pattern"],
+                "pattern": single_line,
+            },
+            "scope": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": DESIGN_FIELD_LIMITS["scope"],
+                "pattern": single_line,
+            },
+            "purpose": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": DESIGN_FIELD_LIMITS["purpose"],
+            },
+            "matched_files": {
+                "type": "array",
+                "maxItems": MAX_SEARCH_MATCHES,
+                "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": RESPONSE_FIELD_LIMITS["path"],
+                },
+            },
+        },
+        "required": ["pattern", "scope", "purpose", "matched_files"],
+        "additionalProperties": False,
+    }
     finding = {
         "type": "object",
         "properties": {
@@ -1433,6 +1640,11 @@ def build_design_schema(max_findings: int) -> dict[str, Any]:
                 "maxItems": 4,
                 "items": citation,
             },
+            "searches": {
+                "type": "array",
+                "maxItems": MAX_DESIGN_SEARCHES,
+                "items": search,
+            },
         },
         "required": [
             "title",
@@ -1443,6 +1655,7 @@ def build_design_schema(max_findings: int) -> dict[str, Any]:
             "why_not_preference",
             "alternative",
             "citations",
+            "searches",
         ],
         "additionalProperties": False,
     }

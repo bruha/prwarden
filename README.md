@@ -398,11 +398,12 @@ adversarial verification pass on `REVIEW_VERIFY_ENGINE`.
 The **solution-design level** goes first and judges the approach rather than the
 lines: where the change puts responsibility, what contracts it establishes, how
 state and data flow, and whether this workspace already provides what the change
-re-implements. Its findings carry no anchor line, so they are never inline
-comments. They post as one advisory pull-request comment, go to Slack for your own
-pull requests unless the repository is kept out of Slack, and **never block a merge,
-withhold an approval, or change the run's exit code**. A design-level failure is
-reported and the code review continues unaffected.
+re-implements, or still lacks what it was asked to deliver. Its findings carry no
+anchor line, so they are never inline comments. They post as one advisory
+pull-request comment, go to Slack for your own pull requests unless the repository
+is kept out of Slack, and **never block a merge, withhold an approval, or change the
+run's exit code**. A design-level failure is reported and the code review continues
+unaffected.
 
 The design level runs on a pull request too large to review completely, because the
 shape of a change is exactly what nobody can read all of. It does **not** run on a
@@ -596,6 +597,19 @@ level also checks scope: a changed file nothing stated explains, and that no
 explained change needs, is reported as `change_outside_stated_intent`. A test, a
 type, a migration, a lockfile, or a document that follows from an explained change
 counts as explained. Like every design note it never blocks a merge.
+
+It also checks the other direction: a behaviour the description or an issue asks
+for, acceptance criteria included, that nothing in the reviewed head delivers, such
+as a new route nothing calls, a client call to an endpoint nothing serves, or a
+test an issue explicitly asks for that no assertion makes. It is reported as
+`requested_behavior_missing`, with the searches that found nothing: each a plain
+pattern, the directory it searched, and every file it matched. PR Warden runs those
+searches again itself and refuses the note when they find more than it says, and
+the verifier then searches under other names before confirming it. Code that
+already existed counts as delivering a behaviour, and a part the issue leaves to
+another repository or a later change is not missing. Jira acceptance criteria are
+read when they are written in the work item's description; a separate custom field
+for them is not read.
 
 A repository can also set the rules its reviews hold the code to. Write them under a
 "Code review" heading in its agent instructions, such as `AGENTS.md`, `CLAUDE.md`,
@@ -967,7 +981,9 @@ where a single review would have read 4 files and refused to approve.
 
 A replay leaves out what belongs to a live pull request: eligibility and
 mergeability, prior review comments, and delivery. So duplicate suppression is not
-exercised, nothing is ever posted, and no state is recorded.
+exercised, nothing is ever posted, and no state is recorded. It does read the issues
+the pull request names, as they stand when the replay runs, since a case pins code
+and not the tracker.
 
 Two rules keep a comparison honest. Compare runs over the same pull requests at the
 same heads, because a different set compares nothing; the report names each side's

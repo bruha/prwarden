@@ -383,11 +383,12 @@ The **solution-design level** runs first when `REVIEW_DESIGN_LEVEL` is enabled. 
 judges the approach: where the change puts responsibility, what contracts it
 establishes, how state and data flow, which failure modes the structure gives no
 place to handle, and whether this workspace already provides what the change
-re-implements. A design finding must name a consequence that is reachable in this
-workspace and a cost that does not depend on taste, and it must cite the line that
-shows the structure. It carries no anchor line, which is what lets it describe a
-whole change and also why it can never become an inline comment. At most
-`MAX_DESIGN_FINDINGS` are reported, deliberately fewer than the code level allows.
+re-implements, or still lacks what it was asked to deliver. A design finding must
+name a consequence that is reachable in this workspace and a cost that does not
+depend on taste, and it must cite the line that shows the structure. It carries no
+anchor line, which is what lets it describe a whole change and also why it can never
+become an inline comment. At most `MAX_DESIGN_FINDINGS` are reported, deliberately
+fewer than the code level allows.
 
 The level runs on a pull request whose diff was too large to read completely, since
 the shape of a change is what nobody can read all of, and it does not run at all on a
@@ -602,6 +603,8 @@ pull request whose branch no longer exists.
 A replay omits what belongs to a live pull request, deliberately: eligibility and
 mergeability, prior review comments, and delivery, Slack, and state. Duplicate
 suppression is therefore not exercised by a replay, and a replay can post nothing.
+It reads the issues the pull request names as a live review does, as they stand when
+the replay runs, because a case pins code and not the tracker.
 
 An arm is a named set of overridable scalar settings plus an optional engine. An arm
 may not set anything that needs a matching command, such as the verification engine,
@@ -727,6 +730,30 @@ report `change_outside_stated_intent`: a changed file nothing stated explains an
 explained change requires. Its verifier rejects one whose change is explained, its
 own test, type, migration, lockfile, configuration entry, or document included.
 Without a stated intent the category is not offered.
+
+With a stated intent the design reviewer also lists each behaviour the description
+and the issues ask the change to deliver, and may report
+`requested_behavior_missing`: one that no code in the reviewed head delivers, such
+as a route nothing calls, a client call to an endpoint nothing serves, a setting
+nothing reads, or a test an issue explicitly asks for that no assertion makes. It is
+reported only when the missing part belongs in this repository and in this change,
+and code the base branch already had counts as delivering it, because the head is
+searched whole rather than the diff. An absence has no line to cite, so the finding
+also carries `searches`, at most four: a plain-text pattern matched without regard to
+case, the directory or file searched, what it looked for, and every file it matched.
+Every design finding answers `searches`, empty unless it claims something is missing.
+The controller runs each search again over the head's own files, hidden ones
+included and `.git`, binary files, files over 1 MB, and anything reached through a
+symbolic link excluded, so installed dependencies are never searched. It rejects the
+whole response when a search matches a file the finding left out or does not match
+one it listed, when a search matches more than five files and so shows nothing
+missing, or when the category arrives without a search; the correction retry names
+the files. The verifier then searches for the behaviour under the names the reviewer
+did not try, and rejects the candidate when that finds it, when nothing stated asks
+for it in this change, or when this repository is not where it would live. The
+absence is the claim, so nothing reaching the cited line is never a reason to reject
+it. A Jira work item is read for its description, so acceptance criteria written
+there are read; a custom acceptance-criteria field is not.
 
 ### Repository background
 

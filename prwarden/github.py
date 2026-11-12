@@ -1257,6 +1257,17 @@ def format_design_comment(
             f"({inline_code(item.excerpt)})"
             for item in finding.citations
         )
+        searches = "".join(
+            f"\n- {inline_code(search.pattern)} in {inline_code(search.scope)} — "
+            f"{search.purpose}: "
+            + (
+                "matched only "
+                + ", ".join(inline_code(path) for path in search.matched_files)
+                if search.matched_files
+                else "no match"
+            )
+            for search in finding.searches
+        )
         blocks.append(
             f"**[{finding.severity.upper()}] {finding.title}**  \n"
             f"_{finding.category.replace('_', ' ')}_\n\n"
@@ -1265,6 +1276,7 @@ def format_design_comment(
             f"**Not a preference because:** {finding.why_not_preference}\n\n"
             f"**Cheaper structure:** {finding.alternative}\n\n"
             f"**Citations:**\n{citations}"
+            + (f"\n\n**Searches:**{searches}" if searches else "")
         )
     attribution = format_review_attribution(
         review_engine,
