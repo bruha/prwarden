@@ -604,7 +604,8 @@ A replay omits what belongs to a live pull request, deliberately: eligibility an
 mergeability, prior review comments, and delivery, Slack, and state. Duplicate
 suppression is therefore not exercised by a replay, and a replay can post nothing.
 It reads the issues the pull request names as a live review does, as they stand when
-the replay runs, because a case pins code and not the tracker.
+the replay runs, because a case pins code and not the tracker; an advisory replay's
+record lists the issues it read, so two measurements whose inputs differed show it.
 
 An arm is a named set of overridable scalar settings plus an optional engine. An arm
 may not set anything that needs a matching command, such as the verification engine,
@@ -744,9 +745,11 @@ case, the directory or file searched, what it looked for, and every file it matc
 Every design finding answers `searches`, empty unless it claims something is missing.
 The controller runs each search again over the head's own files, hidden ones
 included and `.git`, binary files, files over 1 MB, and anything reached through a
-symbolic link excluded, so installed dependencies are never searched. It rejects the
-whole response when a search matches a file the finding left out or does not match
-one it listed, when a search matches more than five files and so shows nothing
+symbolic link excluded, so installed dependencies are never searched; the prompt
+states the exclusions, and a listed file the controller could not search is believed
+rather than refused, since an extra match only weakens a claim of absence. It rejects
+the whole response when a search matches a file the finding left out or does not
+match one it listed, when a search matches more than five files and so shows nothing
 missing, or when the category arrives without a search; the correction retry names
 the files. The verifier then searches for the behaviour under the names the reviewer
 did not try, and rejects the candidate when that finds it, when nothing stated asks

@@ -15,15 +15,18 @@ from prwarden.engine import (
     DESIGN_CATEGORIES,
     DESIGN_LEVEL,
     MAX_SEARCH_MATCHES,
+    MAX_SEARCHED_FILE_BYTES,
     REQUESTED_BEHAVIOR_MISSING,
     build_design_prompt,
     build_design_schema,
     build_design_verification_prompt,
 )
-from prwarden.evaluate import ReplayCase, _prepared_case
+from prwarden.evaluate import ReplayCase, _PreparedCase, _prepared_case, advisory_case
 from prwarden.github import format_design_comment
+from prwarden.metrics import ReviewMetrics
 from prwarden.models import (
     DependencyLink,
+    DesignAssessment,
     DesignFinding,
     FindingEvidence,
     LinkedIssue,
@@ -168,6 +171,28 @@ class SearchValidationTests(WorkspaceTests):
         with self.assertRaisesRegex(ReviewError, "at least one search"):
             self.validate(missing_behavior(searches=[]))
 
+    def test_a_listed_file_too_large_to_search_is_believed(self) -> None:
+        """Unsearched is not unmatched: refusing it would refuse a true answer."""
+
+        self.write("openapi.json", "x" * MAX_SEARCHED_FILE_BYTES + "/reports/export")
+
+        _, _, findings = self.validate(
+            missing_behavior(
+                searches=[search(matched_files=["api.py", "openapi.json"])]
+            )
+        )
+
+        self.assertEqual(
+            findings[0].searches[0].matched_files, ("api.py", "openapi.json")
+        )
+
+    def test_a_file_too_large_to_search_is_not_required_either(self) -> None:
+        self.write("openapi.json", "x" * MAX_SEARCHED_FILE_BYTES + "/reports/export")
+
+        _, _, findings = self.validate(missing_behavior())
+
+        self.assertEqual(findings[0].searches[0].matched_files, ("api.py",))
+
     def test_other_categories_still_read_without_searches(self) -> None:
         """A finding from before searches existed validates exactly as it did."""
 
@@ -268,6 +293,8 @@ class PromptTests(unittest.TestCase):
 
         self.assertIn("`searches` is empty unless the finding claims", prompt)
         self.assertIn("The controller runs each search", prompt)
+        # The reviewer can leave out what the controller cannot search on purpose.
+        self.assertIn("skipping\n  installed dependencies and files over 1 MB", prompt)
 
     def test_every_finding_answers_searches_in_the_schema(self) -> None:
         finding = build_design_schema(4)["properties"]["findings"]["items"]
@@ -389,6 +416,41 @@ class OrchestrationTests(WorkspaceTests):
 
 
 class ReplayTests(unittest.TestCase):
+    def test_an_advisory_record_names_the_issues_it_read(self) -> None:
+        """Issues are read live, so a record must say which inputs it judged."""
+
+        repository = Repository("app", "owner/app", Path("/tmp"))
+        prepared = _PreparedCase(
+            repository,
+            ASKED,
+            repository,
+            material(linked_issues=(ISSUE,)),
+            (),
+        )
+        context = Mock()
+        context.__enter__ = Mock(return_value=prepared)
+        context.__exit__ = Mock(return_value=False)
+        assessment = DesignAssessment(understanding="u", verdict="sound")
+        with patch("prwarden.evaluate._prepared_case", return_value=context), patch(
+            "prwarden.cli.create_review_engine"
+        ), patch("prwarden.cli._create_verification_pass", return_value=None), patch(
+            "prwarden.cli._create_fallback_reviewer", return_value=None
+        ), patch(
+            "prwarden.cli._MeasuredEngine", side_effect=lambda inner, *args: inner
+        ), patch(
+            "prwarden.cli._design_level", return_value=assessment
+        ), patch(
+            "sys.stdout", new_callable=StringIO
+        ):
+            record = advisory_case(
+                Mock(state_file=Path("/tmp/state.json")),
+                ReplayCase("owner/app", 1, "a" * 40, "b" * 40),
+                DESIGN_LEVEL,
+                ReviewMetrics(),
+            )
+
+        self.assertEqual(record["linked_issues"], ["APP-12"])
+
     def test_a_replay_reads_the_issues_a_live_review_reads(self) -> None:
         """A design replay without them could not measure a check against intent."""
 

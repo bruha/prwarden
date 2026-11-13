@@ -287,6 +287,10 @@ DESIGN_FIELD_LIMITS = {
 # this is too common to say anything about what the workspace lacks.
 MAX_DESIGN_SEARCHES = 4
 MAX_SEARCH_MATCHES = 5
+# A file this large is generated or minified rather than written, so the controller
+# does not search it again: reading it to show that something is absent would cost
+# more than it could show.
+MAX_SEARCHED_FILE_BYTES = 1_000_000
 
 DOCS_CATEGORIES = (
     "documented_behavior_no_longer_true",
@@ -1256,9 +1260,10 @@ def _design_search_rule() -> str:
   regard to case; the `scope` searched, a directory or file of this workspace or
   `.` for all of it; its `purpose`, what it looked for; and `matched_files`, every
   file it matched, as workspace-relative paths. The controller runs each search
-  again over every file in that scope, hidden ones included and installed
-  dependencies excluded, and rejects the whole response when the files differ. A
-  search matching more than {MAX_SEARCH_MATCHES} files shows nothing missing:
+  again over every text file in that scope, hidden ones included, skipping
+  installed dependencies and files over {MAX_SEARCHED_FILE_BYTES // 1_000_000} MB,
+  and rejects the whole response when the files it searched differ from the list.
+  A search matching more than {MAX_SEARCH_MATCHES} files shows nothing missing:
   search for something more specific."""
 
 

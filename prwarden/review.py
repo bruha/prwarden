@@ -14,6 +14,7 @@ from .engine import (
     DOCS_FIELD_LIMITS,
     MAX_DESIGN_SEARCHES,
     MAX_SEARCH_MATCHES,
+    MAX_SEARCHED_FILE_BYTES,
     REJECTION_CLASSES,
     REQUESTED_BEHAVIOR_MISSING,
     RESPONSE_FIELD_LIMITS,
@@ -1168,9 +1169,6 @@ def documentation_change_fingerprint(
     return digest.hexdigest()
 
 
-# A file this large is generated or minified rather than written, and reading it to
-# show that something is absent would cost more than it could show.
-MAX_SEARCHED_FILE_BYTES = 1_000_000
 # One search reads at most this many files, so a design response can never cost a
 # review the time of reading a monorepo; a wider search names a narrower scope.
 MAX_SEARCHED_FILES = 20_000
@@ -1237,15 +1235,23 @@ class _WorkspaceSearcher:
 
         return self._relative(raw_path)
 
-    def matches(self, pattern: str, scope: Path) -> "list[str]":
-        """Return every file under ``scope`` containing ``pattern``, sorted."""
+    def matches(self, pattern: str, scope: Path) -> "tuple[list[str], set[str]]":
+        """Return the files under ``scope`` containing ``pattern``, and the unread.
+
+        A file too large or not text is not searched, so whether it holds the
+        pattern is unknown here: it is returned apart, never as a file without it.
+        """
 
         needle = pattern.casefold()
-        return sorted(
-            relative
-            for relative, path in self._files(scope)
-            if needle in self._text(path)
-        )
+        found: "list[str]" = []
+        unsearched: "set[str]" = set()
+        for relative, path in self._files(scope):
+            text = self._text(path)
+            if text is None:
+                unsearched.add(relative)
+            elif needle in text:
+                found.append(relative)
+        return sorted(found), unsearched
 
     def _files(self, scope: Path) -> "Iterator[tuple[str, Path]]":
         if scope.is_file():
@@ -1272,17 +1278,17 @@ class _WorkspaceSearcher:
                 yield path.relative_to(self.root).as_posix(), path
 
     @staticmethod
-    def _text(path: Path) -> str:
-        """Return a file's text folded for comparison, or nothing for a binary."""
+    def _text(path: Path) -> Optional[str]:
+        """Return a file's text folded for comparison, or None when it is not read."""
 
         try:
             if path.stat().st_size > MAX_SEARCHED_FILE_BYTES:
-                return ""
+                return None
             data = path.read_bytes()
         except OSError:
-            return ""
+            return None
         if b"\0" in data:
-            return ""
+            return None
         return data.decode("utf-8", errors="replace").casefold()
 
 
@@ -1333,7 +1339,11 @@ def _required_searches(
         else:
             scope, scope_path = searcher.scope(raw_scope)
             claimed = {searcher.claimed_path(item) for item in raw_matches}
-            found = searcher.matches(pattern, scope_path)
+            found, unsearched = searcher.matches(pattern, scope_path)
+            # A file the controller could not search may still be one the
+            # reviewer's own search matched, so listing it is believed: an extra
+            # match only weakens a claim of absence, and never hides a file.
+            found = sorted(set(found).union(claimed.intersection(unsearched)))
             label = f"Design search {pattern!r} in {scope!r}"
             if len(found) > MAX_SEARCH_MATCHES:
                 raise ReviewError(

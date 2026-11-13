@@ -983,7 +983,8 @@ A replay leaves out what belongs to a live pull request: eligibility and
 mergeability, prior review comments, and delivery. So duplicate suppression is not
 exercised, nothing is ever posted, and no state is recorded. It does read the issues
 the pull request names, as they stand when the replay runs, since a case pins code
-and not the tracker.
+and not the tracker; an advisory replay's measurement lists the issues each case
+read, so a difference in inputs between two runs is visible.
 
 Two rules keep a comparison honest. Compare runs over the same pull requests at the
 same heads, because a different set compares nothing; the report names each side's
