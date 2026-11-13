@@ -1050,7 +1050,10 @@ The code-level prompt places each block of that data inside one of its own tags,
 every prompt neutralises any text in untrusted data that would open or close one of
 those tags, writing `&lt;` for its `<`, and says so once. Only the registered tag
 names are touched, so markup in a diff reads as written, and a test fails if a prompt
-gains a tag that is not registered.
+gains a tag that is not registered. A correction retry quotes the controller's
+rejection, which can quote the rejected response and the head, such as a search
+pattern or the files it matched: the code level encodes it as JSON, and the advisory
+levels place it inside a contained `controller-rejection` block.
 It permits only read-only local file search and reading for semantic
 verification, and prohibits edits, command execution, networking, browsing, and
 external actions. It requests only correctness, reliability, data-loss,
