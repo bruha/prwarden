@@ -1,17 +1,22 @@
 import fnmatch
 import hashlib
 import json
+import os
 import re
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping, NamedTuple, Optional, Sequence
+from typing import Any, Iterator, Mapping, NamedTuple, Optional, Sequence
 
 from .engine import (
     DESIGN_CATEGORIES,
     DESIGN_FIELD_LIMITS,
     DOCS_CATEGORIES,
     DOCS_FIELD_LIMITS,
+    MAX_DESIGN_SEARCHES,
+    MAX_SEARCH_MATCHES,
+    MAX_SEARCHED_FILE_BYTES,
     REJECTION_CLASSES,
+    REQUESTED_BEHAVIOR_MISSING,
     RESPONSE_FIELD_LIMITS,
     code_candidate_refs,
     design_candidate_refs,
@@ -36,6 +41,7 @@ from .models import (
     ReviewMaterial,
     ReviewRules,
     ReviewRuleSection,
+    WorkspaceSearch,
 )
 
 
@@ -1163,6 +1169,214 @@ def documentation_change_fingerprint(
     return digest.hexdigest()
 
 
+# One search reads at most this many files, so a design response can never cost a
+# review the time of reading a monorepo; a wider search names a narrower scope.
+MAX_SEARCHED_FILES = 20_000
+
+
+class _WorkspaceSearcher:
+    """Runs a design finding's searches again over the reviewed head's own files.
+
+    A claim that nothing here does something rests on searches, so the controller
+    repeats them rather than trusting the list of files a model says they matched.
+    The pattern is plain text matched without regard to case, so the answer does
+    not depend on any tool's regular-expression dialect. Every file under the scope
+    is read, hidden ones included, except `.git`, binary files, and anything reached
+    through a symbolic link: installed dependencies are linked in, and a search for
+    what this repository lacks is a search of this repository.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root.resolve()
+
+    def _relative(self, raw_path: str) -> str:
+        """Return a path as written in a finding, relative to the workspace if it can.
+
+        An absolute path inside the workspace names the file a relative one would,
+        as it does for a citation; one through a link, or outside, stays absolute and
+        is refused by whoever compares it.
+        """
+
+        path = raw_path.strip().replace("\\", "/")
+        if PurePosixPath(path).is_absolute():
+            absolute = Path(path).resolve()
+            if _within_root(absolute, self.root):
+                path = absolute.relative_to(self.root).as_posix()
+        while path.startswith("./"):
+            path = path[2:]
+        return path
+
+    def scope(self, raw_scope: str) -> "tuple[str, Path]":
+        """Return a search scope as written in a finding, and where it is."""
+
+        scope = self._relative(raw_scope).rstrip("/") or "."
+        parts = PurePosixPath(scope).parts
+        if PurePosixPath(scope).is_absolute() or ".." in parts or ".git" in parts:
+            raise ReviewError(
+                "Design search scope must be a directory or file of this "
+                f"workspace, like src or ., not {raw_scope!r}"
+            )
+        path = self.root.joinpath(*parts)
+        if not path.exists():
+            raise ReviewError(
+                f"Design search scope does not exist in the reviewed head: {scope}"
+            )
+        # A linked dependency resolves outside the worktree, as does any other link,
+        # so a resolved path that differs from the joined one passed through a link.
+        if path.resolve() != path:
+            raise ReviewError(
+                "Design search scope must be this repository's own files, not a "
+                f"linked dependency: {scope}"
+            )
+        return scope, path
+
+    def claimed_path(self, raw_path: str) -> str:
+        """Return a matched file as a workspace-relative path, as it is compared."""
+
+        return self._relative(raw_path)
+
+    def matches(self, pattern: str, scope: Path) -> "tuple[list[str], set[str]]":
+        """Return the files under ``scope`` containing ``pattern``, and the unread.
+
+        A file too large or not text is not searched, so whether it holds the
+        pattern is unknown here: it is returned apart, never as a file without it.
+        """
+
+        needle = pattern.casefold()
+        found: "list[str]" = []
+        unsearched: "set[str]" = set()
+        for relative, path in self._files(scope):
+            text = self._text(path)
+            if text is None:
+                unsearched.add(relative)
+            elif needle in text:
+                found.append(relative)
+        return sorted(found), unsearched
+
+    def _files(self, scope: Path) -> "Iterator[tuple[str, Path]]":
+        if scope.is_file():
+            yield scope.relative_to(self.root).as_posix(), scope
+            return
+        count = 0
+        for directory, directories, files in os.walk(scope):
+            directories[:] = sorted(
+                name
+                for name in directories
+                if name != ".git" and not os.path.islink(os.path.join(directory, name))
+            )
+            for name in sorted(files):
+                path = Path(directory, name)
+                if name == ".git" or path.is_symlink():
+                    continue
+                count += 1
+                if count > MAX_SEARCHED_FILES:
+                    raise ReviewError(
+                        "Design search scope "
+                        f"{scope.relative_to(self.root).as_posix() or '.'} holds "
+                        f"more than {MAX_SEARCHED_FILES} files; search a narrower one"
+                    )
+                yield path.relative_to(self.root).as_posix(), path
+
+    @staticmethod
+    def _text(path: Path) -> Optional[str]:
+        """Return a file's text folded for comparison, or None when it is not read."""
+
+        try:
+            if path.stat().st_size > MAX_SEARCHED_FILE_BYTES:
+                return None
+            data = path.read_bytes()
+        except OSError:
+            return None
+        if b"\0" in data:
+            return None
+        return data.decode("utf-8", errors="replace").casefold()
+
+
+def _required_searches(
+    raw_finding: "dict[str, Any]",
+    searcher: "Optional[_WorkspaceSearcher]",
+) -> "tuple[WorkspaceSearch, ...]":
+    """Return a design finding's searches, each run again and found as claimed.
+
+    Absent means none, so a finding from before searches existed still reads as it
+    did. Every listed search must match exactly the files it says it matched: one it
+    missed may be the code that delivers what the finding calls missing, and one it
+    invented is a result nobody ran. The files kept are the controller's own.
+    """
+
+    raw_searches = raw_finding.get("searches", [])
+    if not isinstance(raw_searches, list):
+        raise ReviewError("Design finding field 'searches' must be an array")
+    if len(raw_searches) > MAX_DESIGN_SEARCHES:
+        raise ReviewError(
+            f"Design finding field 'searches' exceeds {MAX_DESIGN_SEARCHES} searches"
+        )
+    searches: "list[WorkspaceSearch]" = []
+    for raw_search in raw_searches:
+        if not isinstance(raw_search, dict):
+            raise ReviewError("Every design search must be an object")
+        pattern = _required_string(
+            raw_search, "pattern", DESIGN_FIELD_LIMITS["pattern"], owner="Design search"
+        )
+        raw_scope = _required_string(
+            raw_search, "scope", DESIGN_FIELD_LIMITS["scope"], owner="Design search"
+        )
+        purpose = _required_string(
+            raw_search, "purpose", DESIGN_FIELD_LIMITS["purpose"], owner="Design search"
+        )
+        if any(mark in pattern + raw_scope for mark in ("\n", "\r")):
+            raise ReviewError("Design search pattern and scope must be single-line")
+        raw_matches = raw_search.get("matched_files")
+        if not isinstance(raw_matches, list) or not all(
+            isinstance(item, str) and item.strip() for item in raw_matches
+        ):
+            raise ReviewError(
+                "Design search field 'matched_files' must be an array of paths"
+            )
+        if searcher is None:
+            scope = raw_scope
+            matched = tuple(sorted({item.strip() for item in raw_matches}))
+        else:
+            scope, scope_path = searcher.scope(raw_scope)
+            claimed = {searcher.claimed_path(item) for item in raw_matches}
+            found, unsearched = searcher.matches(pattern, scope_path)
+            # A file the controller could not search may still be one the
+            # reviewer's own search matched, so listing it is believed: an extra
+            # match only weakens a claim of absence, and never hides a file.
+            found = sorted(set(found).union(claimed.intersection(unsearched)))
+            label = f"Design search {pattern!r} in {scope!r}"
+            if len(found) > MAX_SEARCH_MATCHES:
+                raise ReviewError(
+                    f"{label} matches {len(found)} files, too many to show that "
+                    "anything is missing; search for something more specific"
+                )
+            missed = [path for path in found if path not in claimed]
+            if missed:
+                raise ReviewError(
+                    f"{label} also matches {', '.join(missed)}, which "
+                    "'matched_files' leaves out; read what it matched there before "
+                    "claiming nothing delivers it"
+                )
+            invented = sorted(claimed.difference(found))
+            if invented:
+                raise ReviewError(
+                    f"{label} does not match {', '.join(invented)}; list only the "
+                    "files that contain the pattern"
+                )
+            matched = tuple(found)
+        if len(matched) > MAX_SEARCH_MATCHES:
+            raise ReviewError(
+                f"Design search {pattern!r} lists more than {MAX_SEARCH_MATCHES} "
+                "files, too many to show that anything is missing"
+            )
+        searches.append(
+            WorkspaceSearch(
+                pattern=pattern, scope=scope, purpose=purpose, matched_files=matched
+            )
+        )
+    return tuple(searches)
+
+
 def validate_design_findings(
     structured_output: Any,
     material: ReviewMaterial,
@@ -1203,6 +1417,9 @@ def validate_design_findings(
         )
 
     evidence_roots = _evidence_roots(material)
+    searcher = (
+        _WorkspaceSearcher(repository_root) if repository_root is not None else None
+    )
     findings: list[DesignFinding] = []
     for raw_finding in raw_findings:
         if not isinstance(raw_finding, dict):
@@ -1224,6 +1441,12 @@ def validate_design_findings(
         )
         if not citations:
             raise ReviewError("Every design finding must cite the workspace")
+        searches = _required_searches(raw_finding, searcher)
+        if category == REQUESTED_BEHAVIOR_MISSING and not searches:
+            raise ReviewError(
+                f"A {REQUESTED_BEHAVIOR_MISSING} finding must show the absence with "
+                "at least one search in 'searches'"
+            )
         findings.append(
             DesignFinding(
                 severity=severity,
@@ -1246,6 +1469,7 @@ def validate_design_findings(
                     raw_finding, "alternative", DESIGN_FIELD_LIMITS["alternative"]
                 ),
                 citations=citations,
+                searches=searches,
             )
         )
     return understanding, verdict, findings

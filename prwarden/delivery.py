@@ -167,9 +167,23 @@ def format_design_slack_message(
                     f"`{item.path}:{item.line}` — {item.relevance}"
                     for item in finding.citations
                 ),
-                "",
             ]
         )
+        if finding.searches:
+            lines.append(
+                "• Searches: "
+                + "; ".join(
+                    f"`{search.pattern}` in `{search.scope}` — "
+                    + (
+                        "matched only "
+                        + ", ".join(f"`{path}`" for path in search.matched_files)
+                        if search.matched_files
+                        else "no match"
+                    )
+                    for search in finding.searches
+                )
+            )
+        lines.append("")
     reviewer = _format_reviewer(
         review_engine,
         review_model,

@@ -204,6 +204,22 @@ class ReviewRules:
 
 
 @dataclass(frozen=True)
+class WorkspaceSearch:
+    """A search a design finding rests on, and every file it matched.
+
+    An absence has no line to cite, so a claim that nothing here does something is
+    shown by the searches that found nothing. ``pattern`` is literal text, matched
+    without regard to case, and the controller runs it again over ``scope`` before
+    it believes ``matched_files``.
+    """
+
+    pattern: str
+    scope: str
+    purpose: str
+    matched_files: "tuple[str, ...]" = ()
+
+
+@dataclass(frozen=True)
 class DesignFinding:
     """A flaw in how a change is built rather than in one of its lines.
 
@@ -211,7 +227,8 @@ class DesignFinding:
     it carries no single anchor line and can never become an inline comment. Its
     citations still have to resolve in the reviewed workspace: `citations` holds
     the line showing the structure and, where the claim is that the workspace
-    already solves this, the existing code it is compared against.
+    already solves this, the existing code it is compared against. Where the claim
+    is that the workspace lacks something, `searches` holds what showed it.
     """
 
     severity: str
@@ -222,6 +239,7 @@ class DesignFinding:
     why_not_preference: str
     alternative: str
     citations: tuple[FindingEvidence, ...] = ()
+    searches: "tuple[WorkspaceSearch, ...]" = ()
 
 
 @dataclass(frozen=True)

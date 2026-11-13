@@ -935,6 +935,8 @@ class ReplayBundlingTests(unittest.TestCase):
             "prwarden.cli.review_workspace"
         ) as workspace, patch(
             "prwarden.evaluate.read_background", return_value=""
+        ), patch(
+            "prwarden.cli._read_linked_issues", return_value=()
         ), patch("prwarden.cli._design_level"), patch(
             "prwarden.cli._docs_level"
         ), patch(
@@ -1329,6 +1331,8 @@ class ReplayEvidenceTests(unittest.TestCase):
             "prwarden.cli.review_workspace"
         ) as workspace, patch(
             "prwarden.evaluate.read_background", return_value=""
+        ), patch(
+            "prwarden.cli._read_linked_issues", return_value=()
         ), patch("prwarden.cli._design_level"), patch(
             "prwarden.cli._docs_level"
         ), patch(
@@ -1670,6 +1674,8 @@ class RecordedCandidateTests(unittest.TestCase):
             "prwarden.cli.review_workspace"
         ) as workspace, patch(
             "prwarden.evaluate.read_background", return_value=""
+        ), patch(
+            "prwarden.cli._read_linked_issues", return_value=()
         ), patch("prwarden.cli._design_level") as design, patch(
             "prwarden.cli._docs_level"
         ) as docs, patch(
@@ -2173,6 +2179,8 @@ class ReplayDecisionTests(unittest.TestCase):
             "prwarden.cli.review_workspace"
         ) as workspace, patch(
             "prwarden.evaluate.read_background", return_value=""
+        ), patch(
+            "prwarden.cli._read_linked_issues", return_value=()
         ), patch("prwarden.cli._report_diff_budget"), patch(
             "prwarden.cli._review_with_engine_fallback", side_effect=reviews
         ) as review_call, patch(

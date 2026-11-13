@@ -425,6 +425,8 @@ class WiringTests(unittest.TestCase):
             "prwarden.cli.read_file_history", return_value=(ENTRY,)
         ) as read, patch(
             "prwarden.cli.read_review_rules", return_value=self.no_rules
+        ), patch(
+            "prwarden.cli._read_linked_issues", return_value=()
         ), patch("sys.stdout", new_callable=StringIO):
             with _prepared_case(self.settings, case) as prepared:
                 material = prepared.material

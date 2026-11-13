@@ -1408,6 +1408,12 @@ def _prepared_case(
         history = cli._read_file_history(repository, pull_request, files, case.base)
         if history:
             material = replace(material, file_history=history)
+        # What the pull request was asked to do, read as a live review reads it: a
+        # design replay without it cannot measure anything judged against intent.
+        # Issues are read as they stand today, since a case pins code, not trackers.
+        issues = cli._read_linked_issues(repository, pull_request)
+        if issues:
+            material = replace(material, linked_issues=issues)
         # The rules the pinned base held, so a replay judges what production judged.
         review_rules = cli.read_review_rules(repository, pull_request, case.base)
         if review_rules.sections:
@@ -2295,6 +2301,12 @@ def advisory_case(
             record["skipped"] = "the pinned range changes nothing"
             return record
         repository, pull_request, checkout, material, _ = prepared
+        # Issues are read as they stand today, not as they stood when the case was
+        # pinned, so the record names the ones this run read: two measurements
+        # whose inputs differed then say so instead of crediting the arm.
+        record["linked_issues"] = [
+            issue.reference for issue in material.linked_issues
+        ]
         engine = cli.create_review_engine(settings)
         verification = cli._create_verification_pass(settings, engine)
         fallback = cli._create_fallback_reviewer(settings)
