@@ -75,8 +75,10 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
 - Review the exact PR head and revalidate mutable PR state before delivery.
 - Only controller-validated findings on added diff lines may be posted inline.
 - Do not approve drafts, excluded labels, self-authored PRs, conflicts,
-  indeterminate mergeability, failed exact-head checks, partial reviews, or
-  unverified clean results.
+  indeterminate mergeability, failed exact-head checks, partial reviews,
+  unverified clean results, or a change to review policy: `.prwarden/`,
+  `.github/workflows/`, `.gitattributes`, `CODEOWNERS`, or the "Code review"
+  sections of the instruction files.
   "Self" is the repository's `github_account` when its entry names one, compared
   case-insensitively, and the configured reviewer otherwise.
 - A repository configured with `"slack": false` is never named in a Slack message,

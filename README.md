@@ -555,11 +555,19 @@ rather than advisory notes nobody checked.
 - A clean result never creates a GitHub comment.
 
 A repository can tell the reviewer what it is for. Commit
-`.prwarden/background.md` and every level reads it from the reviewed head:
-what the product is, what its money or units mean, what a reader is assumed to know.
-It is framed as untrusted context in the prompt, capped, and may add background
-rather than authority, so it can never relax a review rule. A repository without the
-file costs nothing.
+`.prwarden/background.md` and every level reads it from the base branch, never from
+the pull request: what the product is, what its money or units mean, what a reader
+is assumed to know. It is framed as untrusted context in the prompt, capped, and may
+add background rather than authority, so it can never relax a review rule. A
+repository without the file costs nothing.
+
+A pull request that changes how pull requests are reviewed is never approved, only
+reviewed: one that edits anything under `.prwarden/` or `.github/workflows/`, a
+`.gitattributes`, a `CODEOWNERS`, or the "Code review" section of an instruction file
+such as `AGENTS.md`. Approving it would be the reviewer signing off its own new
+rules. Its findings are posted as usual; a clean result is recorded as withheld,
+with the files that caused it, and is left to a person. Editing the rest of an
+`AGENTS.md` is not policy.
 
 Every level also reads why the changed code is as it is: the latest three commits on
 the base branch that touched each file the change edits, for its eight most-changed

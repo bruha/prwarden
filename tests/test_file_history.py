@@ -391,6 +391,8 @@ class WiringTests(unittest.TestCase):
             "prwarden.cli.review_workspace", self.workspace()
         ), patch(
             "prwarden.cli.read_review_rules", return_value=self.no_rules
+        ), patch(
+            "prwarden.cli._read_background", return_value=""
         ), patch("sys.stdout", new_callable=StringIO):
             with JsonStateStore(self.settings.state_file) as store:
                 cli._process_pull_request(
@@ -420,7 +422,7 @@ class WiringTests(unittest.TestCase):
         head = git(self.root, "rev-parse", "HEAD")
         case = ReplayCase("acme/app", 7, head, base, title="Title", base_ref="main")
         with patch("prwarden.cli.review_workspace", self.workspace()), patch(
-            "prwarden.evaluate.read_background", return_value=""
+            "prwarden.cli._read_background", return_value=""
         ), patch(
             "prwarden.cli.read_file_history", return_value=(ENTRY,)
         ) as read, patch(

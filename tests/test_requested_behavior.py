@@ -503,7 +503,7 @@ class ReplayTests(unittest.TestCase):
         ), patch(
             "prwarden.cli.review_workspace"
         ) as workspace, patch(
-            "prwarden.evaluate.read_background", return_value=""
+            "prwarden.cli._read_background", return_value=""
         ), patch(
             "prwarden.cli._read_file_history", return_value=()
         ), patch(

@@ -25,6 +25,19 @@ review-engine adapter, and route confirmed correctness or security findings:
   checks, and while any check on that head still fails a later run skips it without
   reviewing; a re-run that passes, a later head, or `--force` reopens it. Checks
   that cannot be read keep it skipped.
+- No clean result is delivered for a pull request that changes review policy,
+  because a reviewer that approved it would be signing off its own reconfiguration.
+  Policy is any file under `.prwarden/` or `.github/workflows/`, any
+  `.gitattributes`, a `CODEOWNERS` at the root, in `.github/`, or in `docs/`, and
+  the "Code review" sections of the instruction files the rules are read from
+  (`review.review_policy_changes`). An instruction file counts only when those
+  sections differ between the base branch's tip and the reviewed head, so editing
+  the rest of an `AGENTS.md` does not; a link holds no rule on either side, a head
+  file that cannot be read counts as changed, and so does every changed instruction
+  file when the base branch cannot be read. The review still runs and its findings
+  are delivered; only the clean result is withheld, recorded with the policy it
+  changed, and a later run of the same head skips it without reviewing until a
+  later head or `--force`. A person approves it.
 - Configured reviewer's pull requests in a repository with `"slack": false`: the
   same results on the pull request instead, because the webhook belongs to a
   workspace that project is not part of. Findings are one GitHub review with inline
@@ -760,18 +773,22 @@ there are read; a custom acceptance-criteria field is not.
 
 ### Repository background
 
-Every level is given the reviewed head's own `.prwarden/background.md` when it
-exists: what the product is, what its units mean, what everybody on the team already
-knows and no diff states. Alibaba's reviewer asks the calling agent to summarise
-business context and pass it in on every invocation; the same context committed to
-the repository stays true as the product moves and needs no operator to remember it.
+Every level is given the base branch's `.prwarden/background.md` when it exists:
+what the product is, what its units mean, what everybody on the team already knows
+and no diff states. Alibaba's reviewer asks the calling agent to summarise business
+context and pass it in on every invocation; the same context committed to the
+repository stays true as the product moves and needs no operator to remember it.
 
-It is content from the reviewed head, so it is untrusted exactly like the diff:
-capped at 4000 characters with the remainder marked truncated, delimited in the
-prompt, and named in the sentence that forbids following instructions found in
-reviewed content. It may add context, never authority, and never permission to
-relax a rule the prompt states. A repository without the file costs nothing and the
-prompts say nothing about one.
+It is read from the base branch's tip, or a replay's pinned base, never from the
+reviewed head, for the reason the code review rules are: a pull request must not
+write the context its own review is given. One that edits the note is changing
+review policy, so it is never approved. The note is still text whoever merged it
+wrote, so it is untrusted like the diff: capped at 4000 characters with the
+remainder marked truncated, delimited in the prompt, and named in the sentence that
+forbids following instructions found in reviewed content. It may add context, never
+authority, and never permission to relax a rule the prompt states. A repository
+without the file costs nothing and the prompts say nothing about one; a note that
+cannot be read is reported and left out.
 
 ### File history
 

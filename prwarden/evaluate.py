@@ -58,7 +58,7 @@ from . import progress
 from .cli import RUN_LOG_DIRECTORY_NAME
 from .metrics import ReviewMetrics
 from .models import Finding, FindingEvidence, PullRequest, Repository
-from .review import ReviewError, build_review_material, read_background
+from .review import ReviewError, build_review_material
 from .reviewer_identity import format_review_attribution
 from .state import JsonStateStore, StateError
 from .workspace import WorkspaceError
@@ -1402,7 +1402,7 @@ def _prepared_case(
             )
             for note in workspace.dependency_notes:
                 print(f"      -> Dependency evidence: {note}")
-        background = read_background(exact_repository.path)
+        background = cli._read_background(repository, pull_request, case.base)
         if background:
             material = replace(material, background=background)
         history = cli._read_file_history(repository, pull_request, files, case.base)

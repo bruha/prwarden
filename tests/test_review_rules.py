@@ -58,14 +58,18 @@ PULL_REQUEST = PullRequest(
 
 
 def without_review_rules(test_case: unittest.TestCase) -> None:
-    """Stand in for a base branch with no code review rules.
+    """Stand in for a base branch with no code review rules and no background note.
 
-    Reading them asks GitHub for the base branch's tip, which no test has.
+    Reading either asks GitHub for the base branch's tip, which no test has.
     """
 
-    stub = patch("prwarden.cli.read_review_rules", return_value=NO_RULES)
-    stub.start()
-    test_case.addCleanup(stub.stop)
+    for target, value in (
+        ("prwarden.cli.read_review_rules", NO_RULES),
+        ("prwarden.cli._read_background", ""),
+    ):
+        stub = patch(target, return_value=value)
+        stub.start()
+        test_case.addCleanup(stub.stop)
 
 
 AGENTS = """# Project instructions
@@ -528,6 +532,8 @@ class OrchestrationTests(unittest.TestCase):
             ) as workspace, patch(
                 "prwarden.cli.read_review_rules", **read_rules
             ) as read, patch(
+                "prwarden.cli._read_background", return_value=""
+            ), patch(
                 "prwarden.cli._run_design_level"
             ) as design, patch(
                 "sys.stdout", new_callable=StringIO

@@ -107,14 +107,16 @@ from .review import (
     failed_checks,
     documentation_change_fingerprint,
     dominant_directories,
-    read_background,
+    background_text,
     collect_review_rules,
     format_byte_size,
     history_paths,
     ignores_omitted_patch,
     is_review_rule_source,
     omitted_patch_paths,
+    review_policy_changes,
     review_rule_pathspecs,
+    rule_source_changes,
     validate_approval_reason,
     validate_approval_verdict,
     validate_blocking_comment_ids,
@@ -1349,6 +1351,107 @@ def read_review_rules(
     return collect_review_rules(documents, base_ref or commit[:12], commit)
 
 
+def _read_background(
+    repository: Repository, pull_request: PullRequest, commit: Optional[str] = None
+) -> str:
+    """Return the base branch's `.prwarden/background.md`, or nothing.
+
+    Read from the base branch's tip, or ``commit`` when a replay pins one, for the
+    reason the code review rules are: a pull request must not write the context its
+    own review is given. This is context, never a gate: a note that cannot be read
+    is reported and left out, and the review goes ahead without it.
+    """
+
+    base_ref = pull_request.base_ref
+    try:
+        if commit is None:
+            if not base_ref:
+                raise WorkspaceError("the pull request names no base branch")
+            commit = get_branch_head_sha(repository, base_ref)
+        commit = validate_object_name(commit, f"{repository.slug} base commit")
+        documents = read_base_files(
+            repository,
+            commit,
+            (BACKGROUND_FILE,),
+            lambda path: path == BACKGROUND_FILE,
+        )
+    except (CommandError, WorkspaceError) as error:
+        print(
+            f"      -> Could not read {BACKGROUND_FILE} on "
+            f"{base_ref or 'the base branch'}: {error}"
+        )
+        return ""
+    background = background_text(documents[0][1]) if documents else ""
+    if background:
+        print(
+            f"      -> Read {len(background)} characters of repository background "
+            f"from {BACKGROUND_FILE} on {base_ref or commit[:12]}"
+        )
+    return background
+
+
+def _review_policy_changes(
+    repository: Repository,
+    pull_request: PullRequest,
+    files: "list[dict[str, Any]]",
+    head_root: Optional[Path],
+    commit: Optional[str] = None,
+) -> "tuple[str, ...]":
+    """Return what this pull request changes in its repository's review policy.
+
+    The base branch's side of an instruction file is read only when the pull request
+    changes one. When it cannot be read, every such file counts as changed: not
+    knowing whether the rules moved must cost the approval, not grant it.
+    """
+
+    pairs = rule_source_changes(files)
+    documents: "dict[str, str]" = {}
+    if pairs:
+        base_paths = {base_path for base_path, _ in pairs}
+        try:
+            if not commit:
+                if not pull_request.base_ref:
+                    raise WorkspaceError("the pull request names no base branch")
+                commit = get_branch_head_sha(repository, pull_request.base_ref)
+            commit = validate_object_name(commit, f"{repository.slug} base commit")
+            documents = dict(
+                read_base_files(
+                    repository,
+                    commit,
+                    tuple(sorted(base_paths)),
+                    lambda path: path in base_paths,
+                )
+            )
+        except (CommandError, WorkspaceError) as error:
+            print(
+                "      -> Could not read the base branch's instruction files to "
+                f"compare their code review rules, so each counts as changed: {error}"
+            )
+            return review_policy_changes(files, {}, None) + tuple(
+                f"the code review rules in {head_path or base_path}"
+                for base_path, head_path in pairs
+            )
+    return review_policy_changes(files, documents, head_root)
+
+
+def _policy_change_reason(changes: "Sequence[str]") -> str:
+    return (
+        "This pull request changes review policy, so a person must approve it: "
+        + ", ".join(changes)
+    )
+
+
+def _recorded_policy_changes(record: "dict[str, Any]") -> "tuple[str, ...]":
+    """Return the policy changes a stored withheld approval was withheld over."""
+
+    recorded = record.get("policy_changes")
+    if not isinstance(recorded, list) or not recorded:
+        return ()
+    if not all(isinstance(change, str) and change for change in recorded):
+        return ()
+    return tuple(recorded)
+
+
 def _report_review_rules(rules: ReviewRules) -> None:
     sources = ", ".join(dict.fromkeys(section.path for section in rules.sections))
     print(
@@ -2486,6 +2589,16 @@ def _process_pull_request(
                 detail = f": {reason}" if isinstance(reason, str) and reason else ""
                 print(f"      -> Skipped: state is approval_withheld{detail}")
                 return
+            recorded_policy = _recorded_policy_changes(record)
+            if recorded_policy:
+                # The head is the same, so it changes the same policy, and another
+                # review would end at the same withheld approval.
+                print(
+                    "      -> Skipped: approval stays withheld while this head changes "
+                    "review policy (" + ", ".join(recorded_policy) + "); a person "
+                    "approves it, and a later head or --force reviews it again"
+                )
+                return
             recorded_unread = _recorded_unread_paths(record)
             if (
                 recorded_unread
@@ -2578,6 +2691,7 @@ def _process_pull_request(
 
     unread_paths: "tuple[str, ...]" = ()
     unread_marks: "dict[str, str]" = {}
+    policy_changes: "tuple[str, ...]" = ()
 
     try:
         initial_snapshot = get_pull_request_snapshot(repository, pull_request)
@@ -2696,13 +2810,9 @@ def _process_pull_request(
             workspace_root,
         )
         with workspace as exact_repository:
-            background = read_background(exact_repository.path)
+            background = _read_background(repository, pull_request)
             if background:
                 material = replace(material, background=background)
-                print(
-                    f"      -> Read {len(background)} characters of repository "
-                    f"background from {BACKGROUND_FILE}"
-                )
             if workspace.dependency_links:
                 material = replace(
                     material,
@@ -2760,6 +2870,19 @@ def _process_pull_request(
             if review_rules.sections:
                 material = replace(material, review_rules=review_rules)
                 _report_review_rules(review_rules)
+            policy_changes = _review_policy_changes(
+                repository,
+                pull_request,
+                files,
+                exact_repository.path,
+                review_rules.base_sha,
+            )
+            if policy_changes:
+                print(
+                    "      -> This pull request changes review policy, so it can "
+                    "receive findings but never an approval: "
+                    + ", ".join(policy_changes)
+                )
             review_material = material
             rejected_candidates = 0
             (
@@ -2872,6 +2995,11 @@ def _process_pull_request(
                 generated_marks,
                 tuple(sorted(deferred.path for deferred in budget.unreadable)),
             )
+        if approve and policy_changes:
+            # Like a failed check, this is the controller's own answer and no
+            # verdict outweighs it: a reviewer cannot approve its own reconfiguring.
+            approve = False
+            approval_reason = _policy_change_reason(policy_changes)
         reviewer_engine = review_settings.review_engine
         reviewer_model = review_settings.review_model
         raw_findings = structured_output.get("findings", [])
@@ -2943,6 +3071,7 @@ def _process_pull_request(
                 _unread_settings_fingerprint(settings) if unread_paths else ""
             ),
             unread_generated_marks=unread_marks if unread_paths else {},
+            **({"policy_changes": list(policy_changes)} if policy_changes else {}),
         )
         print(f"      -> Recorded as approval_withheld: {approval_reason}")
         return
