@@ -9,8 +9,19 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.0.1 5c0af7ef7a915bf168ab4f5c5000e0e8402c2371 -->
+<!-- release-baseline: 3.1.0 f528116d61dac3792c08ea3115395796cb6196cd -->
 ## [Unreleased]
+
+## [3.1.0] - 2026-11-14
+
+### Added
+
+- report asked-for behaviour that nothing in the head delivers (`336cf60`).
+
+### Fixed
+
+- believe a listed file the controller could not search (`fd735bf`).
+- contain a rejection quoted into an advisory retry prompt (`f528116`).
 
 ## [3.0.1] - 2026-11-11
 
