@@ -112,9 +112,14 @@ GitHub CLI token lists in its `X-OAuth-Scopes` header, naming `workflow`,
 `delete_repo`, package writes, and any `admin:` scope as more than reviewing needs,
 and the repositories where the account is an administrator, since an approval
 counts towards required reviews with write access. A token that sends no such
-header is fine-grained. A fine-grained `GH_TOKEN` in `.env` with Contents read,
-Pull requests read and write, Issues read, Checks read, and Commit statuses read
-covers every call a review makes.
+header is fine-grained. Each credential is reported by the route that carries it:
+the reviewer's, which a `GH_TOKEN` in the environment replaces, and the GitHub CLI
+login of each account a repository is read as, which no `GH_TOKEN` reaches, even
+when it is the reviewer's own account; each is told the remedy that reaches it. A
+fine-grained `GH_TOKEN` in `.env` with Contents read, Pull requests read and write,
+Issues read, Checks read, and Commit statuses read covers every call a review makes
+as the reviewer, and the same token logged in for a `github_account` covers its
+repositories.
 
 ### Installation commands
 

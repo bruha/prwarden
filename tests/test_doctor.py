@@ -428,6 +428,23 @@ class GitHubAccessTests(unittest.TestCase):
         self.assertIn("write access", checks[2].message)
         self.assertEqual(read_scopes.call_args_list[1].args, (own,))
 
+    def test_a_repository_account_is_told_the_remedy_that_reaches_it(self) -> None:
+        """Its calls carry that account's CLI login, which GH_TOKEN never replaces,
+        even when the account is the reviewer's own."""
+
+        own = Repository("mine", "reviewer/mine", github_account="Reviewer")
+        checks, read_scopes = self.check(
+            [Repository("app", "owner/app"), own],
+            {"reviewer": ("repo",), "Reviewer": ("repo", "workflow")},
+            {"owner/app": "push", "reviewer/mine": "push"},
+        )
+
+        self.assertEqual(statuses(checks), [OK, NOTE])
+        self.assertEqual(read_scopes.call_args_list[1].args, (own,))
+        self.assertIn("GitHub CLI's login for Reviewer", checks[1].message)
+        self.assertIn("GH_TOKEN does not reach these repositories", checks[1].message)
+        self.assertIn("gh auth login --with-token", checks[1].message)
+
     def test_what_cannot_be_read_is_noted_or_left_to_the_other_checks(self) -> None:
         checks, _ = self.check(
             [Repository("app", "owner/app"), Repository("gone", "owner/gone")],

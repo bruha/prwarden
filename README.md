@@ -180,10 +180,13 @@ GitHub CLI's own login usually carries the `repo`, `workflow`, `gist`, and
 [fine-grained token](https://github.com/settings/personal-access-tokens/new)
 limited to the reviewed repositories, with **Contents** read, **Pull requests** read
 and write, **Issues** read, **Checks** read, and **Commit statuses** read, is
-enough: set it as `GH_TOKEN` in the configuration's `.env`, and every GitHub call
-uses it in place of the CLI's login. An organisation has to allow fine-grained
-tokens for its repositories. `prwarden doctor` reports each account's token scopes
-and the repositories where it is an administrator.
+enough: set it as `GH_TOKEN` in the configuration's `.env`, and every call made as
+the reviewer uses it in place of the CLI's login. A repository whose entry names a
+`"github_account"` is still read with that account's GitHub CLI login, which no
+`GH_TOKEN` replaces; narrow it by logging that account in with a fine-grained token,
+`gh auth login --with-token`. An organisation has to allow fine-grained tokens for
+its repositories. `prwarden doctor` reports the scopes of each of these credentials
+and the repositories where an account is an administrator.
 
 ## Requirements
 
@@ -281,6 +284,7 @@ Important `.env` settings:
 | `GITHUB_COMMENT_TEMPLATE_FILE` | Markdown layout for GitHub inline findings |
 | `GITHUB_COMMENT_TAGS_FILE` | Editable tag aliases for template values |
 | `GITHUB_REVIEWER_USERNAME` | Optional reviewer identity override that skips the GitHub user lookup |
+| `GH_TOKEN` | Optional token every call made as the reviewer uses in place of GitHub CLI's login, such as a narrower fine-grained one; a repository's `github_account` keeps that account's login, and the review engines never receive it |
 | `SLACK_WEBHOOK_URL` | Slack delivery and failure-notification webhook |
 | `AUTO_REVIEW_DRY_RUN` | First live-delivery gate; keep `1` while testing |
 

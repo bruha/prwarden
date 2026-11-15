@@ -129,56 +129,71 @@ FINE_GRAINED_PERMISSIONS = (
 
 
 def check_github_access(settings: Settings) -> List[Check]:
-    """Report how much each GitHub account and token can do beyond reviewing.
+    """Report how much each GitHub credential and account can do beyond reviewing.
 
     Notes, never problems: reviewing works either way, but an account that can do
     more than read code and post reviews is more than this job needs, and a token
     that can change workflows is a credential worth narrowing.
+
+    A credential is reported per route, the way `github` chooses it: the reviewer's,
+    which a `GH_TOKEN` in the environment replaces, and the GitHub CLI login of each
+    account a repository is read as, which no `GH_TOKEN` reaches, even when that
+    account is the reviewer's own. Each route is told the remedy that reaches it.
     """
 
-    accounts: "dict[str, tuple[str, Optional[Repository]]]" = {
-        settings.reviewer_username.casefold(): (settings.reviewer_username, None)
-    }
+    # The reviewer's route first, then each account a repository is read as, once.
+    routes: "list[tuple[str, Optional[Repository]]]" = [
+        (settings.reviewer_username, None)
+    ]
+    seen: "set[str]" = set()
     for repository in settings.repositories:
-        if repository.github_account:
-            accounts.setdefault(
-                repository.github_account.casefold(),
-                (repository.github_account, repository),
-            )
+        account = repository.github_account
+        if account and account.casefold() not in seen:
+            seen.add(account.casefold())
+            routes.append((account, repository))
     checks: List[Check] = []
-    for account, repository in accounts.values():
+    for account, repository in routes:
         if repository is not None and github.repository_account_problem(repository):
             continue
+        token = (
+            f"GitHub token for {account}"
+            if repository is None
+            else f"GitHub CLI's login for {account}, which repositories naming it "
+            "are read as,"
+        )
         try:
             scopes = github.token_scopes(repository)
         except CommandError as error:
-            checks.append(
-                Check(NOTE, f"GitHub token for {account}: scopes not read: {error}")
-            )
+            checks.append(Check(NOTE, f"{token} scopes not read: {error}"))
             continue
         if scopes is None:
             checks.append(
                 Check(
                     OK,
-                    f"GitHub token for {account} is fine-grained, limited to the "
-                    "repositories and permissions it was given",
+                    f"{token} is fine-grained, limited to the repositories and "
+                    "permissions it was given",
                 )
             )
             continue
         broad = github.broad_token_scopes(scopes)
         if not broad:
-            checks.append(
-                Check(OK, f"GitHub token for {account} has scopes {', '.join(scopes)}")
-            )
+            checks.append(Check(OK, f"{token} has scopes {', '.join(scopes)}"))
             continue
+        remedy = (
+            f"A fine-grained token with {FINE_GRAINED_PERMISSIONS}, set as GH_TOKEN "
+            "in the configuration's .env, is enough"
+            if repository is None
+            else "GH_TOKEN does not reach these repositories, so log the account in "
+            "to GitHub CLI with a fine-grained token with "
+            f"{FINE_GRAINED_PERMISSIONS} (gh auth login --with-token) to narrow it"
+        )
         checks.append(
             Check(
                 NOTE,
-                f"GitHub token for {account} has scopes {', '.join(scopes)}; "
+                f"{token} has scopes {', '.join(scopes)}; "
                 f"{', '.join(broad)} {'is' if len(broad) == 1 else 'are'} more than "
-                "reviewing needs, since a token with workflow can rewrite CI. A "
-                f"fine-grained token with {FINE_GRAINED_PERMISSIONS}, set as GH_TOKEN "
-                "in the configuration's .env, is enough",
+                f"reviewing needs, since a token with workflow can rewrite CI. "
+                f"{remedy}",
             )
         )
     admin: "dict[str, list[str]]" = {}
