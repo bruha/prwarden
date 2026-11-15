@@ -166,6 +166,28 @@ records to an installed copy, so nothing is reviewed twice.
 PR Warden posts as the account GitHub CLI is signed in as, and never approves that
 account's own pull requests, so a separate reviewer account works best.
 
+### How much GitHub access it needs
+
+PR Warden reads code, pull requests, checks, and the issues they close, and posts
+reviews and comments. It never pushes, merges, or changes settings, and the review
+engines never receive the token. An approval counts towards a branch's required
+reviews only from an account with write access, so a dedicated account with write
+access, not an administrator's own login, is the narrowest identity that still
+approves.
+
+GitHub CLI's own login usually carries the `repo`, `workflow`, `gist`, and
+`read:org` scopes, and `workflow` lets the token rewrite CI. A
+[fine-grained token](https://github.com/settings/personal-access-tokens/new)
+limited to the reviewed repositories, with **Contents** read, **Pull requests** read
+and write, **Issues** read, **Checks** read, and **Commit statuses** read, is
+enough: set it as `GH_TOKEN` in the configuration's `.env`, and every call made as
+the reviewer uses it in place of the CLI's login. A repository whose entry names a
+`"github_account"` is still read with that account's GitHub CLI login, which no
+`GH_TOKEN` replaces; narrow it by logging that account in with a fine-grained token,
+`gh auth login --with-token`. An organisation has to allow fine-grained tokens for
+its repositories. `prwarden doctor` reports the scopes of each of these credentials
+and the repositories where an account is an administrator.
+
 ## Requirements
 
 - Python 3.11 or newer, the oldest that still gets security fixes
@@ -262,6 +284,7 @@ Important `.env` settings:
 | `GITHUB_COMMENT_TEMPLATE_FILE` | Markdown layout for GitHub inline findings |
 | `GITHUB_COMMENT_TAGS_FILE` | Editable tag aliases for template values |
 | `GITHUB_REVIEWER_USERNAME` | Optional reviewer identity override that skips the GitHub user lookup |
+| `GH_TOKEN` | Optional token every call made as the reviewer uses in place of GitHub CLI's login, such as a narrower fine-grained one; a repository's `github_account` keeps that account's login, and the review engines never receive it |
 | `SLACK_WEBHOOK_URL` | Slack delivery and failure-notification webhook |
 | `AUTO_REVIEW_DRY_RUN` | First live-delivery gate; keep `1` while testing |
 

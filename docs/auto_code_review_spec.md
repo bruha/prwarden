@@ -124,6 +124,22 @@ account's own pull request into a teammate's, which is the route that approves.
 `python3 -m prwarden.public_safety refresh-terms` reads such a repository as its account
 too, because the active login cannot list it.
 
+Reviewing needs only to read code, pull requests, checks, and closing issues and to
+post reviews and comments, so `prwarden doctor` reports, as notes that never fail
+it, what each account's token can do beyond that: the OAuth scopes a classic or
+GitHub CLI token lists in its `X-OAuth-Scopes` header, naming `workflow`,
+`delete_repo`, package writes, and any `admin:` scope as more than reviewing needs,
+and the repositories where the account is an administrator, since an approval
+counts towards required reviews with write access. A token that sends no such
+header is fine-grained. Each credential is reported by the route that carries it:
+the reviewer's, which a `GH_TOKEN` in the environment replaces, and the GitHub CLI
+login of each account a repository is read as, which no `GH_TOKEN` reaches, even
+when it is the reviewer's own account; each is told the remedy that reaches it. A
+fine-grained `GH_TOKEN` in `.env` with Contents read, Pull requests read and write,
+Issues read, Checks read, and Commit statuses read covers every call a review makes
+as the reviewer, and the same token logged in for a `github_account` covers its
+repositories.
+
 ### Installation commands
 
 `prwarden setup`, `prwarden doctor`, and `prwarden schedule` look after an
@@ -172,7 +188,8 @@ be mistaken for one.
   delivery, a configured engine that is signed out, two schedules running at
   once, and a schedule whose Python is older than 3.11 included. That last one is
   found by asking the scheduled interpreter, or the one an installed `prwarden`
-  script names on its first line, for its version.
+  script names on its first line, for its version. It also notes, without failing,
+  a GitHub token or role that can do more than reviewing needs (see above).
 - `schedule install` writes a per-user LaunchAgent on macOS or a systemd user
   timer on Linux that runs `prwarden --live`, and refuses while the configuration
   keeps `AUTO_REVIEW_DRY_RUN` on: a dry run records nothing, so a scheduled one

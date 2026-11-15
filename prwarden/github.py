@@ -955,6 +955,64 @@ def repository_account_problem(repository: Repository) -> Optional[str]:
     return _repository_account_failures.get(account.casefold())
 
 
+# OAuth scopes that let a token do what reviewing never needs: change CI workflows,
+# delete a repository, administer an organisation, or publish packages.
+BROAD_TOKEN_SCOPES = ("workflow", "delete_repo", "write:packages", "delete:packages")
+ROLES = ("admin", "maintain", "push", "triage", "pull")
+
+
+def token_scopes(
+    repository: Optional[Repository] = None,
+) -> "Optional[tuple[str, ...]]":
+    """Return the OAuth scopes of the token GitHub calls carry, or None if it has none.
+
+    The token is the reviewer's, or that of the account ``repository`` is read as.
+    A classic or GitHub CLI token lists its scopes in a response header; a
+    fine-grained token sends none, because its permissions are set per repository
+    when it is made.
+    """
+
+    args = ["gh", "api", "--include", "user"]
+    output = (
+        _run_for(repository, args, timeout_seconds=30)
+        if repository is not None
+        else run_cmd(args, timeout_seconds=30)
+    )
+    for line in output.splitlines()[1:]:
+        if not line.strip():
+            break
+        name, _, value = line.partition(":")
+        if name.strip().casefold() == "x-oauth-scopes":
+            return tuple(
+                sorted(scope.strip() for scope in value.split(",") if scope.strip())
+            )
+    return None
+
+
+def broad_token_scopes(scopes: "Sequence[str]") -> "tuple[str, ...]":
+    """Return the scopes reviewing never needs, of those a token holds."""
+
+    return tuple(
+        scope
+        for scope in scopes
+        if scope in BROAD_TOKEN_SCOPES or scope.startswith("admin:")
+    )
+
+
+def repository_role(repository: Repository) -> str:
+    """Return the highest role the account a repository is read as holds there."""
+
+    output = _run_for(
+        repository,
+        ["gh", "api", f"repos/{repository.slug}", "--jq", ".permissions"],
+        timeout_seconds=30,
+    )
+    permissions = _parse_json(output, f"reading permissions on {repository.slug}")
+    if not isinstance(permissions, dict):
+        raise CommandError(f"GitHub returned no permissions for {repository.slug}")
+    return next((role for role in ROLES if permissions.get(role) is True), "none")
+
+
 # A pull request closing more than a few issues is closing a list, and each costs
 # prompt room; the body is capped like a Jira work item's.
 MAX_CLOSING_ISSUES = 3
