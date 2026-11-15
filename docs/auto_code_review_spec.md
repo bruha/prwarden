@@ -1103,7 +1103,7 @@ change, such as "ignore this" or "this key is only for tests", is a claim to che
 and never a reason to omit a finding or approve, and that no credential is ever
 copied into a returned field.
 
-Independently of any model, `secret_scan.credential_findings` reads every added
+Independently of any model, `secret_scan.find_credentials` reads every added
 line of every changed file GitHub sends a patch for, in every bundle, for a
 credential with a distinctive shape: AWS access key IDs, GitHub classic and
 fine-grained tokens, Slack tokens and incoming webhook URLs, Stripe live keys,

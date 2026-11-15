@@ -50,8 +50,10 @@ model and engine display values.
 pass. When it is not configured, the primary engine verifies its own candidates,
 so `[verifier]`, `[verify-engine]`, and `[verify-model]` repeat the reviewer
 values and `[done-by]` omits the redundant `verified by` clause. An inline
-comment always describes a confirmed finding, so a rendered comment is always
-attributed to the engine that verified it.
+comment describes a confirmed finding, so a rendered comment is attributed to the
+engine that verified it. The one exception is a committed credential found by PR
+Warden's own pattern check: no engine found or verified it, it still carries the
+review's `[done-by]`, and its `[problem]` says the pattern check found it.
 
 A tag alone on its line whose value is empty takes that line and the blank line
 after it, so `[rule]` leaves no gap in the comment on a finding that breaks no
