@@ -162,6 +162,17 @@ class RuleChangeTests(unittest.TestCase):
             ("the code review rules in .kiro/steering/review.md",),
         )
 
+    def test_the_head_is_read_as_later_reviews_will_read_it(self) -> None:
+        """Rules are read stripped, so a first line indented past a fence's three
+        spaces opens a fence there and hides every heading after it."""
+
+        self.head("AGENTS.md", "\t```\n" + RULES)
+
+        self.assertEqual(
+            self.changes([changed("AGENTS.md")], {"AGENTS.md": RULES}),
+            ("the code review rules in AGENTS.md",),
+        )
+
     def test_a_head_file_too_large_to_be_read_as_rules_holds_none(self) -> None:
         """Later reviews skip such a file, so its rules stop applying."""
 

@@ -990,7 +990,10 @@ def review_policy_changes(
                     and not head_file.is_symlink()
                     and head_file.stat().st_size <= MAX_BASE_FILE_BYTES
                 ):
-                    head_text = head_file.read_text(encoding="utf-8")
+                    # Stripped, as the base side and every later review read it:
+                    # a first line indented past a fence's three spaces opens a
+                    # fence only once stripped, and would hide the rules after it.
+                    head_text = head_file.read_text(encoding="utf-8").strip()
             except (OSError, UnicodeDecodeError):
                 head_text = None
         if head_text is None or code_review_sections(
