@@ -77,8 +77,10 @@ class DiffTooLargeError(ReviewError):
     """Raised when a complete PR diff cannot fit within the configured limit."""
 
 
-def _added_lines_from_patch(patch: str) -> frozenset[int]:
-    added: set[int] = set()
+def added_line_texts(patch: str) -> "list[tuple[int, str]]":
+    """Return each line a unified-diff patch adds, with its new-file line number."""
+
+    added: "list[tuple[int, str]]" = []
     new_line: Optional[int] = None
 
     for line in patch.splitlines():
@@ -89,13 +91,17 @@ def _added_lines_from_patch(patch: str) -> frozenset[int]:
         if new_line is None or line.startswith("\\"):
             continue
         if line.startswith("+") and not line.startswith("+++"):
-            added.add(new_line)
+            added.append((new_line, line[1:]))
             new_line += 1
         elif line.startswith("-") and not line.startswith("---"):
             continue
         else:
             new_line += 1
-    return frozenset(added)
+    return added
+
+
+def _added_lines_from_patch(patch: str) -> frozenset[int]:
+    return frozenset(line for line, _ in added_line_texts(patch))
 
 
 def _optional_count(value: Any) -> Optional[int]:

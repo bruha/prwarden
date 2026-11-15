@@ -37,6 +37,8 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
 - `prwarden/linked_issues.py`: the Jira work items a pull request names, read through
   `acli`.
 - `prwarden/review.py`: diff construction and semantic response validation.
+- `prwarden/secret_scan.py`: credentials an added line commits, found by their
+  shape rather than by a model.
 - `prwarden/delivery.py`: Slack message formatting and delivery helpers.
 - `prwarden/comment_template.py`: validated GitHub comment templates and tag aliases.
 - `prwarden/templates/`: public-safe default GitHub comment layout and tag registry,

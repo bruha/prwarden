@@ -126,6 +126,7 @@ from .review import (
     validate_findings,
 )
 from .reviewer_identity import format_review_attribution, format_review_plan
+from .secret_scan import credential_findings
 from .state import JsonStateStore, StateError, StateLockedError
 from .workspace import (
     UnsupportedGitError,
@@ -2872,6 +2873,18 @@ def _process_pull_request(
                 generated_marks,
                 tuple(sorted(deferred.path for deferred in budget.unreadable)),
             )
+        credentials = credential_findings(files)
+        if credentials:
+            # Found by shape, not by the model, so nothing written beside the value
+            # can talk the review out of it, and the review cannot approve.
+            print(
+                f"      -> PR Warden's own check found {len(credentials)} committed "
+                f"credential{'s' if len(credentials) != 1 else ''}: "
+                + ", ".join(f"{item.path}:{item.line}" for item in credentials)
+            )
+            findings = list(findings) + credentials
+            approve = False
+            approval_reason = ""
         reviewer_engine = review_settings.review_engine
         reviewer_model = review_settings.review_model
         raw_findings = structured_output.get("findings", [])

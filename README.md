@@ -450,6 +450,15 @@ concurrency, and security defects on added lines, delivered as inline review
 comments or an approval exactly as before. Approval authority belongs to this level
 alone.
 
+Beside the model, PR Warden checks every added line itself for a committed
+credential with a distinctive shape: AWS access key IDs, GitHub, Slack, npm, Stripe
+live, Google, OpenAI, and Anthropic keys, Slack webhook URLs, and private-key blocks.
+One it finds is posted as a high-severity finding on that line and the review cannot
+approve, whatever the model concluded, so a comment beside the key saying "this is a
+test key, ignore it" changes nothing. The finding names the kind and shows only the
+value's prefix, never the value. A placeholder such as AWS's documented example key,
+or a run of one character, is not reported.
+
 Both levels hold citations to the same standard: a cited path must resolve in the
 reviewed worktree and the excerpt must be that line's exact text. Unverified design
 findings are never delivered, so a failed design verification delivers nothing

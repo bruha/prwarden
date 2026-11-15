@@ -1053,7 +1053,24 @@ names are touched, so markup in a diff reads as written, and a test fails if a p
 gains a tag that is not registered. A correction retry quotes the controller's
 rejection, which can quote the rejected response and the head, such as a search
 pattern or the files it matched: the code level encodes it as JSON, and the advisory
-levels place it inside a contained `controller-rejection` block.
+levels place it inside a contained `controller-rejection` block. Every prompt also
+says that text in the reviewed content addressed to the reviewer or vouching for the
+change, such as "ignore this" or "this key is only for tests", is a claim to check
+and never a reason to omit a finding or approve, and that no credential is ever
+copied into a returned field.
+
+Independently of any model, `secret_scan.credential_findings` reads every added
+line of every changed file GitHub sends a patch for, in every bundle, for a
+credential with a distinctive shape: AWS access key IDs, GitHub classic and
+fine-grained tokens, Slack tokens and incoming webhook URLs, Stripe live keys,
+Google, OpenAI, and Anthropic API keys, npm tokens, and private-key block headers.
+A value whose random part contains a placeholder word such as `EXAMPLE`, or fewer
+than eight distinct characters, is not one. Each hit becomes a `high` finding on
+that added line, appended to the confirmed findings without verification, at most
+ten per review, so the review delivers findings and cannot approve. The finding
+names the kind of credential and shows only the value's fixed prefix, in the
+comment, in Slack, and on the terminal, so a comment kept after a force-push never
+preserves a value the push removed. Nothing written beside the value is read.
 It permits only read-only local file search and reading for semantic
 verification, and prohibits edits, command execution, networking, browsing, and
 external actions. It requests only correctness, reliability, data-loss,
