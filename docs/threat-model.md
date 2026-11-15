@@ -11,10 +11,9 @@ follows its shape deliberately so the two can be read side by side.
 
 1. Asks GitHub, through the authenticated `gh` CLI, which pull requests are open.
 2. Fetches each reviewed head into a detached worktree from a local checkout.
-3. Builds a prompt from the diff, prior review comments, GitHub checks, the
-   repository's own `.prwarden/background.md`, the "Code review" rules in the
-   base branch's agent instruction files, and the base branch's recent commit
-   messages on the changed files.
+3. Builds a prompt from the diff, prior review comments, GitHub checks, and, from
+   the base branch, its `.prwarden/background.md`, the "Code review" rules in its
+   agent instruction files, and its recent commit messages on the changed files.
 4. Runs an authenticated coding-agent CLI, in that worktree, with the prompt.
 5. Validates every citation in the response against the worktree.
 6. Posts inline comments, a review, an approval, or advisory pull-request comments
@@ -27,7 +26,7 @@ follows its shape deliberately so the two can be read side by side.
 | --- | --- | --- |
 | Operator | Trusted | Owns `.env`, `repositories.json`, and the schedule |
 | Local checkout | Trusted as a Git object source | Its working tree is never used; only objects are |
-| Base branch | Trusted for its code review rules and its `linguist-generated` marks | Merged by the maintainers; the pull request under review cannot change it |
+| Base branch | Trusted for its code review rules, its background note, and its `linguist-generated` marks | Merged by the maintainers; the pull request under review cannot change it, and a pull request that changes them for later reviews is never approved |
 | Reviewed head | **Untrusted** | Any contributor can put anything in a diff |
 | Coding-agent CLI | Semi-trusted | Authenticated by the operator, but it is a general tool with its own capabilities and its own sandbox |
 | Model response | **Untrusted** | Validated in full before anything is delivered |
@@ -37,8 +36,8 @@ follows its shape deliberately so the two can be read side by side.
 | State file | Trusted | Local, atomic, lock-guarded |
 
 The boundary that matters most is the third one. Everything in the reviewed head —
-code, file names, commit messages, the pull-request body, prior comments, and the
-background note — is data written by whoever opened the pull request.
+code, file names, commit messages, the pull-request body, and prior comments — is
+data written by whoever opened the pull request.
 
 ## Threats and what stops them
 
@@ -56,6 +55,7 @@ background note — is data written by whoever opened the pull request.
 | T10 | Writing outside the intended places | A review run writes only under its state directory (`.state/` in a checkout, `~/.local/state/prwarden` when installed: state, run logs, worktrees) and into the clones it manages itself, and never to the reviewed repository or beside an installed package. A managed clone is fetched with GitHub CLI's token for its account through a credential helper set on the command line, with git's other helpers off, so the token is never stored. `prwarden setup` writes only the configuration directory and `prwarden schedule` only its own LaunchAgent or systemd units. Connecting Slack in setup opens Slack's own page for a new app in the browser, asking for the `incoming-webhook` scope alone, and sends one test message, naming no repository, to the webhook the operator pasted. Installing a missing tool runs a Homebrew formula or cask, or the vendor's own installer fetched from the vendor's domain, only after the operator has seen the command and said yes, and never with `sudo`; that installer is trusted exactly as far as it would be if the operator ran it by hand. Inside a review worktree it adds only Kiro's controller-owned settings file (T11), which is never committed or pushed. Applying fixes is deliberately not a feature |
 | T11 | Agent host configuration shipped by the reviewed head | An agent CLI reads workspace configuration from the directory it starts in, which is the reviewed head, and some of it names commands the CLI runs itself, outside the tool permissions the review grants the model. Each case was confirmed with a head whose server, hook, or helper created a file. Kiro starts MCP servers from `.kiro/settings/mcp.json` and `.amazonq/mcp.json`; Antigravity starts MCP servers and hooks from `.agents/` and `.agent/`, plugins included, with its sandbox on. Neither CLI can be told to skip them, so `refuse_host_configuration` (`prwarden/engine.py`) refuses, before the CLI starts, a head whose configuration directories hold anything but documents (`.kiro/steering`, `.kiro/specs`, `.amazonq/rules`, `.agents/rules`, `.agents/workflows`) or a symlink, and Kiro gets the only configuration file it finds there. That file also turns off Kiro's code intelligence, so no language server starts and loads the project's configuration. Kiro's `code` tool still writes `.kiro/settings/lsp.json` during a call, and the next call there refused the head, so the adapter removes that one file after every call; Kiro CLI 3.1 also creates an empty `.kiro/agents`, which the adapter removes only while it is empty; a head that ships either is refused before any call, and a refusal names the file it found. Claude Code's safe mode still loaded a head's `.claude/settings.json`, whose `apiKeyHelper` ran and whose `env` redirected the API requests, so the adapter reads only user settings and no MCP configuration. Codex loads a head's `.codex/config.toml` only for a project the user configuration trusts, and the adapter never reads the user configuration |
 | T12 | An unread generated file hiding a change | GitHub omits the patch of a file whose diff is too large, and nothing local can read it, so its pull request is never approved, unless the path matches `IGNORED_MISSING_PATCH_PATTERNS`. Unset, that is the built-in list `DEFAULT_IGNORED_MISSING_PATCH_PATTERNS` (`prwarden/config.py`): dependency lockfiles, `*.tsbuildinfo`, and Wrangler's `worker-configuration.d.ts`, matched by name at any depth. A match is skipped only while GitHub omits its patch, so a change small enough to show is still reviewed. Images, minified bundles, source maps, test snapshots, and other generators' output are left out because each can hold a line worth reading. An operator's own list replaces the built-in one, and `[]` ignores nothing. A repository's own `linguist-generated` marks count as well, read with `git check-attr --source` from the base branch's tip (`read_generated_marks`, `prwarden/workspace.py`) and never from the head or the local working tree, so a pull request cannot mark its own file generated; an unmark only ever keeps a file unread, and marks that cannot be read leave every omitted file unread, a listed one included. A Git older than 2.40 cannot read attributes from a commit, so the marks are not read there and the list alone decides, as before. Residual: an unread lockfile can point a dependency at another source; a CI install that refuses a lockfile out of step with its manifest, such as `npm ci`, `bun install --frozen-lockfile`, or `cargo build --locked`, is what catches that |
+| T13 | A pull request that reconfigures every later review, by loosening the code review rules, rewriting the background note, marking files generated, changing who must review, or removing a CI check | The rules, the background note, and the `linguist-generated` marks are read from the base branch, so a pull request cannot change its own review (T2, T12). A pull request that changes them for the reviews after it is never approved: `review_policy_changes` (`prwarden/review.py`) names any changed file under `.prwarden/` or `.github/workflows/`, any `.gitattributes`, a `CODEOWNERS`, and an instruction file whose "Code review" sections differ from the base branch's, and a clean result is then withheld and recorded. Its findings still post. Residual: only GitHub's own settings stop a person with merge rights from merging such a change; a ruleset that requires a code owner's review of these paths is the repository owner's control, not this tool's |
 
 ## Residual risk, stated plainly
 

@@ -25,6 +25,25 @@ review-engine adapter, and route confirmed correctness or security findings:
   checks, and while any check on that head still fails a later run skips it without
   reviewing; a re-run that passes, a later head, or `--force` reopens it. Checks
   that cannot be read keep it skipped.
+- No clean result is delivered for a pull request that changes review policy,
+  because a reviewer that approved it would be signing off its own reconfiguration.
+  Policy is any file under `.prwarden/` or `.github/workflows/`, any
+  `.gitattributes`, a `CODEOWNERS` at the root, in `.github/`, or in `docs/`, and
+  the "Code review" sections of the instruction files the rules are read from
+  (`review.review_policy_changes`). An instruction file counts only when those
+  sections differ between the reviewed head and the commit its diff is taken from,
+  where the head left the base branch's tip, which is what GitHub's list of changed
+  files is measured against; comparing with the tip itself would blame a rule change
+  merged since on every open pull request that edits the same file. Editing the rest
+  of an `AGENTS.md` does not count. Each side holds the rules a review would read
+  there, so a rename off the instruction-file paths removes the rules and a rename
+  onto them adds some, and a link, or a file over 200 KB, holds none. A head file
+  that cannot be read counts as changed, and so does every changed instruction file
+  when the base side cannot be read. The review still runs and its findings are
+  delivered; only the clean result is withheld, recorded with the policy it changed,
+  and a later run of the same head skips it without reviewing until a later head or
+  `--force`. A person approves it. A replay applies the same gate against its
+  pinned base, so a control case reports what a live run would deliver.
 - Configured reviewer's pull requests in a repository with `"slack": false`: the
   same results on the pull request instead, because the webhook belongs to a
   workspace that project is not part of. Findings are one GitHub review with inline
@@ -105,6 +124,22 @@ account's own pull request into a teammate's, which is the route that approves.
 `python3 -m prwarden.public_safety refresh-terms` reads such a repository as its account
 too, because the active login cannot list it.
 
+Reviewing needs only to read code, pull requests, checks, and closing issues and to
+post reviews and comments, so `prwarden doctor` reports, as notes that never fail
+it, what each account's token can do beyond that: the OAuth scopes a classic or
+GitHub CLI token lists in its `X-OAuth-Scopes` header, naming `workflow`,
+`delete_repo`, package writes, and any `admin:` scope as more than reviewing needs,
+and the repositories where the account is an administrator, since an approval
+counts towards required reviews with write access. A token that sends no such
+header is fine-grained. Each credential is reported by the route that carries it:
+the reviewer's, which a `GH_TOKEN` in the environment replaces, and the GitHub CLI
+login of each account a repository is read as, which no `GH_TOKEN` reaches, even
+when it is the reviewer's own account; each is told the remedy that reaches it. A
+fine-grained `GH_TOKEN` in `.env` with Contents read, Pull requests read and write,
+Issues read, Checks read, and Commit statuses read covers every call a review makes
+as the reviewer, and the same token logged in for a `github_account` covers its
+repositories.
+
 ### Installation commands
 
 `prwarden setup`, `prwarden doctor`, and `prwarden schedule` look after an
@@ -153,7 +188,8 @@ be mistaken for one.
   delivery, a configured engine that is signed out, two schedules running at
   once, and a schedule whose Python is older than 3.11 included. That last one is
   found by asking the scheduled interpreter, or the one an installed `prwarden`
-  script names on its first line, for its version.
+  script names on its first line, for its version. It also notes, without failing,
+  a GitHub token or role that can do more than reviewing needs (see above).
 - `schedule install` writes a per-user LaunchAgent on macOS or a systemd user
   timer on Linux that runs `prwarden --live`, and refuses while the configuration
   keeps `AUTO_REVIEW_DRY_RUN` on: a dry run records nothing, so a scheduled one
@@ -255,16 +291,20 @@ A pull-request head is skipped when either condition is true:
    have all been resolved.
 2. JSON state contains a terminal record for the code level's tuple
    `(repository, PR number, head SHA, destination)`. The advisory design level is
-   keyed by pull request instead, as described under its own heading below. An `approval_withheld` record is skipped only while
-   at least one controller-validated blocking comment remains unresolved and its
-   feedback fingerprint remains unchanged. A `delivered` comment
-   review is skipped only while at least one exact inline finding from its
+   keyed by pull request instead, as described under its own heading below. An
+   `approval_withheld` record is skipped while at least one controller-validated
+   blocking comment remains unresolved and its feedback fingerprint remains
+   unchanged, and, whatever the feedback, while it names review policy the head
+   changes; that one reopens only for a later head or `--force`. A `delivered`
+   comment review is skipped only while at least one exact inline finding from its
    review receipt remains unresolved.
 
 Terminal JSON states are `delivered`, `no_findings`, `approval_withheld`,
 `delivery_uncertain`, and `skipped_oversized`. `approval_withheld` means there
-was no new finding to post but an existing qualifying issue still blocks
-approval. It stores the engine's reason and is reconsidered when review feedback
+was no new finding to post but the approval is still blocked: by an existing
+qualifying issue, or by the controller itself, as for a head that changes review
+policy, whose record keeps what changed under `policy_changes`. It stores the
+reason. One blocked only by an existing issue is reconsidered when review feedback
 changes without a new commit, when every recorded blocker is resolved, or when a
 legacy record has no validated blocker IDs. Resolved and unresolved inline
 review threads are included in engine context, and each thread's resolution
@@ -760,18 +800,22 @@ there are read; a custom acceptance-criteria field is not.
 
 ### Repository background
 
-Every level is given the reviewed head's own `.prwarden/background.md` when it
-exists: what the product is, what its units mean, what everybody on the team already
-knows and no diff states. Alibaba's reviewer asks the calling agent to summarise
-business context and pass it in on every invocation; the same context committed to
-the repository stays true as the product moves and needs no operator to remember it.
+Every level is given the base branch's `.prwarden/background.md` when it exists:
+what the product is, what its units mean, what everybody on the team already knows
+and no diff states. Alibaba's reviewer asks the calling agent to summarise business
+context and pass it in on every invocation; the same context committed to the
+repository stays true as the product moves and needs no operator to remember it.
 
-It is content from the reviewed head, so it is untrusted exactly like the diff:
-capped at 4000 characters with the remainder marked truncated, delimited in the
-prompt, and named in the sentence that forbids following instructions found in
-reviewed content. It may add context, never authority, and never permission to
-relax a rule the prompt states. A repository without the file costs nothing and the
-prompts say nothing about one.
+It is read from the base branch's tip, or a replay's pinned base, never from the
+reviewed head, for the reason the code review rules are: a pull request must not
+write the context its own review is given. One that edits the note is changing
+review policy, so it is never approved. The note is still text whoever merged it
+wrote, so it is untrusted like the diff: capped at 4000 characters with the
+remainder marked truncated, delimited in the prompt, and named in the sentence that
+forbids following instructions found in reviewed content. It may add context, never
+authority, and never permission to relax a rule the prompt states. A repository
+without the file costs nothing and the prompts say nothing about one; a note that
+cannot be read is reported and left out.
 
 ### File history
 

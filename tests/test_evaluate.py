@@ -934,7 +934,7 @@ class ReplayBundlingTests(unittest.TestCase):
         ), patch("prwarden.cli._create_fallback_reviewer", return_value=None), patch(
             "prwarden.cli.review_workspace"
         ) as workspace, patch(
-            "prwarden.evaluate.read_background", return_value=""
+            "prwarden.cli._read_background", return_value=""
         ), patch(
             "prwarden.cli._read_linked_issues", return_value=()
         ), patch("prwarden.cli._design_level"), patch(
@@ -1330,7 +1330,7 @@ class ReplayEvidenceTests(unittest.TestCase):
         ), patch("prwarden.cli._create_fallback_reviewer", return_value=None), patch(
             "prwarden.cli.review_workspace"
         ) as workspace, patch(
-            "prwarden.evaluate.read_background", return_value=""
+            "prwarden.cli._read_background", return_value=""
         ), patch(
             "prwarden.cli._read_linked_issues", return_value=()
         ), patch("prwarden.cli._design_level"), patch(
@@ -1673,7 +1673,7 @@ class RecordedCandidateTests(unittest.TestCase):
         ), patch("prwarden.cli._create_fallback_reviewer", return_value=None), patch(
             "prwarden.cli.review_workspace"
         ) as workspace, patch(
-            "prwarden.evaluate.read_background", return_value=""
+            "prwarden.cli._read_background", return_value=""
         ), patch(
             "prwarden.cli._read_linked_issues", return_value=()
         ), patch("prwarden.cli._design_level") as design, patch(
@@ -2179,7 +2179,7 @@ class ReplayDecisionTests(unittest.TestCase):
         ), patch("prwarden.cli._create_fallback_reviewer", return_value=None), patch(
             "prwarden.cli.review_workspace"
         ) as workspace, patch(
-            "prwarden.evaluate.read_background", return_value=""
+            "prwarden.cli._read_background", return_value=""
         ), patch(
             "prwarden.cli._read_linked_issues", return_value=()
         ), patch("prwarden.cli._report_diff_budget"), patch(
@@ -2243,6 +2243,18 @@ class ReplayDecisionTests(unittest.TestCase):
         self.assertIn("committed credential", score["approval_reason"])
         self.assertIn("Adds a GitHub token to the repository", output)
         self.assertNotIn(key, output)
+        self.assertIn("Would withhold approval", output)
+
+    def test_a_policy_change_never_counts_as_an_approval(self) -> None:
+        """A live run leaves it to a person, so a control case must say so too."""
+
+        score, output = self.run_case(
+            [self.reviewed()],
+            changed=({"filename": ".github/workflows/test.yml"},),
+        )
+
+        self.assertIs(score["approved"], False)
+        self.assertIn("changes review policy", score["approval_reason"])
         self.assertIn("Would withhold approval", output)
 
     def test_a_bundle_finding_takes_the_approval_away(self) -> None:

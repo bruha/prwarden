@@ -1032,3 +1032,48 @@ class GitHubAccountPinningTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TokenAccessTests(unittest.TestCase):
+    HEADERS = (
+        "HTTP/2.0 200 OK\n"
+        "Access-Control-Expose-Headers: ETag, X-OAuth-Scopes\n"
+        "X-Oauth-Scopes: repo, workflow, gist, read:org\n"
+        "\n"
+        '{"login": "reviewer"}'
+    )
+
+    def test_the_scopes_come_from_the_response_header(self) -> None:
+        with patch("prwarden.github.run_cmd", return_value=self.HEADERS) as run:
+            scopes = github.token_scopes()
+
+        self.assertEqual(scopes, ("gist", "read:org", "repo", "workflow"))
+        self.assertEqual(run.call_args.args[0], ["gh", "api", "--include", "user"])
+        self.assertEqual(github.broad_token_scopes(scopes), ("workflow",))
+        self.assertEqual(
+            github.broad_token_scopes(("admin:org", "delete_repo", "repo")),
+            ("admin:org", "delete_repo"),
+        )
+
+    def test_a_token_without_the_header_is_fine_grained(self) -> None:
+        """A header named in another header's value, or in the body, is not one."""
+
+        body = (
+            "HTTP/2.0 200 OK\nAccess-Control-Expose-Headers: X-OAuth-Scopes\n\n"
+            "X-OAuth-Scopes: repo"
+        )
+        with patch("prwarden.github.run_cmd", return_value=body):
+            self.assertIsNone(github.token_scopes())
+
+    def test_the_role_is_the_highest_permission_held(self) -> None:
+        repository = Repository("app", "owner/app")
+        for permissions, role in (
+            ({"admin": True, "maintain": True, "push": True, "pull": True}, "admin"),
+            ({"admin": False, "push": True, "pull": True}, "push"),
+            ({"pull": True}, "pull"),
+            ({}, "none"),
+        ):
+            with self.subTest(role=role), patch(
+                "prwarden.github.run_cmd", return_value=json.dumps(permissions)
+            ):
+                self.assertEqual(github.repository_role(repository), role)

@@ -58,7 +58,7 @@ from . import progress
 from .cli import RUN_LOG_DIRECTORY_NAME
 from .metrics import ReviewMetrics
 from .models import Finding, FindingEvidence, PullRequest, Repository
-from .review import ReviewError, build_review_material, read_background
+from .review import ReviewError, build_review_material
 from .secret_scan import credential_findings, find_credentials, redact_credentials
 from .reviewer_identity import format_review_attribution
 from .state import JsonStateStore, StateError
@@ -1405,7 +1405,7 @@ def _prepared_case(
             )
             for note in workspace.dependency_notes:
                 print(f"      -> Dependency evidence: {note}")
-        background = read_background(exact_repository.path)
+        background = cli._read_background(repository, pull_request, case.base)
         if background:
             material = replace(material, background=background)
         history = cli._read_file_history(repository, pull_request, files, case.base)
@@ -1628,6 +1628,19 @@ def replay_case(
             if approve is not None:
                 approve = False
                 approval_reason = "PR Warden's own check found a committed credential"
+        if approve:
+            # As live: a change to review policy is left to a person, compared
+            # with the pinned base, which is what the pinned diff was taken from.
+            policy_changes = cli._review_policy_changes(
+                repository,
+                pull_request,
+                list(prepared.files),
+                exact_repository.path,
+                diff_base=case.base,
+            )
+            if policy_changes:
+                approve = False
+                approval_reason = cli._policy_change_reason(policy_changes)
 
     for finding in findings:
         # Named because a replay delivers nothing, so this transcript is the only

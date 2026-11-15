@@ -43,6 +43,7 @@ from .models import (
     ReviewRuleSection,
     WorkspaceSearch,
 )
+from .workspace import MAX_BASE_FILE_BYTES
 
 
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
@@ -887,8 +888,9 @@ BACKGROUND_FILE = ".prwarden/background.md"
 MAX_BACKGROUND_BYTES = 4000
 
 
-def read_background(root: Optional[Path]) -> str:
-    """Return the reviewed head's own description of what this codebase is for.
+def background_text(text: str) -> str:
+    """Return a repository's description of what its codebase is for, as reviews
+    read it.
 
     A diff says what changed and a pull-request body says what the author meant; a
     reviewer new to the product still lacks what everybody on the team knows. This
@@ -896,23 +898,115 @@ def read_background(root: Optional[Path]) -> str:
     than living in the operator's configuration, so it stays true as the product
     moves.
 
-    It is content from the reviewed head, so it is untrusted: capped here and framed
-    as data in the prompt. It may add context, never authority.
+    The caller reads it from the base branch, never the reviewed head, so a pull
+    request cannot write the context its own review is given. It is still text
+    anyone with merge rights wrote, so it is capped here and framed as data in the
+    prompt. It may add context, never authority.
     """
 
-    if root is None:
-        return ""
-    path = root / BACKGROUND_FILE
-    try:
-        if not path.is_file():
-            return ""
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return ""
     text = text.strip()
     if len(text) <= MAX_BACKGROUND_BYTES:
         return text
     return text[:MAX_BACKGROUND_BYTES].rstrip() + "\n[truncated]"
+
+
+# Files that decide how a change is reviewed or merged rather than what the code
+# does. A pull request that edits one changes the review of every pull request after
+# it, so its approval belongs to a person: the reviewer it would reconfigure is the
+# last one who should grant it.
+REVIEW_POLICY_DIRECTORIES = (".prwarden/", ".github/workflows/")
+REVIEW_POLICY_FILES = frozenset(("CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"))
+REVIEW_POLICY_NAMES = frozenset((".gitattributes",))
+
+
+def is_review_policy_path(path: str) -> bool:
+    """Return whether a repository path is review policy whatever its content."""
+
+    normalized = PurePosixPath(path).as_posix()
+    return (
+        normalized.startswith(REVIEW_POLICY_DIRECTORIES)
+        or normalized in REVIEW_POLICY_FILES
+        or PurePosixPath(normalized).name in REVIEW_POLICY_NAMES
+    )
+
+
+def rule_source_changes(
+    files: "Sequence[dict[str, Any]]",
+) -> "tuple[tuple[str, Optional[str]], ...]":
+    """Return each changed instruction file as its base path and its head path.
+
+    The base path is the earlier name of a renamed file; the head path is None for a
+    removed one. Only these can change a "Code review" section, and only these are
+    worth reading from the base branch.
+    """
+
+    pairs: "list[tuple[str, Optional[str]]]" = []
+    for file_data in files:
+        path = file_data.get("filename")
+        if not isinstance(path, str) or not path:
+            continue
+        previous = file_data.get("previous_filename")
+        base_path = previous if isinstance(previous, str) and previous else path
+        head_path = None if file_data.get("status") == "removed" else path
+        if is_review_rule_source(base_path) or (
+            head_path is not None and is_review_rule_source(head_path)
+        ):
+            pairs.append((base_path, head_path))
+    return tuple(dict.fromkeys(pairs))
+
+
+def review_policy_changes(
+    files: "Sequence[dict[str, Any]]",
+    base_documents: "Mapping[str, str]",
+    head_root: Optional[Path],
+) -> "tuple[str, ...]":
+    """Return what a change does to review policy, each as a reader would name it.
+
+    A policy file counts whatever it says. An instruction file counts only when its
+    "Code review" sections differ between the commit the change is diffed against
+    and the reviewed head, because those sections are the rules every later review
+    is held to, while the rest of such a file is documentation any pull request may
+    edit. Each side holds the rules a review would read there: none at a path that
+    is not an instruction file, so a rename off those paths removes the rules and a
+    rename onto them adds some, and none in a file too large or not regular, as the
+    base branch's rules are read. A head file that cannot be read counts as changed,
+    so not knowing never grants an approval.
+    """
+
+    changes: "list[str]" = []
+    for file_data in files:
+        for key in ("previous_filename", "filename"):
+            path = file_data.get(key)
+            if isinstance(path, str) and path and is_review_policy_path(path):
+                changes.append(path)
+    for base_path, head_path in rule_source_changes(files):
+        base_text = base_documents.get(base_path, "")
+        if not is_review_rule_source(base_path):
+            base_text = ""
+        head_text: Optional[str] = ""
+        if (
+            head_path is not None
+            and head_root is not None
+            and is_review_rule_source(head_path)
+        ):
+            head_file = head_root / head_path
+            try:
+                if (
+                    head_file.is_file()
+                    and not head_file.is_symlink()
+                    and head_file.stat().st_size <= MAX_BASE_FILE_BYTES
+                ):
+                    # Stripped, as the base side and every later review read it:
+                    # a first line indented past a fence's three spaces opens a
+                    # fence only once stripped, and would hide the rules after it.
+                    head_text = head_file.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeDecodeError):
+                head_text = None
+        if head_text is None or code_review_sections(
+            base_text
+        ) != code_review_sections(head_text):
+            changes.append(f"the code review rules in {head_path or base_path}")
+    return tuple(dict.fromkeys(changes))
 
 
 def discover_documentation(root: Optional[Path]) -> "tuple[DocumentationFile, ...]":
