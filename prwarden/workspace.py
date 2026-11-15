@@ -340,6 +340,41 @@ def read_base_files(
     return documents
 
 
+def merge_base_commit(repository: Repository, head: str, base_commit: str) -> str:
+    """Return the commit a pull request's diff is taken from: where it left its base.
+
+    The head is already in the checkout, fetched for the review; the base commit is
+    fetched like any trusted commit. Nothing is checked out.
+    """
+
+    checkout = repository.path
+    if checkout is None:
+        raise WorkspaceError(
+            f"Repository {repository.slug} needs a local checkout path"
+        )
+    fetch = [
+        "-C",
+        str(checkout),
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-write-fetch-head",
+        "origin",
+        base_commit,
+    ]
+    try:
+        with _checkout_lock(checkout):
+            _fetch_trusted_commit(repository, fetch)
+            return run_cmd(
+                ["git", "-C", str(checkout), "merge-base", head, base_commit]
+            ).strip()
+    except CommandError as error:
+        raise WorkspaceError(
+            f"Cannot find where {head[:12]} left {base_commit[:12]} in "
+            f"{repository.slug}: {error}"
+        ) from error
+
+
 FETCH_TIMEOUT_SECONDS = 180
 # One more attempt after a fetch that failed for a reason that passes. A fetch only
 # reads, so repeating it is safe, and the usual reason one fails is a slow or

@@ -31,13 +31,19 @@ review-engine adapter, and route confirmed correctness or security findings:
   `.gitattributes`, a `CODEOWNERS` at the root, in `.github/`, or in `docs/`, and
   the "Code review" sections of the instruction files the rules are read from
   (`review.review_policy_changes`). An instruction file counts only when those
-  sections differ between the base branch's tip and the reviewed head, so editing
-  the rest of an `AGENTS.md` does not; a link holds no rule on either side, a head
-  file that cannot be read counts as changed, and so does every changed instruction
-  file when the base branch cannot be read. The review still runs and its findings
-  are delivered; only the clean result is withheld, recorded with the policy it
-  changed, and a later run of the same head skips it without reviewing until a
-  later head or `--force`. A person approves it.
+  sections differ between the reviewed head and the commit its diff is taken from,
+  where the head left the base branch's tip, which is what GitHub's list of changed
+  files is measured against; comparing with the tip itself would blame a rule change
+  merged since on every open pull request that edits the same file. Editing the rest
+  of an `AGENTS.md` does not count. Each side holds the rules a review would read
+  there, so a rename off the instruction-file paths removes the rules and a rename
+  onto them adds some, and a link, or a file over 200 KB, holds none. A head file
+  that cannot be read counts as changed, and so does every changed instruction file
+  when the base side cannot be read. The review still runs and its findings are
+  delivered; only the clean result is withheld, recorded with the policy it changed,
+  and a later run of the same head skips it without reviewing until a later head or
+  `--force`. A person approves it. A replay applies the same gate against its
+  pinned base, so a control case reports what a live run would deliver.
 - Configured reviewer's pull requests in a repository with `"slack": false`: the
   same results on the pull request instead, because the webhook belongs to a
   workspace that project is not part of. Findings are one GitHub review with inline
@@ -268,16 +274,20 @@ A pull-request head is skipped when either condition is true:
    have all been resolved.
 2. JSON state contains a terminal record for the code level's tuple
    `(repository, PR number, head SHA, destination)`. The advisory design level is
-   keyed by pull request instead, as described under its own heading below. An `approval_withheld` record is skipped only while
-   at least one controller-validated blocking comment remains unresolved and its
-   feedback fingerprint remains unchanged. A `delivered` comment
-   review is skipped only while at least one exact inline finding from its
+   keyed by pull request instead, as described under its own heading below. An
+   `approval_withheld` record is skipped while at least one controller-validated
+   blocking comment remains unresolved and its feedback fingerprint remains
+   unchanged, and, whatever the feedback, while it names review policy the head
+   changes; that one reopens only for a later head or `--force`. A `delivered`
+   comment review is skipped only while at least one exact inline finding from its
    review receipt remains unresolved.
 
 Terminal JSON states are `delivered`, `no_findings`, `approval_withheld`,
 `delivery_uncertain`, and `skipped_oversized`. `approval_withheld` means there
-was no new finding to post but an existing qualifying issue still blocks
-approval. It stores the engine's reason and is reconsidered when review feedback
+was no new finding to post but the approval is still blocked: by an existing
+qualifying issue, or by the controller itself, as for a head that changes review
+policy, whose record keeps what changed under `policy_changes`. It stores the
+reason. One blocked only by an existing issue is reconsidered when review feedback
 changes without a new commit, when every recorded blocker is resolved, or when a
 legacy record has no validated blocker IDs. Resolved and unresolved inline
 review threads are included in engine context, and each thread's resolution

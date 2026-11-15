@@ -13,7 +13,7 @@ from prwarden.config import Settings
 from prwarden.models import PullRequest, Repository
 from prwarden.review import is_review_policy_path, review_policy_changes
 from prwarden.state import JsonStateStore
-from prwarden.workspace import WorkspaceError
+from prwarden.workspace import MAX_BASE_FILE_BYTES, WorkspaceError, merge_base_commit
 from tests.test_cli import CONFIRMED_JUDGMENT, READY_SNAPSHOT, finding_response
 from tests.test_review_rules import without_review_rules
 
@@ -125,6 +125,54 @@ class RuleChangeTests(unittest.TestCase):
             (),
         )
 
+    def test_a_rename_off_or_onto_the_instruction_paths_moves_the_rules(
+        self,
+    ) -> None:
+        """Later reviews read rules only from instruction files, so moving one away
+        removes its rules even though its text is unchanged, and moving a file onto
+        those paths adds its rules."""
+
+        self.head("docs/AGENTS.md", RULES)
+        self.head(".kiro/steering/review.md", RULES)
+
+        self.assertEqual(
+            self.changes(
+                [
+                    changed(
+                        "docs/AGENTS.md",
+                        status="renamed",
+                        previous_filename="AGENTS.md",
+                    )
+                ],
+                {"AGENTS.md": RULES},
+            ),
+            ("the code review rules in docs/AGENTS.md",),
+        )
+        self.assertEqual(
+            self.changes(
+                [
+                    changed(
+                        ".kiro/steering/review.md",
+                        status="renamed",
+                        previous_filename="docs/review.md",
+                    )
+                ],
+                {"docs/review.md": RULES},
+            ),
+            ("the code review rules in .kiro/steering/review.md",),
+        )
+
+    def test_a_head_file_too_large_to_be_read_as_rules_holds_none(self) -> None:
+        """Later reviews skip such a file, so its rules stop applying."""
+
+        grown = RULES.replace("Run the tests.", "x" * MAX_BASE_FILE_BYTES)
+        self.head("AGENTS.md", grown)
+
+        self.assertEqual(
+            self.changes([changed("AGENTS.md")], {"AGENTS.md": RULES}),
+            ("the code review rules in AGENTS.md",),
+        )
+
     def test_a_head_file_that_cannot_be_read_counts_as_changed(self) -> None:
         """Not knowing whether the rules moved must cost the approval."""
 
@@ -161,10 +209,13 @@ class RuleChangeTests(unittest.TestCase):
 
 class BaseReadTests(unittest.TestCase):
     REPOSITORY = Repository("app", "owner/app", Path("/tmp"))
-    PULL_REQUEST = PullRequest(1, "T", "", "a", "h", "u", base_ref="main")
+    PULL_REQUEST = PullRequest(1, "T", "", "a", "h" * 40, "u", base_ref="main")
+    MERGE_BASE = "a" * 40
 
     def test_the_base_side_is_read_only_for_a_changed_instruction_file(self) -> None:
-        with patch("prwarden.cli.read_base_files") as read:
+        with patch("prwarden.cli.read_base_files") as read, patch(
+            "prwarden.cli.merge_base_commit"
+        ) as merge_base:
             changes = cli._review_policy_changes(
                 self.REPOSITORY,
                 self.PULL_REQUEST,
@@ -174,12 +225,51 @@ class BaseReadTests(unittest.TestCase):
             )
 
         read.assert_not_called()
+        merge_base.assert_not_called()
         self.assertEqual(changes, (".github/workflows/test.yml",))
+
+    def test_the_rules_are_compared_where_the_head_left_the_base(self) -> None:
+        """A rule change merged since must not be blamed on every open pull request."""
+
+        with patch(
+            "prwarden.cli.read_base_files", return_value=[("AGENTS.md", RULES)]
+        ) as read, patch(
+            "prwarden.cli.merge_base_commit", return_value=self.MERGE_BASE
+        ) as merge_base:
+            cli._review_policy_changes(
+                self.REPOSITORY,
+                self.PULL_REQUEST,
+                [changed("AGENTS.md")],
+                None,
+                BASE_SHA,
+            )
+
+        merge_base.assert_called_once_with(
+            self.REPOSITORY, self.PULL_REQUEST.head_sha, BASE_SHA
+        )
+        self.assertEqual(read.call_args.args[1], self.MERGE_BASE)
+
+    def test_a_replay_compares_with_its_pinned_base(self) -> None:
+        with patch(
+            "prwarden.cli.read_base_files", return_value=[("AGENTS.md", RULES)]
+        ) as read, patch("prwarden.cli.merge_base_commit") as merge_base:
+            cli._review_policy_changes(
+                self.REPOSITORY,
+                self.PULL_REQUEST,
+                [changed("AGENTS.md")],
+                None,
+                diff_base=self.MERGE_BASE,
+            )
+
+        merge_base.assert_not_called()
+        self.assertEqual(read.call_args.args[1], self.MERGE_BASE)
 
     def test_an_unreadable_base_counts_every_instruction_file_as_changed(
         self,
     ) -> None:
         with patch(
+            "prwarden.cli.merge_base_commit", return_value=self.MERGE_BASE
+        ), patch(
             "prwarden.cli.read_base_files", side_effect=WorkspaceError("gone")
         ), patch("sys.stdout", new_callable=StringIO) as output:
             changes = cli._review_policy_changes(
@@ -194,6 +284,50 @@ class BaseReadTests(unittest.TestCase):
             changes, ("CODEOWNERS", "the code review rules in AGENTS.md")
         )
         self.assertIn("so each counts as changed", output.getvalue())
+
+
+class MergeBaseTests(unittest.TestCase):
+    def test_the_merge_base_is_where_the_head_left_the_moving_tip(self) -> None:
+        import subprocess
+
+        def git(root: Path, *args: str) -> str:
+            return subprocess.run(
+                ["git", "-C", str(root), *args],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        with tempfile.TemporaryDirectory() as directory:
+            origin = Path(directory) / "origin"
+            origin.mkdir()
+            git(origin, "init", "-q", "-b", "main")
+            git(origin, "config", "user.email", "test@example.com")
+            git(origin, "config", "user.name", "Test")
+            (origin / "AGENTS.md").write_text(RULES, encoding="utf-8")
+            git(origin, "add", "-A")
+            git(origin, "commit", "-q", "-m", "base")
+            fork = git(origin, "rev-parse", "HEAD")
+            git(origin, "switch", "-q", "-c", "feature")
+            (origin / "app.py").write_text("x = 1\n", encoding="utf-8")
+            git(origin, "add", "-A")
+            git(origin, "commit", "-q", "-m", "head")
+            head = git(origin, "rev-parse", "HEAD")
+            git(origin, "switch", "-q", "main")
+            (origin / "AGENTS.md").write_text(LOOSER_RULES, encoding="utf-8")
+            git(origin, "commit", "-q", "-am", "rules moved on")
+            tip = git(origin, "rev-parse", "HEAD")
+            checkout = Path(directory) / "checkout"
+            subprocess.run(
+                ["git", "clone", "-q", "--no-checkout", str(origin), str(checkout)],
+                check=True,
+            )
+
+            found = merge_base_commit(
+                Repository("app", "owner/app", checkout), head, tip
+            )
+
+        self.assertEqual(found, fork)
 
 
 class OrchestrationTests(unittest.TestCase):
@@ -249,6 +383,8 @@ class OrchestrationTests(unittest.TestCase):
             return_value=replace(READY_SNAPSHOT, changed_files=len(files)),
         ), patch(
             "prwarden.cli.read_base_files", return_value=list(base_documents)
+        ), patch(
+            "prwarden.cli.merge_base_commit", return_value="a" * 40
         ), patch(
             "prwarden.cli.review_workspace"
         ) as workspace, patch(

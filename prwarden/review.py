@@ -43,6 +43,7 @@ from .models import (
     ReviewRuleSection,
     WorkspaceSearch,
 )
+from .workspace import MAX_BASE_FILE_BYTES
 
 
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
@@ -956,10 +957,14 @@ def review_policy_changes(
     """Return what a change does to review policy, each as a reader would name it.
 
     A policy file counts whatever it says. An instruction file counts only when its
-    "Code review" sections differ between the base branch and the reviewed head,
-    because those sections are the rules every later review is held to, while the
-    rest of such a file is documentation any pull request may edit. A head file
-    that cannot be read counts as changed, so not knowing never grants an approval.
+    "Code review" sections differ between the commit the change is diffed against
+    and the reviewed head, because those sections are the rules every later review
+    is held to, while the rest of such a file is documentation any pull request may
+    edit. Each side holds the rules a review would read there: none at a path that
+    is not an instruction file, so a rename off those paths removes the rules and a
+    rename onto them adds some, and none in a file too large or not regular, as the
+    base branch's rules are read. A head file that cannot be read counts as changed,
+    so not knowing never grants an approval.
     """
 
     changes: "list[str]" = []
@@ -969,18 +974,27 @@ def review_policy_changes(
             if isinstance(path, str) and path and is_review_policy_path(path):
                 changes.append(path)
     for base_path, head_path in rule_source_changes(files):
+        base_text = base_documents.get(base_path, "")
+        if not is_review_rule_source(base_path):
+            base_text = ""
         head_text: Optional[str] = ""
-        if head_path is not None and head_root is not None:
+        if (
+            head_path is not None
+            and head_root is not None
+            and is_review_rule_source(head_path)
+        ):
             head_file = head_root / head_path
-            # A link is read as nothing, as the base branch's rules are: they come
-            # from regular files only, so a link holds no rule either side.
             try:
-                if head_file.is_file() and not head_file.is_symlink():
+                if (
+                    head_file.is_file()
+                    and not head_file.is_symlink()
+                    and head_file.stat().st_size <= MAX_BASE_FILE_BYTES
+                ):
                     head_text = head_file.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 head_text = None
         if head_text is None or code_review_sections(
-            base_documents.get(base_path, "")
+            base_text
         ) != code_review_sections(head_text):
             changes.append(f"the code review rules in {head_path or base_path}")
     return tuple(dict.fromkeys(changes))

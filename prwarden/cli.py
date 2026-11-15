@@ -132,6 +132,7 @@ from .state import JsonStateStore, StateError, StateLockedError
 from .workspace import (
     UnsupportedGitError,
     WorkspaceError,
+    merge_base_commit,
     read_base_files,
     read_file_history,
     read_generated_marks,
@@ -1395,33 +1396,52 @@ def _review_policy_changes(
     pull_request: PullRequest,
     files: "list[dict[str, Any]]",
     head_root: Optional[Path],
-    commit: Optional[str] = None,
+    base_tip: Optional[str] = None,
+    *,
+    diff_base: Optional[str] = None,
 ) -> "tuple[str, ...]":
     """Return what this pull request changes in its repository's review policy.
 
-    The base branch's side of an instruction file is read only when the pull request
-    changes one. When it cannot be read, every such file counts as changed: not
-    knowing whether the rules moved must cost the approval, not grant it.
+    An instruction file's rules are compared with the commit the pull request's
+    diff is taken from, ``diff_base`` when a replay pins it and otherwise where the
+    head left the base branch's tip, because the files GitHub lists as changed are
+    measured from there: comparing with the tip would blame a rule change merged
+    since on every open pull request that edits the same file. That side is read
+    only when the pull request changes such a file. When it cannot be read, every
+    such file counts as changed: not knowing whether the rules moved must cost the
+    approval, not grant it.
     """
 
     pairs = rule_source_changes(files)
     documents: "dict[str, str]" = {}
+    base_paths = {
+        base_path for base_path, _ in pairs if is_review_rule_source(base_path)
+    }
     if pairs:
-        base_paths = {base_path for base_path, _ in pairs}
         try:
-            if not commit:
-                if not pull_request.base_ref:
-                    raise WorkspaceError("the pull request names no base branch")
-                commit = get_branch_head_sha(repository, pull_request.base_ref)
-            commit = validate_object_name(commit, f"{repository.slug} base commit")
-            documents = dict(
-                read_base_files(
-                    repository,
-                    commit,
-                    tuple(sorted(base_paths)),
-                    lambda path: path in base_paths,
+            if diff_base is None:
+                if not base_tip:
+                    if not pull_request.base_ref:
+                        raise WorkspaceError("the pull request names no base branch")
+                    base_tip = get_branch_head_sha(repository, pull_request.base_ref)
+                base_tip = validate_object_name(
+                    base_tip, f"{repository.slug} base commit"
                 )
+                diff_base = merge_base_commit(
+                    repository, pull_request.head_sha, base_tip
+                )
+            diff_base = validate_object_name(
+                diff_base, f"{repository.slug} merge base"
             )
+            if base_paths:
+                documents = dict(
+                    read_base_files(
+                        repository,
+                        diff_base,
+                        tuple(sorted(base_paths)),
+                        lambda path: path in base_paths,
+                    )
+                )
         except (CommandError, WorkspaceError) as error:
             print(
                 "      -> Could not read the base branch's instruction files to "
