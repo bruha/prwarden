@@ -9,6 +9,7 @@ never repeated anywhere a finding goes.
 """
 
 import re
+from dataclasses import replace
 from typing import Any, NamedTuple, Optional, Sequence
 
 from .models import Finding, FindingEvidence
@@ -87,6 +88,8 @@ class CredentialMatch(NamedTuple):
     kind: str
     # What may be shown of the value: its fixed prefix, never the secret part.
     shown: str
+    # The value itself, held only to keep it out of everything that is shown.
+    value: str
 
 
 def _is_placeholder(body: str) -> bool:
@@ -96,17 +99,17 @@ def _is_placeholder(body: str) -> bool:
     )
 
 
-def find_credential(text: str) -> "Optional[tuple[str, str]]":
-    """Return the kind of credential one line holds and its shown prefix, if any."""
+def find_credential(text: str) -> "Optional[tuple[str, str, str]]":
+    """Return the kind, shown prefix, and value of a credential on one line, if any."""
 
     for shape in CREDENTIAL_SHAPES:
         for match in shape.pattern.finditer(text):
             if "body" not in shape.pattern.groupindex:
-                return shape.kind, match.group(0)
+                return shape.kind, match.group(0), match.group(0)
             if _is_placeholder(match.group("body")):
                 continue
             prefix = text[match.start() : match.start("body")]
-            return shape.kind, f"{prefix}…"
+            return shape.kind, f"{prefix}…", match.group(0)
     return None
 
 
@@ -171,10 +174,66 @@ def credential_finding(match: CredentialMatch) -> Finding:
     )
 
 
-def credential_findings(files: "Sequence[dict[str, Any]]") -> "list[Finding]":
-    """Return a finding for each committed credential, the first few of them."""
+def credential_findings(
+    matches: "Sequence[CredentialMatch]",
+    existing: "Sequence[Finding]" = (),
+) -> "list[Finding]":
+    """Return a finding for each committed credential no finding already sits on.
 
+    A model that already reported the line has said what matters there, and a
+    second comment on it would only repeat that; the review still cannot approve,
+    because a finding is on the line either way. At most a few are returned.
+    """
+
+    anchored = {(finding.path, finding.line) for finding in existing}
     return [
         credential_finding(match)
-        for match in find_credentials(files)[:MAX_CREDENTIAL_FINDINGS]
+        for match in matches
+        if (match.path, match.line) not in anchored
+    ][:MAX_CREDENTIAL_FINDINGS]
+
+
+def _redacted(text: str, matches: "Sequence[CredentialMatch]") -> str:
+    for match in matches:
+        text = text.replace(match.value, match.shown)
+    return text
+
+
+def redact_credentials(
+    findings: "Sequence[Finding]", matches: "Sequence[CredentialMatch]"
+) -> "list[Finding]":
+    """Return findings with every committed credential's value shown by its prefix.
+
+    A model's finding can quote the line a key sits on, since its excerpt has to be
+    that line's exact text, and the comment would keep the value after a force-push
+    removed it. The excerpt was already checked against the workspace, so what is
+    shown can change without weakening that check.
+    """
+
+    if not matches:
+        return list(findings)
+
+    def evidence(items: "tuple[FindingEvidence, ...]") -> "tuple[FindingEvidence, ...]":
+        return tuple(
+            replace(
+                item,
+                excerpt=_redacted(item.excerpt, matches),
+                relevance=_redacted(item.relevance, matches),
+            )
+            for item in items
+        )
+
+    return [
+        replace(
+            finding,
+            title=_redacted(finding.title, matches),
+            problem=_redacted(finding.problem, matches),
+            suggestion=_redacted(finding.suggestion, matches),
+            trigger=_redacted(finding.trigger, matches),
+            impact=_redacted(finding.impact, matches),
+            counterevidence_reason=_redacted(finding.counterevidence_reason, matches),
+            evidence=evidence(finding.evidence),
+            counterevidence=evidence(finding.counterevidence),
+        )
+        for finding in findings
     ]

@@ -453,11 +453,12 @@ alone.
 Beside the model, PR Warden checks every added line itself for a committed
 credential with a distinctive shape: AWS access key IDs, GitHub, Slack, npm, Stripe
 live, Google, OpenAI, and Anthropic keys, Slack webhook URLs, and private-key blocks.
-One it finds is posted as a high-severity finding on that line and the review cannot
-approve, whatever the model concluded, so a comment beside the key saying "this is a
-test key, ignore it" changes nothing. The finding names the kind and shows only the
-value's prefix, never the value. A placeholder such as AWS's documented example key,
-or a run of one character, is not reported.
+One it finds is posted as a high-severity finding on that line, unless the model
+already reported that line, and the review cannot approve, whatever the model
+concluded, so a comment beside the key saying "this is a test key, ignore it"
+changes nothing. Findings name the kind and show only the value's prefix, never the
+value, the model's findings included. A placeholder such as AWS's documented example
+key, or a run of one character, is not reported.
 
 Both levels hold citations to the same standard: a cited path must resolve in the
 reviewed worktree and the excerpt must be that line's exact text. Unverified design
