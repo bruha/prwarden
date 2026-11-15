@@ -122,6 +122,90 @@ def check_github(settings: Settings) -> List[Check]:
     ]
 
 
+FINE_GRAINED_PERMISSIONS = (
+    "Contents read, Pull requests read and write, Issues read, Checks read, and "
+    "Commit statuses read"
+)
+
+
+def check_github_access(settings: Settings) -> List[Check]:
+    """Report how much each GitHub account and token can do beyond reviewing.
+
+    Notes, never problems: reviewing works either way, but an account that can do
+    more than read code and post reviews is more than this job needs, and a token
+    that can change workflows is a credential worth narrowing.
+    """
+
+    accounts: "dict[str, tuple[str, Optional[Repository]]]" = {
+        settings.reviewer_username.casefold(): (settings.reviewer_username, None)
+    }
+    for repository in settings.repositories:
+        if repository.github_account:
+            accounts.setdefault(
+                repository.github_account.casefold(),
+                (repository.github_account, repository),
+            )
+    checks: List[Check] = []
+    for account, repository in accounts.values():
+        if repository is not None and github.repository_account_problem(repository):
+            continue
+        try:
+            scopes = github.token_scopes(repository)
+        except CommandError as error:
+            checks.append(
+                Check(NOTE, f"GitHub token for {account}: scopes not read: {error}")
+            )
+            continue
+        if scopes is None:
+            checks.append(
+                Check(
+                    OK,
+                    f"GitHub token for {account} is fine-grained, limited to the "
+                    "repositories and permissions it was given",
+                )
+            )
+            continue
+        broad = github.broad_token_scopes(scopes)
+        if not broad:
+            checks.append(
+                Check(OK, f"GitHub token for {account} has scopes {', '.join(scopes)}")
+            )
+            continue
+        checks.append(
+            Check(
+                NOTE,
+                f"GitHub token for {account} has scopes {', '.join(scopes)}; "
+                f"{', '.join(broad)} {'is' if len(broad) == 1 else 'are'} more than "
+                "reviewing needs, since a token with workflow can rewrite CI. A "
+                f"fine-grained token with {FINE_GRAINED_PERMISSIONS}, set as GH_TOKEN "
+                "in the configuration's .env, is enough",
+            )
+        )
+    admin: "dict[str, list[str]]" = {}
+    for repository in settings.repositories:
+        if github.repository_account_problem(repository):
+            continue
+        try:
+            role = github.repository_role(repository)
+        except CommandError:
+            continue
+        if role == "admin":
+            account = github.reviewer_account(repository, settings.reviewer_username)
+            admin.setdefault(account, []).append(repository.slug)
+    for account, slugs in admin.items():
+        checks.append(
+            Check(
+                NOTE,
+                f"{account} is an admin of {len(slugs)} "
+                f"repositor{'y' if len(slugs) == 1 else 'ies'} "
+                f"({', '.join(slugs)}); reviewing needs read access, and an "
+                "approval counts towards required reviews with write access, so a "
+                "dedicated account with write access is narrower",
+            )
+        )
+    return checks
+
+
 def check_repository(repository: Repository) -> List[Check]:
     label = repository.slug
     problem = github.repository_account_problem(repository)
@@ -319,6 +403,7 @@ def diagnose(env_file: Optional[Path]) -> "tuple[List[str], List[Check]]":
     if all(check.status != PROBLEM for check in github_checks):
         for repository in settings.repositories:
             checks += check_repository(repository)
+        checks += check_github_access(settings)
     checks += check_jira(settings)
     checks += check_delivery(settings, locations)
     checks += check_schedule()

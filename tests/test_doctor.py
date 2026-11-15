@@ -347,3 +347,131 @@ class JiraCheckTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GitHubAccessTests(unittest.TestCase):
+    """What each account and token can do beyond reading code and posting reviews."""
+
+    def check(self, repositories, scopes, roles, failures=()):
+        settings = replace(
+            settings_for("/tmp", repositories[0]), repositories=list(repositories)
+        )
+
+        def token_scopes(repository=None):
+            account = repository.github_account if repository else "reviewer"
+            found = scopes[account]
+            if isinstance(found, Exception):
+                raise found
+            return found
+
+        with patch(
+            "prwarden.doctor.github.token_scopes", side_effect=token_scopes
+        ) as read_scopes, patch(
+            "prwarden.doctor.github.repository_role",
+            side_effect=lambda repository: roles[repository.slug],
+        ), patch(
+            "prwarden.doctor.github.repository_account_problem",
+            side_effect=lambda repository: (
+                "no login" if repository.slug in failures else None
+            ),
+        ):
+            return doctor.check_github_access(settings), read_scopes
+
+    def test_a_token_that_can_rewrite_workflows_is_noted(self) -> None:
+        checks, _ = self.check(
+            [Repository("app", "owner/app")],
+            {"reviewer": ("gist", "read:org", "repo", "workflow")},
+            {"owner/app": "push"},
+        )
+
+        self.assertEqual(statuses(checks), [NOTE])
+        self.assertIn("workflow is more than reviewing needs", checks[0].message)
+        self.assertIn("Pull requests read and write", checks[0].message)
+        self.assertIn("GH_TOKEN", checks[0].message)
+
+    def test_a_narrow_or_fine_grained_token_is_fine(self) -> None:
+        narrow, _ = self.check(
+            [Repository("app", "owner/app")],
+            {"reviewer": ("read:org", "repo")},
+            {"owner/app": "push"},
+        )
+        fine, _ = self.check(
+            [Repository("app", "owner/app")], {"reviewer": None}, {"owner/app": "push"}
+        )
+
+        self.assertEqual(statuses(narrow), [OK])
+        self.assertEqual(statuses(fine), [OK])
+        self.assertIn("fine-grained", fine[0].message)
+
+    def test_admin_repositories_are_named_per_account(self) -> None:
+        own = Repository("private", "me/private", github_account="me")
+        checks, read_scopes = self.check(
+            [
+                Repository("one", "org/one"),
+                Repository("two", "org/two"),
+                Repository("three", "org/three"),
+                own,
+            ],
+            {"reviewer": ("repo",), "me": ("repo",)},
+            {
+                "org/one": "admin",
+                "org/two": "push",
+                "org/three": "admin",
+                "me/private": "admin",
+            },
+        )
+
+        self.assertEqual(statuses(checks), [OK, OK, NOTE, NOTE])
+        self.assertIn("reviewer is an admin of 2 repositories", checks[2].message)
+        self.assertIn("org/one, org/three", checks[2].message)
+        self.assertIn("me is an admin of 1 repository (me/private)", checks[3].message)
+        self.assertIn("write access", checks[2].message)
+        self.assertEqual(read_scopes.call_args_list[1].args, (own,))
+
+    def test_what_cannot_be_read_is_noted_or_left_to_the_other_checks(self) -> None:
+        checks, _ = self.check(
+            [Repository("app", "owner/app"), Repository("gone", "owner/gone")],
+            {"reviewer": CommandError("HTTP 401")},
+            {"owner/app": "admin"},
+            failures=("owner/gone",),
+        )
+
+        self.assertEqual(statuses(checks), [NOTE, NOTE])
+        self.assertIn("scopes not read: HTTP 401", checks[0].message)
+        self.assertIn("(owner/app)", checks[1].message)
+
+
+class DiagnoseTests(unittest.TestCase):
+    def diagnose(self, github_status: str):
+        settings = settings_for("/tmp", Repository("app", "owner/app"))
+        locations = Locations("user", Path("/c"), Path("/s"), Path("/s/checkouts"))
+        access = Check(NOTE, "access")
+        with patch("prwarden.doctor.default_locations", return_value=locations), patch(
+            "prwarden.doctor.tools.check_all", return_value=()
+        ), patch("prwarden.doctor.tools.render_table", return_value=[]), patch(
+            "prwarden.doctor.check_env_file", return_value=[Check(OK, "env")]
+        ), patch("prwarden.doctor.load_settings", return_value=settings), patch(
+            "prwarden.doctor.check_engines", return_value=[]
+        ), patch(
+            "prwarden.doctor.check_github", return_value=[Check(github_status, "gh")]
+        ), patch(
+            "prwarden.doctor.check_repository", return_value=[]
+        ), patch(
+            "prwarden.doctor.check_github_access", return_value=[access]
+        ) as check_access, patch(
+            "prwarden.doctor.check_jira", return_value=[]
+        ), patch(
+            "prwarden.doctor.check_delivery", return_value=[]
+        ), patch(
+            "prwarden.doctor.check_schedule", return_value=[]
+        ):
+            _, checks = doctor.diagnose(None)
+        return checks, access, check_access
+
+    def test_access_is_checked_once_github_itself_works(self) -> None:
+        checks, access, _ = self.diagnose(OK)
+        broken, _, check_access = self.diagnose(PROBLEM)
+
+        self.assertIn(access, checks)
+        check_access.assert_not_called()
+        self.assertNotIn(access, broken)
