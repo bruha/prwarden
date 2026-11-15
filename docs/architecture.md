@@ -24,6 +24,8 @@ Use these module responsibilities:
 - `workspace`: create and clean exact detached PR-head worktrees.
 - `engine`: define the common AI contract and adapter selection.
 - `review`: construct bounded material and validate model responses.
+- `secret_scan`: find credentials an added line commits by their shape, without a
+  model, and keep their values out of everything shown.
 - `delivery`: format and send destination-specific messages.
 - `comment_template`: load and render bounded, declarative GitHub comment
   templates without executing template code.

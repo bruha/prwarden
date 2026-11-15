@@ -1076,7 +1076,8 @@ excerpts and citations included, in comments, in Slack, and on the terminal, so 
 comment kept after a force-push never preserves a value the push removed. Nothing
 written beside the value is read. A replay applies the same check, so a control
 case reports what a live run would deliver.
-It permits only read-only local file search and reading for semantic
+
+The common prompt permits only read-only local file search and reading for semantic
 verification, and prohibits edits, command execution, networking, browsing, and
 external actions. It requests only correctness, reliability, data-loss,
 concurrency, and security defects introduced by added lines, and breaches of the
