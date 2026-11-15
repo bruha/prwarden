@@ -9,11 +9,13 @@ never repeated anywhere a finding goes.
 """
 
 import re
-from dataclasses import replace
-from typing import Any, NamedTuple, Optional, Sequence
+from dataclasses import fields, is_dataclass, replace
+from typing import Any, NamedTuple, Optional, Sequence, TypeVar
 
 from .models import Finding, FindingEvidence
 from .review import added_line_texts
+
+T = TypeVar("T")
 
 
 class _Shape(NamedTuple):
@@ -90,6 +92,9 @@ class CredentialMatch(NamedTuple):
     shown: str
     # The value itself, held only to keep it out of everything that is shown.
     value: str
+    # Every credential on the line as (value, shown): the first names the finding,
+    # and all of them are kept out of what is shown.
+    values: "tuple[tuple[str, str], ...]" = ()
 
 
 def _is_placeholder(body: str) -> bool:
@@ -99,25 +104,36 @@ def _is_placeholder(body: str) -> bool:
     )
 
 
-def find_credential(text: str) -> "Optional[tuple[str, str, str]]":
-    """Return the kind, shown prefix, and value of a credential on one line, if any."""
+def line_credentials(text: str) -> "list[tuple[str, str, str]]":
+    """Return the kind, shown prefix, and value of every credential on one line."""
 
+    found: "list[tuple[str, str, str]]" = []
     for shape in CREDENTIAL_SHAPES:
         for match in shape.pattern.finditer(text):
             if "body" not in shape.pattern.groupindex:
-                return shape.kind, match.group(0), match.group(0)
+                found.append((shape.kind, match.group(0), match.group(0)))
+                continue
             if _is_placeholder(match.group("body")):
                 continue
             prefix = text[match.start() : match.start("body")]
-            return shape.kind, f"{prefix}…", match.group(0)
-    return None
+            found.append((shape.kind, f"{prefix}…", match.group(0)))
+    return found
+
+
+def find_credential(text: str) -> "Optional[tuple[str, str, str]]":
+    """Return the kind, shown prefix, and value of a credential on one line, if any."""
+
+    found = line_credentials(text)
+    return found[0] if found else None
 
 
 def find_credentials(files: "Sequence[dict[str, Any]]") -> "list[CredentialMatch]":
-    """Return every added line that holds a credential, at most one per line.
+    """Return every added line that holds a credential, one match per line.
 
     Every changed file GitHub sends a patch for is read, whichever review bundle
-    reads it; a file whose patch GitHub omits has no added line to read here.
+    reads it; a file whose patch GitHub omits has no added line to read here. A
+    line holding several credentials is one match naming the first, which carries
+    every value on the line, so none of them is ever shown.
     """
 
     matches: "list[CredentialMatch]" = []
@@ -127,9 +143,19 @@ def find_credentials(files: "Sequence[dict[str, Any]]") -> "list[CredentialMatch
         if not isinstance(path, str) or not path or not isinstance(patch, str):
             continue
         for line, text in added_line_texts(patch):
-            found = find_credential(text)
-            if found is not None:
-                matches.append(CredentialMatch(path, line, *found))
+            found = line_credentials(text)
+            if found:
+                kind, shown, value = found[0]
+                matches.append(
+                    CredentialMatch(
+                        path,
+                        line,
+                        kind,
+                        shown,
+                        value,
+                        tuple((each[2], each[1]) for each in found),
+                    )
+                )
     return matches
 
 
@@ -193,47 +219,57 @@ def credential_findings(
     ][:MAX_CREDENTIAL_FINDINGS]
 
 
-def _redacted(text: str, matches: "Sequence[CredentialMatch]") -> str:
-    for match in matches:
-        text = text.replace(match.value, match.shown)
-    return text
+def _shown_values(
+    matches: "Sequence[CredentialMatch]",
+) -> "list[tuple[str, str]]":
+    """Return every value to keep out of what is shown, longest first.
+
+    Longest first, so a value that contains another is replaced whole rather than
+    left with its own tail showing.
+    """
+
+    pairs = {
+        value: shown
+        for match in matches
+        for value, shown in (match.values or ((match.value, match.shown),))
+    }
+    return sorted(pairs.items(), key=lambda pair: -len(pair[0]))
+
+
+def _redacted(value: Any, pairs: "Sequence[tuple[str, str]]") -> Any:
+    if isinstance(value, str):
+        for secret, shown in pairs:
+            value = value.replace(secret, shown)
+        return value
+    if isinstance(value, tuple):
+        return tuple(_redacted(item, pairs) for item in value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return replace(
+            value,
+            **{
+                field.name: _redacted(getattr(value, field.name), pairs)
+                for field in fields(value)
+                if field.init
+            },
+        )
+    return value
 
 
 def redact_credentials(
-    findings: "Sequence[Finding]", matches: "Sequence[CredentialMatch]"
-) -> "list[Finding]":
-    """Return findings with every committed credential's value shown by its prefix.
+    items: "Sequence[T]", matches: "Sequence[CredentialMatch]"
+) -> "list[T]":
+    """Return findings, or anything holding them, with every committed credential's
+    value shown by its prefix.
 
-    A model's finding can quote the line a key sits on, since its excerpt has to be
-    that line's exact text, and the comment would keep the value after a force-push
-    removed it. The excerpt was already checked against the workspace, so what is
-    shown can change without weakening that check.
+    A finding can quote the line a key sits on, since an excerpt has to be that
+    line's exact text, and a comment would keep the value after a force-push
+    removed it. Every text field is covered, nested citations and searches too, so
+    the code level's findings and the advisory levels' notes alike. The excerpts
+    were already checked against the workspace, so what is shown can change without
+    weakening that check.
     """
 
-    if not matches:
-        return list(findings)
-
-    def evidence(items: "tuple[FindingEvidence, ...]") -> "tuple[FindingEvidence, ...]":
-        return tuple(
-            replace(
-                item,
-                excerpt=_redacted(item.excerpt, matches),
-                relevance=_redacted(item.relevance, matches),
-            )
-            for item in items
-        )
-
-    return [
-        replace(
-            finding,
-            title=_redacted(finding.title, matches),
-            problem=_redacted(finding.problem, matches),
-            suggestion=_redacted(finding.suggestion, matches),
-            trigger=_redacted(finding.trigger, matches),
-            impact=_redacted(finding.impact, matches),
-            counterevidence_reason=_redacted(finding.counterevidence_reason, matches),
-            evidence=evidence(finding.evidence),
-            counterevidence=evidence(finding.counterevidence),
-        )
-        for finding in findings
-    ]
+    pairs = _shown_values(matches)
+    if not pairs:
+        return list(items)
+    return [_redacted(item, pairs) for item in items]

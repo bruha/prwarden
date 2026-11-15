@@ -1069,10 +1069,13 @@ than eight distinct characters, is not one. Each hit becomes a `high` finding on
 that added line, appended to the confirmed findings without verification, at most
 ten per review, unless a confirmed finding already sits on that line, so the review
 delivers findings and cannot approve. The finding names the kind of credential and
-shows only the value's fixed prefix, and every other finding, the model's included,
-has the value replaced by that prefix wherever it appears, excerpts too, in the
-comment, in Slack, and on the terminal, so a comment kept after a force-push never
-preserves a value the push removed. Nothing written beside the value is read.
+shows only the value's fixed prefix. The credentials are found once, before any level
+runs, and every credential on every matched line is replaced by its prefix wherever
+it appears in the code level's findings and in the design and documentation notes,
+excerpts and citations included, in comments, in Slack, and on the terminal, so a
+comment kept after a force-push never preserves a value the push removed. Nothing
+written beside the value is read. A replay applies the same check, so a control
+case reports what a live run would deliver.
 It permits only read-only local file search and reading for semantic
 verification, and prohibits edits, command execution, networking, browsing, and
 external actions. It requests only correctness, reliability, data-loss,

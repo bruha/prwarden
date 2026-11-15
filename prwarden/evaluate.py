@@ -59,6 +59,7 @@ from .cli import RUN_LOG_DIRECTORY_NAME
 from .metrics import ReviewMetrics
 from .models import Finding, FindingEvidence, PullRequest, Repository
 from .review import ReviewError, build_review_material, read_background
+from .secret_scan import credential_findings, find_credentials, redact_credentials
 from .reviewer_identity import format_review_attribution
 from .state import JsonStateStore, StateError
 from .workspace import WorkspaceError
@@ -1349,6 +1350,8 @@ class _PreparedCase(NamedTuple):
     checkout: Repository
     material: Any
     extra_bundles: "tuple[Any, ...]"
+    # The files GitHub would list as changed, for the gates that read them.
+    files: "tuple[dict[str, Any], ...]" = ()
 
 
 @contextmanager
@@ -1421,7 +1424,12 @@ def _prepared_case(
             cli._report_review_rules(review_rules)
         cli._report_diff_budget(material)
         yield _PreparedCase(
-            repository, pull_request, exact_repository, material, tuple(extra_bundles)
+            repository,
+            pull_request,
+            exact_repository,
+            material,
+            tuple(extra_bundles),
+            tuple(files),
         )
 
 
@@ -1448,7 +1456,9 @@ def replay_case(
     with _prepared_case(settings, case) as prepared:
         if prepared is None:
             return {}
-        repository, pull_request, exact_repository, material, extra_bundles = prepared
+        repository, pull_request, exact_repository, material, extra_bundles = (
+            prepared[:5]
+        )
         engine = cli.create_review_engine(settings)
         verification = cli._create_verification_pass(settings, engine)
         fallback = cli._create_fallback_reviewer(settings)
@@ -1609,6 +1619,15 @@ def replay_case(
                 f"the review read {budget.reviewed_files} of {budget.total_files} "
                 "changed files"
             )
+        credentials = find_credentials(prepared.files)
+        if credentials:
+            # As live: a committed credential is reported whatever the review
+            # concluded, and the review that holds it cannot approve.
+            findings = redact_credentials(findings, credentials)
+            findings = findings + credential_findings(credentials, findings)
+            if approve is not None:
+                approve = False
+                approval_reason = "PR Warden's own check found a committed credential"
 
     for finding in findings:
         # Named because a replay delivers nothing, so this transcript is the only
@@ -2300,7 +2319,7 @@ def advisory_case(
         if prepared is None:
             record["skipped"] = "the pinned range changes nothing"
             return record
-        repository, pull_request, checkout, material, _ = prepared
+        repository, pull_request, checkout, material = prepared[:4]
         # Issues are read as they stand today, not as they stood when the case was
         # pinned, so the record names the ones this run read: two measurements
         # whose inputs differed then say so instead of crediting the arm.

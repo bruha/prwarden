@@ -126,7 +126,12 @@ from .review import (
     validate_findings,
 )
 from .reviewer_identity import format_review_attribution, format_review_plan
-from .secret_scan import credential_findings, find_credentials, redact_credentials
+from .secret_scan import (
+    CredentialMatch,
+    credential_findings,
+    find_credentials,
+    redact_credentials,
+)
 from .state import JsonStateStore, StateError, StateLockedError
 from .workspace import (
     UnsupportedGitError,
@@ -2624,6 +2629,8 @@ def _process_pull_request(
             pull_request,
             initial_snapshot.changed_files,
         )
+        # Found once, before any level runs, so no level's output can repeat one.
+        credentials = find_credentials(files)
         generated_marks = _read_generated_marks(
             repository, pull_request, omitted_patch_paths(files)
         )
@@ -2737,6 +2744,7 @@ def _process_pull_request(
                     live=live,
                     force=force,
                     fallback=fallback,
+                    credentials=credentials,
                 )
             if settings.docs_level:
                 _run_docs_level(
@@ -2754,6 +2762,7 @@ def _process_pull_request(
                     force=force,
                     docs_fingerprint=documentation_change_fingerprint(files),
                     fallback=fallback,
+                    credentials=credentials,
                 )
             # Read here, after the advisory levels: the rules bind the code level
             # alone, so failing to read them must not cost the other levels.
@@ -2873,7 +2882,6 @@ def _process_pull_request(
                 generated_marks,
                 tuple(sorted(deferred.path for deferred in budget.unreadable)),
             )
-        credentials = find_credentials(files)
         if credentials:
             # Found by shape, not by the model, so nothing written beside the value
             # can talk the review out of it, and the review cannot approve.
@@ -4145,6 +4153,7 @@ def _run_docs_level(
     force: bool,
     docs_fingerprint: Optional[str],
     fallback: Optional[FallbackReviewer] = None,
+    credentials: "Sequence[CredentialMatch]" = (),
 ) -> None:
     """Run the advisory documentation level and deliver what it confirmed.
 
@@ -4246,6 +4255,9 @@ def _run_docs_level(
         )
         return
 
+    # A note quotes the workspace like a finding does, so it is kept from repeating
+    # a credential the change commits before anything reports or posts it.
+    assessment = redact_credentials((assessment,), credentials)[0]
     candidates = len(assessment.findings) + len(assessment.rejected)
     print(f"      -> Documentation judged {assessment.verdict}")
     _report_docs_assessment(assessment, candidates)
@@ -4464,6 +4476,7 @@ def _run_design_level(
     live: bool,
     force: bool,
     fallback: Optional[FallbackReviewer] = None,
+    credentials: "Sequence[CredentialMatch]" = (),
 ) -> None:
     """Run the advisory design level and deliver what it confirmed.
 
@@ -4540,6 +4553,9 @@ def _run_design_level(
         )
         return
 
+    # A note quotes the workspace like a finding does, so it is kept from repeating
+    # a credential the change commits before anything reports or posts it.
+    assessment = redact_credentials((assessment,), credentials)[0]
     candidates = len(assessment.findings) + len(assessment.rejected)
     print(f"      -> Solution design judged {assessment.verdict}")
     _report_design_assessment(assessment, candidates)

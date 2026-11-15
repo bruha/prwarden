@@ -519,7 +519,7 @@ class ReplayTests(unittest.TestCase):
             workspace.return_value.dependency_links = ()
             workspace.return_value.dependency_notes = ()
             with _prepared_case(settings, case) as prepared:
-                _, pull_request, _, prepared_material, _ = prepared
+                _, pull_request, _, prepared_material = prepared[:4]
 
         read.assert_called_once_with(repository, pull_request)
         self.assertEqual(pull_request.body, "Adds export.")

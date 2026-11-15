@@ -24,13 +24,26 @@ from prwarden.engine import (
     build_prompt,
 )
 from prwarden.github import format_github_comment
-from prwarden.models import PullRequest, Repository, ReviewMaterial
+from prwarden.models import (
+    DesignAssessment,
+    DesignFinding,
+    DocsAssessment,
+    DocsFinding,
+    Finding,
+    FindingEvidence,
+    PullRequest,
+    RejectedDesignCandidate,
+    Repository,
+    ReviewMaterial,
+    WorkspaceSearch,
+)
 from prwarden.review import added_line_texts
 from prwarden.secret_scan import (
     MAX_CREDENTIAL_FINDINGS,
     credential_findings,
     find_credential,
     find_credentials,
+    redact_credentials,
 )
 from prwarden.state import JsonStateStore
 from tests.test_cli import CONFIRMED_JUDGMENT, READY_SNAPSHOT, finding_response
@@ -155,6 +168,58 @@ class AddedLineTests(unittest.TestCase):
 
 
 class FindingTests(unittest.TestCase):
+    def test_every_credential_on_a_line_is_kept_out_of_a_finding(self) -> None:
+        """One finding names the first; none of them may be shown."""
+
+        second = SHAPES["an npm token"]
+        line = f"run --token {PLANTED} --npm {second}"
+        files = [{"filename": "deploy.sh", "patch": patch_adding(line)}]
+        matches = find_credentials(files)
+        quoting = Finding(
+            severity="high",
+            title=f"Two keys: {PLANTED} and {second}",
+            path="deploy.sh",
+            line=1,
+            problem="p",
+            suggestion="s",
+            evidence=(FindingEvidence("deploy.sh", 1, line, "the line"),),
+        )
+
+        redacted = redact_credentials([quoting], matches)[0]
+
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(len(credential_findings(matches)), 1)
+        for value in (PLANTED, second):
+            self.assertNotIn(value, str(asdict(redacted)))
+        self.assertIn("np" + "m_…", redacted.evidence[0].excerpt)
+
+    def test_an_advisory_note_is_kept_from_repeating_a_credential(self) -> None:
+        files = [{"filename": "config.py", "patch": patch_adding(f"KEY = {PLANTED!r}")}]
+        note = DesignFinding(
+            severity="MEDIUM",
+            title="t",
+            category="contract_mismatch",
+            problem=f"The client sends {PLANTED} on every call.",
+            consequence="c",
+            why_not_preference="w",
+            alternative="a",
+            citations=(
+                FindingEvidence("config.py", 1, f"KEY = {PLANTED!r}", "the key"),
+            ),
+            searches=(WorkspaceSearch(PLANTED, ".", "where it is used"),),
+        )
+        assessment = DesignAssessment(
+            understanding=f"Adds {PLANTED}.",
+            verdict="flawed",
+            findings=(note,),
+            rejected=(RejectedDesignCandidate(note, f"quotes {PLANTED}"),),
+        )
+
+        redacted = redact_credentials((assessment,), find_credentials(files))[0]
+
+        self.assertNotIn(PLANTED, str(asdict(redacted)))
+        self.assertEqual(redacted.findings[0].citations[0].line, 1)
+
     def test_the_value_is_never_repeated_anywhere_a_finding_goes(self) -> None:
         """The value is already exposed in the diff; a comment must not keep it after a
         force-push removes the line."""
@@ -182,6 +247,93 @@ class FindingTests(unittest.TestCase):
         )
         self.assertIn("`gh" + "p_…`", rendered[1])
         self.assertIn("not a model", finding.problem)
+
+
+class AdvisoryDeliveryTests(unittest.TestCase):
+    """The advisory levels post before the code level runs, so they redact too."""
+
+    def deliver(self, level: str) -> str:
+        files = [{"filename": "config.py", "patch": patch_adding(f"KEY = {PLANTED!r}")}]
+        quoted = FindingEvidence("config.py", 1, f"KEY = {PLANTED!r}", "the key")
+        if level == "design":
+            note = DesignFinding(
+                severity="MEDIUM",
+                title="t",
+                category="contract_mismatch",
+                problem=f"Sends {PLANTED}.",
+                consequence="c",
+                why_not_preference="w",
+                alternative="a",
+                citations=(quoted,),
+            )
+            assessment = DesignAssessment("u", "flawed", findings=(note,))
+        else:
+            note = DocsFinding(
+                severity="LOW",
+                title="t",
+                category="documented_behavior_no_longer_true",
+                audience="human",
+                documented="d",
+                behavior=f"Reads {PLANTED}.",
+                proposed_update="u",
+                documentation=FindingEvidence("README.md", 1, "x", "r"),
+                citations=(quoted,),
+            )
+            assessment = DocsAssessment("u", "stale", findings=(note,))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "README.md").write_text("# App\n", encoding="utf-8")
+            repository = Repository("app", "owner/app", root)
+            pull_request = PullRequest(1, "Title", "", "author", "head", "url")
+            settings = Settings(
+                reviewer_username="reviewer",
+                repositories=[repository],
+                dry_run=False,
+                slack_webhook_url="https://example.invalid/webhook",
+                state_file=root / "state.json",
+                review_engine="antigravity",
+                review_engine_command=("agy",),
+                review_engine_env_allowlist=(),
+                review_model=None,
+                review_timeout_seconds=300,
+                max_diff_bytes=100000,
+                max_findings=10,
+            )
+            run = cli._run_design_level if level == "design" else cli._run_docs_level
+            extra = {} if level == "design" else {"docs_fingerprint": None}
+            with patch(
+                f"prwarden.cli._{level}_level", return_value=assessment
+            ), patch(
+                "prwarden.cli.get_pull_request_snapshot", return_value=READY_SNAPSHOT
+            ), patch(
+                f"prwarden.cli.submit_{level}_notes", return_value="comment-1"
+            ) as submit, patch("sys.stdout", new_callable=StringIO) as output:
+                with JsonStateStore(settings.state_file) as store:
+                    run(
+                        settings,
+                        repository,
+                        repository,
+                        pull_request,
+                        ReviewMaterial("diff", {"config.py": frozenset({1})}),
+                        Mock(),
+                        None,
+                        store,
+                        "github",
+                        live=True,
+                        force=False,
+                        credentials=find_credentials(files),
+                        **extra,
+                    )
+        submit.assert_called_once()
+        return submit.call_args.args[2] + output.getvalue()
+
+    def test_neither_advisory_note_repeats_a_committed_credential(self) -> None:
+        for level in ("design", "docs"):
+            with self.subTest(level=level):
+                posted = self.deliver(level)
+
+                self.assertNotIn(PLANTED, posted)
+                self.assertIn("gh" + "p_…", posted)
 
 
 class PromptTests(unittest.TestCase):
@@ -215,7 +367,7 @@ class PlantedReviewTests(unittest.TestCase):
     def setUp(self) -> None:
         without_review_rules(self)
 
-    def review(self, engine: Mock) -> dict:
+    def review(self, engine: Mock, advisory: bool = False) -> dict:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "config.py").write_text(
@@ -238,8 +390,8 @@ class PlantedReviewTests(unittest.TestCase):
                 review_timeout_seconds=300,
                 max_diff_bytes=100000,
                 max_findings=10,
-                design_level=False,
-                docs_level=False,
+                design_level=advisory,
+                docs_level=advisory,
             )
             changed = [
                 {"filename": "config.py", "patch": patch_adding(*self.PLANTED_LINES)}
@@ -261,6 +413,10 @@ class PlantedReviewTests(unittest.TestCase):
             ) as submit_review, patch(
                 "prwarden.cli.submit_approval", return_value="approval-1"
             ) as submit_approval, patch(
+                "prwarden.cli._run_design_level"
+            ) as design, patch(
+                "prwarden.cli._run_docs_level"
+            ) as docs, patch(
                 "sys.stdout", new_callable=StringIO
             ) as output:
                 workspace.return_value.__enter__.return_value = repository
@@ -283,6 +439,8 @@ class PlantedReviewTests(unittest.TestCase):
             "posted": submit_review.call_args.args[2],
             "record": record,
             "terminal": output.getvalue(),
+            "design": design,
+            "docs": docs,
         }
 
     def test_an_approving_review_of_a_planted_key_posts_it_and_never_approves(
@@ -306,6 +464,26 @@ class PlantedReviewTests(unittest.TestCase):
             "PR Warden's own check found 1 committed credential", result["terminal"]
         )
         self.assertNotIn(PLANTED, result["terminal"])
+
+    def test_the_advisory_levels_are_given_the_credentials_to_keep_out(self) -> None:
+        """Their notes are posted before the code level runs, so they need the
+        credentials first."""
+
+        engine = Mock()
+        engine.review.return_value = {
+            "verdict": "approve",
+            "approval_reason": "Fine.",
+            "findings": [],
+        }
+
+        result = self.review(engine, advisory=True)
+
+        for level in ("design", "docs"):
+            with self.subTest(level=level):
+                given = result[level].call_args.kwargs["credentials"]
+                self.assertEqual(
+                    [(item.path, item.line) for item in given], [("config.py", 2)]
+                )
 
     def test_a_model_finding_on_the_key_is_kept_without_the_value(self) -> None:
         """One comment per line, and not even the model's excerpt keeps the key."""

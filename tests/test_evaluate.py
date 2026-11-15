@@ -2143,6 +2143,7 @@ class ReplayDecisionTests(unittest.TestCase):
         partial: bool = False,
         recorded=None,
         body: str = "",
+        changed=({"filename": "a.py"},),
     ):
         case = ReplayCase("owner/app", 1, "a" * 40, "b" * 40, body=body)
         repository = Repository("app", "owner/app", Path("/tmp"))
@@ -2168,7 +2169,7 @@ class ReplayDecisionTests(unittest.TestCase):
         bundles = (second,) if bundled else ()
         output = StringIO()
         with patch("prwarden.evaluate._repository_for", return_value=repository), patch(
-            "prwarden.evaluate.changed_files", return_value=[{"filename": "a.py"}]
+            "prwarden.evaluate.changed_files", return_value=list(changed)
         ), patch(
             "prwarden.cli._bundled_material", return_value=(primary, bundles)
         ), patch(
@@ -2228,6 +2229,20 @@ class ReplayDecisionTests(unittest.TestCase):
 
         self.assertIs(score["approved"], False)
         self.assertIn("read 3 of 5 changed files", score["approval_reason"])
+
+    def test_a_committed_credential_never_counts_as_an_approval(self) -> None:
+        """A live run posts it and cannot approve, so a control case must agree."""
+
+        key = "gh" + "p_" + "Zq8vW2nLx4KbT7yRm1Hc9JdF3sPa6GeQ0uVi"
+        score, output = self.run_case(
+            [self.reviewed()],
+            changed=({"filename": "a.py", "patch": f"@@ -0,0 +1 @@\n+KEY = {key!r}"},),
+        )
+
+        self.assertIs(score["approved"], False)
+        self.assertIn("committed credential", score["approval_reason"])
+        self.assertIn("Adds a GitHub token to the repository", output)
+        self.assertNotIn(key, output)
         self.assertIn("Would withhold approval", output)
 
     def test_a_bundle_finding_takes_the_approval_away(self) -> None:
