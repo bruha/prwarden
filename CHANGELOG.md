@@ -9,8 +9,28 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.2.0 a30c165909fb09e9913d492649289efcf51e03ae -->
+<!-- release-baseline: 3.3.0 258365d73695467a125134cd94c64b0193b0d38e -->
 ## [Unreleased]
+
+## [3.3.0] - 2026-11-16
+
+### Added
+
+- ask each finding for its root cause and the behavior expected instead (`47da530`).
+
+### Fixed
+
+- write the Kiro agent in the format Kiro keeps, and restore what it rewrites (`ed3bcfb`).
+- contain the left-out generated files in a registered prompt tag (`7acc878`).
+
+### Changed
+
+- run Kiro reviews as a read-only agent without an IDE system prompt (`7a63202`).
+- leave lockfiles out of the diff the advisory levels read (`daa072b`).
+
+### Testing
+
+- keep the agent permission assertion within the line limit (`4187037`).
 
 ## [3.2.0] - 2026-11-16
 
