@@ -153,7 +153,11 @@ It has no system prompt of its own: Kiro's default agent sends an IDE assistant'
 prompt of some 20,000 characters, about how to work in an editor, with every turn of
 a review that takes thirty, and on a trivial call measured with Kiro CLI 3.1 the
 agent cut the credits by about 40%. The file is written in the format Kiro CLI 3.1
-upgrades agents to, permitting file reading alone, with the upgrade marker set. Given
+upgrades agents to, permitting file reading alone and denying skills, with the
+upgrade marker set. The skills rule matters: without it Kiro still offered the agent
+its skill tool, whose description lists every skill installed for the account, about
+10,000 tokens per turn with 184 installed, and denying the capability removes the
+tool and its list. Given
 the older format, Kiro rewrote it on its first call, adding a permission for skills
 and a `.bak` copy beside it, and the next call in the worktree refused the head.
 Should a later Kiro rewrite it anyway, the adapter writes it back after the call and
