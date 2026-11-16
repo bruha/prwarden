@@ -2218,7 +2218,8 @@ class ReviewEngineTests(unittest.TestCase):
         self.assertEqual(agent["tools"], ["glob", "grep", "read"])
         self.assertEqual(agent["allowedTools"], ["glob", "grep", "read"])
         self.assertEqual(
-            agent["permissions"], {"rules": [{"capability": "fs_read", "effect": "allow"}]}
+            agent["permissions"],
+            {"rules": [{"capability": "fs_read", "effect": "allow"}]},
         )
         self.assertEqual(agent["resources"], [])
         self.assertIs(agent["includeMcpJson"], False)
