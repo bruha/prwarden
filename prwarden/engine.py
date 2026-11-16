@@ -55,6 +55,7 @@ PROMPT_DATA_TAGS = frozenset(
         "deferred-files",
         "diff",
         "file-history",
+        "generated-files",
         "ignored-missing-patch-files",
         "installed-dependencies",
         "linked-issues",
@@ -688,7 +689,9 @@ def _generated_files_left_out(material: ReviewMaterial) -> str:
 Generated files, such as dependency lockfiles, that this change edits but whose diff
 is left out below, because they hold no design or documentation of their own. Read
 one in the workspace if a question turns on it:
+<generated-files>
 {contain_untrusted(names)}
+</generated-files>
 """
 
 
