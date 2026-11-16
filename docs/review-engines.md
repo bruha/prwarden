@@ -152,7 +152,12 @@ grep, and glob tools, which are also the only ones trusted, and no MCP server.
 It has no system prompt of its own: Kiro's default agent sends an IDE assistant's
 prompt of some 20,000 characters, about how to work in an editor, with every turn of
 a review that takes thirty, and on a trivial call measured with Kiro CLI 3.1 the
-agent cut the credits by about 40%.
+agent cut the credits by about 40%. The file is written in the format Kiro CLI 3.1
+upgrades agents to, permitting file reading alone, with the upgrade marker set. Given
+the older format, Kiro rewrote it on its first call, adding a permission for skills
+and a `.bak` copy beside it, and the next call in the worktree refused the head.
+Should a later Kiro rewrite it anyway, the adapter writes it back after the call and
+removes the copy.
 
 Kiro CLI does not expose a general JSON-schema output flag in its headless command,
 so the adapter requests one exact JSON object, accepts either

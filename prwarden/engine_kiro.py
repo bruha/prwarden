@@ -58,17 +58,32 @@ KIRO_WORKSPACE_FILES = {
 # call runs as this agent instead: no system prompt, no MCP servers, and no tool but
 # reading and searching files, which is all a review is trusted with anyway. The
 # head's own instruction files still reach the model; see KIRO_LOADED_INSTRUCTIONS.
+#
+# It is written in the format Kiro CLI 3.1 upgrades agents to. Given the older format
+# alone, Kiro rewrote the file on its first call, adding a permission for skills and
+# a `.bak` copy beside it, and the next call in the worktree refused the head for
+# configuration the controller had not written. An agent that carries the upgrade
+# marker is not rewritten, and one whose fingerprint does not match its content is
+# kept as the hand-edited file it then is, so the zero fingerprint below keeps Kiro's
+# hands off this one.
 KIRO_REVIEW_AGENT = "prwarden-review"
+KIRO_REVIEW_TOOLS = ("glob", "grep", "read")
 KIRO_WORKSPACE_FILES[f"agents/{KIRO_REVIEW_AGENT}.json"] = (
     json.dumps(
         {
             "name": KIRO_REVIEW_AGENT,
             "description": "PR Warden's read-only pull-request review",
-            "tools": ["read", "grep", "glob"],
-            "allowedTools": ["read", "grep", "glob"],
+            "tools": list(KIRO_REVIEW_TOOLS),
+            "allowedTools": list(KIRO_REVIEW_TOOLS),
             "resources": [],
             "includeMcpJson": False,
             "mcpServers": {},
+            "permissions": {"rules": [{"capability": "fs_read", "effect": "allow"}]},
+            "kiroUpgrade": {
+                "revision": 2,
+                "fingerprint": "sha256:" + "0" * 64,
+                "source": "sha256:" + "0" * 64,
+            },
         },
         indent=2,
     )
@@ -78,8 +93,9 @@ KIRO_WORKSPACE_FILES[f"agents/{KIRO_REVIEW_AGENT}.json"] = (
 # writes `.kiro/settings/lsp.json` with code intelligence off, and starts nothing from
 # it, but the next call in the same worktree then found configuration the controller
 # did not write and refused the head. A head that ships the file is refused before any
-# call, so one found after a call is Kiro's own and is removed before the next.
-KIRO_GENERATED_FILES = ("settings/lsp.json",)
+# call, so one found after a call is Kiro's own and is removed before the next. So is
+# the copy Kiro keeps of an agent it upgrades, in case a later Kiro upgrades this one.
+KIRO_GENERATED_FILES = ("settings/lsp.json", f"agents/{KIRO_REVIEW_AGENT}.json.bak")
 # What Kiro adds to the model's context from the directory it starts in: its default
 # agent's resources, which custom agents inherit, checked with a file in each place.
 # Kiro CLI 3.1 still loads `AGENTS.md` under the controller's agent above.
@@ -119,7 +135,10 @@ def remove_kiro_generated_files(root: Path) -> None:
     """Remove what Kiro wrote into the controller's directory during a call.
 
     Only the named files, only as files or links: a link is removed, never followed,
-    and anything else is left for the next call's refusal to name. The `agents`
+    and anything else is left for the next call's refusal to name. A controller file
+    Kiro rewrote during the call, as it rewrites an agent it upgrades, is written back,
+    since the call that began found it exactly as the controller wrote it and only
+    Kiro could have changed it; a link in its place is left to be refused. The `agents`
     directory Kiro CLI 3.1 creates on every call needs no removal: it holds the
     controller's own agent, so the next call finds only what the controller wrote.
     """
@@ -136,6 +155,18 @@ def remove_kiro_generated_files(root: Path) -> None:
                         f"Could not remove {path}, which Kiro wrote during the "
                         f"review: {error}"
                     ) from error
+        for relative, content in KIRO_WORKSPACE_FILES.items():
+            path = workspace / relative
+            if path.is_symlink() or not path.is_file():
+                continue
+            try:
+                if path.read_bytes() != content.encode("utf-8"):
+                    path.write_text(content, encoding="utf-8")
+            except OSError as error:
+                raise EngineError(
+                    f"Could not restore {path}, which Kiro rewrote during the "
+                    f"review: {error}"
+                ) from error
 
 
 def parse_kiro_credits(text: str) -> Optional[float]:

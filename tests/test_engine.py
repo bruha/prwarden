@@ -2215,12 +2215,54 @@ class ReviewEngineTests(unittest.TestCase):
                 )
 
         self.assertEqual(agent["name"], "prwarden-review")
-        self.assertEqual(agent["tools"], ["read", "grep", "glob"])
-        self.assertEqual(agent["allowedTools"], ["read", "grep", "glob"])
+        self.assertEqual(agent["tools"], ["glob", "grep", "read"])
+        self.assertEqual(agent["allowedTools"], ["glob", "grep", "read"])
+        self.assertEqual(
+            agent["permissions"], {"rules": [{"capability": "fs_read", "effect": "allow"}]}
+        )
         self.assertEqual(agent["resources"], [])
         self.assertIs(agent["includeMcpJson"], False)
         self.assertEqual(agent["mcpServers"], {})
         self.assertNotIn("prompt", agent)
+        # Without the marker Kiro rewrote the file into this format, adding skills.
+        self.assertEqual(agent["kiroUpgrade"]["revision"], 2)
+
+    def test_an_agent_kiro_rewrites_during_a_call_is_restored_for_the_next(self):
+        """Kiro CLI 3.1 upgraded the controller's agent on its first call, keeping
+        a `.bak` copy beside it, and the next level's call in that worktree refused
+        the head for configuration the controller had not written: every replayed
+        verification failed. Whatever Kiro wrote there is put back."""
+
+        answer = ('{"verdict":"approve","findings":[]}', "")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = Repository("app", "owner/app", root)
+            settings = self.settings(
+                directory, repository, engine="kiro", command=("kiro-cli",)
+            )
+            agents = root / ".kiro" / "agents"
+            agent = agents / "prwarden-review.json"
+
+            def upgrades_agent(*args, **kwargs):
+                (agents / "prwarden-review.json.bak").write_text(agent.read_text())
+                agent.write_text('{"name": "prwarden-review", "tools": ["*"]}\n')
+                return answer
+
+            with patch(
+                "prwarden.engine_kiro.run_cmd_streams", side_effect=upgrades_agent
+            ) as run:
+                engine = KiroEngine(settings)
+                engine.review(*self.input(repository))
+                engine.review(*self.input(repository))
+
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(
+                agent.read_text(), KIRO_WORKSPACE_FILES["agents/prwarden-review.json"]
+            )
+            self.assertEqual(
+                sorted(path.name for path in agents.iterdir()),
+                ["prwarden-review.json"],
+            )
 
     def test_a_head_shipping_another_kiro_agent_is_refused(self):
         """A head's agent could grant its own review a shell, so only the
