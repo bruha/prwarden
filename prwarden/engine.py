@@ -2165,7 +2165,12 @@ This concerns the test's own behavior only: product code whose only callers are
 tests still has no user-facing trigger.
 
 Each finding must point to an ADDED line beginning with '+' in the supplied
-diff, using the new-file line number from the hunk. Provide a concrete trigger,
+diff, using the new-file line number from the hunk. In `problem`, state the root
+cause: what the added code does wrong and why, naming the value, condition, call,
+or ordering at fault, not only the symptom it produces. In `suggestion`, state the
+expected behavior first, what the code should do instead, then the change that
+makes it do so. This governs how a finding is written, never whether one is
+reported or confirmed. Provide a concrete trigger,
 observable impact, and at least one exact repository evidence citation. Evidence
 and counterevidence citations may point to any current-workspace text file, not
 only changed files, including files under the linked installed-dependency

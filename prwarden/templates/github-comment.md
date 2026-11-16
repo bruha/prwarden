@@ -13,7 +13,7 @@
 
 **Counterevidence considered:** [counterevidence]
 
-**Suggested change:** [suggested-change]
+**Expected behavior and fix:** [suggested-change]
 
 _[done-by]_
 

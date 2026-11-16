@@ -1563,6 +1563,20 @@ class ReviewEngineTests(unittest.TestCase):
         self.assertIn("`do_not_approve` must be supported", prompt)
         self.assertIn("return `approve` rather than withholding", prompt)
 
+    def test_the_prompt_asks_for_the_root_cause_and_the_expected_behavior(self):
+        """A finding that names only its symptom leaves the author to find the cause."""
+
+        repository = Repository("app", "owner/app", Path("/tmp/review"))
+        pull_request = PullRequest(1, "Title", "", "author", "sha", "url")
+        material = ReviewMaterial("diff", {"app.py": frozenset({1})})
+
+        prompt = build_prompt(repository, pull_request, material, 10)
+
+        self.assertIn("In `problem`, state the root\ncause", prompt)
+        self.assertIn("In `suggestion`, state the\nexpected behavior first", prompt)
+        # Shared with the verifier, so it must never read as a reason to reject.
+        self.assertIn("never whether one is\nreported or confirmed", prompt)
+
     def test_command_adapter_uses_stable_stdin_and_environment_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             repository = Repository("app", "owner/app", Path(directory))

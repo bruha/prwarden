@@ -433,7 +433,7 @@ class GitHubFeedbackTests(unittest.TestCase):
                     "unvalidated value. (`save(value)`)",
                     "**Counterevidence considered:** No targeted test covers an "
                     "empty identifier.",
-                    "**Suggested change:** Use the validated value instead.",
+                    "**Expected behavior and fix:** Use the validated value instead.",
                     "_Reviewed by Gemini 3.6 Flash (High) @ Antigravity_",
                     "<!-- prwarden -->",
                 ]

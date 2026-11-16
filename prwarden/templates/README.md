@@ -26,13 +26,13 @@ approvals.
 | `[title]` | `title` | Short finding title | `Invalid enum validation` |
 | `[path]` | `path` | Repository-relative source path | `src/forms/schema.ts` |
 | `[line]` | `line` | New-file line receiving the inline comment | `67` |
-| `[problem]` | `problem` | Confirmed explanation of the defect | `The fallback discards the saved value.` |
+| `[problem]` | `problem` | Confirmed root cause: what the code does wrong and why | `The fallback runs before the saved value loads, so it discards it.` |
 | `[rule]` | `rule` | The repository code review rule the change breaks, with its file, as Markdown; empty when it breaks none | ``**Repository rule** (`AGENTS.md`): > Never log an email address.`` |
 | `[trigger]` | `trigger` | Concrete condition or action that reaches the defect | `Submit the form with an empty identifier.` |
 | `[impact]` | `impact` | Observable result for users or the system | `The request fails before data is saved.` |
 | `[evidence]` | `evidence` | Preformatted Markdown list of exact source evidence | ``- `src/forms/schema.ts:67` — passes the empty value`` |
 | `[counterevidence]` | `counterevidence_reason` | Explanation of tests, guards, versions, or project patterns considered | `No equivalent guard exists in the caller.` |
-| `[suggested-change]` | `suggested_change` | Concise recommended correction | `Validate the identifier before saving.` |
+| `[suggested-change]` | `suggested_change` | What the code should do instead, then the change that makes it | `Keep the saved value when one exists. Validate the identifier before saving.` |
 | `[done-by]` | `reviewer_attribution` | Complete reviewer attribution, including the verifier when it differs | `Reviewed by Gemini 3.1 Pro (High) @ Antigravity, verified by GPT-5.6 Terra @ Kiro` |
 | `[reviewer]` | `reviewer_identity` | Model and engine without the `Reviewed by` prefix | `Gemini 3.1 Pro (High) @ Antigravity` |
 | `[engine]` | `engine` | Display name of the selected review engine | `Antigravity` |

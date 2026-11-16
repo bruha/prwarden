@@ -1346,8 +1346,11 @@ Create and submit one bodyless `COMMENT` review for the exact head SHA. Each
 finding is an inline comment rendered from a validated Markdown template and
 editable tag registry. The committed default contains severity/title, problem,
 the repository code review rule the finding breaks, when it breaks one, trigger,
-impact, evidence, counterevidence, suggested change, reviewer attribution, and a
-hidden reviewer marker. Template tags map only to supported
+impact, evidence, counterevidence, expected behavior and fix, reviewer attribution,
+and a hidden reviewer marker. The code prompt asks for the root cause in `problem`,
+what the code does wrong and why rather than only the symptom, and for the expected
+behavior before the change in `suggestion`; that wording shapes how a finding is
+written and never decides whether one is reported or confirmed. Template tags map only to supported
 controller values and cannot execute code. Startup rejects unreadable or
 invalid files, unknown tags, unsupported mappings, and templates without
 exactly one marker field. Rendered comments are bounded before a GitHub write
