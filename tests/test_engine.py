@@ -2184,8 +2184,67 @@ class ReviewEngineTests(unittest.TestCase):
             args = run.call_args.args[0]
             self.assertEqual(args[:3], ["kiro-cli", "chat", "--no-interactive"])
             self.assertIn("--trust-tools=read,grep,glob", args)
+            self.assertEqual(args[args.index("--agent") + 1], "prwarden-review")
             self.assertIn("Return exactly one JSON object", args[-1])
             self.assertFalse(run.call_args.kwargs["inherit_environment"])
+
+    def test_kiro_runs_as_an_agent_that_can_only_read_and_search(self):
+        """Kiro's default agent resent an IDE assistant's system prompt of some
+        20,000 characters on every turn, which a review never used and paid for
+        about thirty times a call. The controller's agent has no system prompt, no
+        MCP server, and no tool beyond reading and searching files."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            settings = self.settings(
+                directory, repository, engine="kiro", command=("kiro-cli",)
+            )
+            with patch(
+                "prwarden.engine_kiro.run_cmd_streams",
+                return_value=('{"verdict":"approve","findings":[]}', ""),
+            ) as run:
+                KiroEngine(settings).review(*self.input(repository))
+                # What Kiro reads is the file in the workspace it starts in.
+                agent = json.loads(
+                    (
+                        Path(run.call_args.kwargs["cwd"])
+                        / ".kiro"
+                        / "agents"
+                        / "prwarden-review.json"
+                    ).read_text()
+                )
+
+        self.assertEqual(agent["name"], "prwarden-review")
+        self.assertEqual(agent["tools"], ["read", "grep", "glob"])
+        self.assertEqual(agent["allowedTools"], ["read", "grep", "glob"])
+        self.assertEqual(agent["resources"], [])
+        self.assertIs(agent["includeMcpJson"], False)
+        self.assertEqual(agent["mcpServers"], {})
+        self.assertNotIn("prompt", agent)
+
+    def test_a_head_shipping_another_kiro_agent_is_refused(self):
+        """A head's agent could grant its own review a shell, so only the
+        controller's agent, exactly as the controller writes it, is accepted."""
+
+        for name, content in (
+            ("prwarden-review.json", '{"name": "prwarden-review", "tools": ["*"]}\n'),
+            ("reviewer.json", KIRO_WORKSPACE_FILES["agents/prwarden-review.json"]),
+        ):
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                agents = Path(directory) / ".kiro" / "agents"
+                agents.mkdir(parents=True)
+                (agents / name).write_text(content)
+                repository = Repository("app", "owner/app", Path(directory))
+                settings = self.settings(
+                    directory, repository, engine="kiro", command=("kiro-cli",)
+                )
+
+                with patch("prwarden.engine_kiro.run_cmd_streams") as run:
+                    with self.assertRaisesRegex(
+                        EngineError, rf"\.kiro/agents/{re.escape(name)}"
+                    ):
+                        KiroEngine(settings).review(*self.input(repository))
+                run.assert_not_called()
 
     def test_kiro_adapter_owns_the_workspace_configuration(self):
         """Kiro must print the answer unrendered, so an excerpt keeps its backticks."""
@@ -2210,7 +2269,7 @@ class ReviewEngineTests(unittest.TestCase):
                     for path in workspace.rglob("*")
                     if path.is_file()
                 ),
-                ["settings/cli.json"],
+                ["agents/prwarden-review.json", "settings/cli.json"],
             )
             self.assertEqual(
                 json.loads((workspace / "settings" / "cli.json").read_text()),
@@ -2220,11 +2279,12 @@ class ReviewEngineTests(unittest.TestCase):
                 },
             )
 
-    def test_kiro_removes_the_empty_agents_directory_it_creates_during_a_call(self):
-        """Kiro CLI 3.1 creates an empty `.kiro/agents` in the directory it starts
-        in. The next call in that worktree found configuration the controller had
-        not written and refused the head, so every pull request lost the rest of its
-        levels to the fallback. An empty directory holds nothing Kiro could load."""
+    def test_the_agents_directory_kiro_creates_during_a_call_is_never_refused(self):
+        """Kiro CLI 3.1 creates `.kiro/agents` in the directory it starts in. The
+        next call in that worktree found configuration the controller had not
+        written and refused the head, so every pull request lost the rest of its
+        levels to the fallback. The directory now holds the controller's own agent,
+        so whatever Kiro does to it, the next call finds only what it expects."""
 
         answer = ('{"verdict":"approve","findings":[]}', "")
         with tempfile.TemporaryDirectory() as directory:
@@ -2247,7 +2307,10 @@ class ReviewEngineTests(unittest.TestCase):
                 engine.review(*self.input(repository))
 
             self.assertEqual(run.call_count, 2)
-            self.assertFalse(os.path.lexists(agents))
+            self.assertEqual(
+                sorted(path.name for path in agents.iterdir()),
+                ["prwarden-review.json"],
+            )
 
     def test_kiro_leaves_an_agents_directory_with_content_to_be_refused(self):
         """Only the empty directory is Kiro's own. Anything inside it could be an
@@ -2272,6 +2335,10 @@ class ReviewEngineTests(unittest.TestCase):
                 return answer
 
             def links_directory(*args, **kwargs):
+                # The controller's agent is already there, so the link replaces it.
+                for entry in agents.iterdir():
+                    entry.unlink()
+                agents.rmdir()
                 agents.symlink_to(outside, target_is_directory=True)
                 return answer
 

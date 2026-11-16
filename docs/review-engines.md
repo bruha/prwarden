@@ -145,9 +145,17 @@ kiro-cli whoami
 python3 -m prwarden --engine kiro --repo owner/repository --pr 123
 ```
 
-The adapter uses headless mode and trusts only Kiro's read and grep tool
-categories. Kiro CLI does not expose a general JSON-schema output flag in its
-headless command, so the adapter requests one exact JSON object, accepts either
+The adapter uses headless mode and runs every call as PR Warden's own agent,
+`prwarden-review`, which it writes into the review worktree as
+`.kiro/agents/prwarden-review.json`. That agent offers the model only Kiro's read,
+grep, and glob tools, which are also the only ones trusted, and no MCP server.
+It has no system prompt of its own: Kiro's default agent sends an IDE assistant's
+prompt of some 20,000 characters, about how to work in an editor, with every turn of
+a review that takes thirty, and on a trivial call measured with Kiro CLI 3.1 the
+agent cut the credits by about 40%.
+
+Kiro CLI does not expose a general JSON-schema output flag in its headless command,
+so the adapter requests one exact JSON object, accepts either
 raw JSON or one JSON code fence, and passes the result through the controller's
 strict finding validation. A malformed response fails the review and is not
 treated as an empty result.
@@ -156,9 +164,9 @@ Kiro reads its workspace configuration from the directory it runs in, which is
 the reviewed head, and starts any MCP server that configuration names. Before
 every call the adapter therefore refuses a head whose `.kiro/` or `.amazonq/`
 holds anything other than documents (`.kiro/steering`, `.kiro/specs`,
-`.amazonq/rules`), and writes its own `.kiro/settings/cli.json` into the review
-worktree. That file turns off Kiro's Markdown rendering: rendered, an answer
-that is not inside a code fence loses its backticks, asterisks, and underscores
+`.amazonq/rules`), and writes its own `.kiro/settings/cli.json` and agent into the
+review worktree. The settings file turns off Kiro's Markdown rendering: rendered, an
+answer that is not inside a code fence loses its backticks, asterisks, and underscores
 on the way to standard output, so an excerpt copied exactly from the file
 arrives changed and the controller rejects it.
 
@@ -169,17 +177,18 @@ nothing from it. The next call in the same worktree then found configuration the
 controller had not written and refused the head, which failed the review. A head that
 ships that file is refused before any call, so the adapter removes it after every
 call, whether the call succeeded or not; it unlinks a link rather than following it.
-Kiro CLI 3.1 also creates an empty `.kiro/agents` directory on every call, which the
-next call refused the same way. Git keeps no empty directory, so a head cannot ship
-one, and the adapter removes it after each call while it is empty. A `.kiro/agents`
-holding anything, or a link, is left in place and refused by name.
+Kiro CLI 3.1 also creates `.kiro/agents` on every call; it holds the controller's
+agent, so the next call finds only what the controller wrote. A `.kiro/agents`
+holding any other file, the agent's file with other content, or a link is refused
+by name, since a head's agent could grant its own review a shell.
 A refusal names the file it found, because the head is not the only possible author.
 
 Kiro also adds the head's `AGENTS.md`, `README.md`, and `.kiro/steering` files to the
 model's context as project instructions, and there is no way to stop it: a custom
 agent with no resources still inherited all three with
 `chat.disableInheritingDefaultResources` set, which Kiro CLI 2.22.1 read and did not
-apply. A pull request could therefore instruct its own review. The adapter's prompt
+apply, and Kiro CLI 3.1 still loads `AGENTS.md` under PR Warden's own agent. A pull
+request could therefore instruct its own review. The adapter's prompt
 names each of those files the head carries as untrusted data from the pull request,
 never to be followed. Both halves were checked: with a code word in each file Kiro
 reported all three, and with an `AGENTS.md` telling it to end every answer with a
