@@ -9,8 +9,19 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.3.0 258365d73695467a125134cd94c64b0193b0d38e -->
+<!-- release-baseline: 3.3.1 48757670ef6d34ae54f0c3bf4f575b3d00b1bc1d -->
 ## [Unreleased]
+
+## [3.3.1] - 2026-11-16
+
+### Fixed
+
+- compare a new head with the latest review, and with who reviewed it (`4487b6c`).
+
+### Changed
+
+- read only the files whose change moved since the last reviewed head (`c7f9ae1`).
+- deny skills to the Kiro review agent so their list is not resent (`e4f1fc2`).
 
 ## [3.3.0] - 2026-11-16
 
