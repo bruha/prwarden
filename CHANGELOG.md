@@ -9,8 +9,29 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.1.0 f528116d61dac3792c08ea3115395796cb6196cd -->
+<!-- release-baseline: 3.2.0 a30c165909fb09e9913d492649289efcf51e03ae -->
 ## [Unreleased]
+
+## [3.2.0] - 2026-11-16
+
+### Added
+
+- never approve a pull request that changes review policy (`5b09e71`).
+- report a committed credential whatever the code says about it (`c02f5b9`).
+- keep a committed credential out of every finding (`1af6ef1`).
+- report what each GitHub token and role can do beyond reviewing (`f2df728`).
+
+### Fixed
+
+- judge an instruction file's rules where later reviews read them (`3068be8`).
+- keep every credential on a line out of findings and notes (`d8989be`).
+- read a head instruction file stripped, as later reviews read it (`5706936`).
+- tell each GitHub credential the remedy that reaches it (`81cffa5`).
+
+### Documentation
+
+- name secret_scan among the modules and keep the prompt's paragraph its own (`0970942`).
+- say a credential comment is unverified and name the scan that reads lines (`a30c165`).
 
 ## [3.1.0] - 2026-11-14
 
