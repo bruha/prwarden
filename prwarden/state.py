@@ -158,15 +158,15 @@ class JsonStateStore:
                 return True
         return False
 
-    def latest_record_with(
+    def latest_head_record(
         self,
         repository: str,
         pr_number: int,
         destination: str,
-        field: str,
+        statuses: "frozenset[str]",
     ) -> "Optional[tuple[str, dict[str, Any]]]":
-        """Return the most recently written head record of a pull request with
-        ``field``, and the head it is for.
+        """Return the most recently written head record of a pull request with one of
+        ``statuses``, and the head it is for.
 
         Only head records count, `repository#number#head#destination`, never the
         pull-request records the advisory levels keep.
@@ -183,7 +183,7 @@ class JsonStateStore:
             head = key[len(prefix) : len(key) - len(suffix)]
             if not head or "#" in head:
                 continue
-            if not isinstance(record, dict) or field not in record:
+            if not isinstance(record, dict) or record.get("status") not in statuses:
                 continue
             written = str(record.get("updated_at", ""))
             if latest is None or written > latest[0]:

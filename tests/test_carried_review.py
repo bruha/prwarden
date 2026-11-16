@@ -86,7 +86,7 @@ class FingerprintTests(unittest.TestCase):
 
 
 class StoreTests(unittest.TestCase):
-    def test_the_latest_head_record_with_the_field_is_returned(self) -> None:
+    def test_the_latest_reviewed_head_record_is_returned(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with JsonStateStore(Path(directory) / "state.json") as store:
                 store.set_status(
@@ -96,11 +96,11 @@ class StoreTests(unittest.TestCase):
                 )
                 store.set_status(
                     store.key("o/a", 1, "h2", "github"),
-                    "delivered",
+                    "approval_withheld",
                     reviewed_patches={"a.py": "2"},
                 )
-                # Newer, but without the field, for another destination, for another
-                # pull request, and the advisory level's pull-request record.
+                # Newer, but with no review behind it, for another destination, for
+                # another pull request, and the advisory level's pull-request record.
                 store.set_status(store.key("o/a", 1, "h3", "github"), "failed")
                 store.set_status(
                     store.key("o/a", 1, "h4", "slack"),
@@ -118,7 +118,9 @@ class StoreTests(unittest.TestCase):
                     reviewed_patches={"a.py": "6"},
                 )
 
-                found = store.latest_record_with("o/a", 1, "github", "reviewed_patches")
+                found = store.latest_head_record(
+                    "o/a", 1, "github", cli.REVIEWED_STATUSES
+                )
 
         self.assertIsNotNone(found)
         head, record = found
@@ -283,6 +285,47 @@ class OrchestrationTests(unittest.TestCase):
         self.assertNotIn("a/b.py", material.diff)
         self.assertEqual(material.carried_files, ("b.py",))
 
+    def test_a_newer_review_that_kept_nothing_carries_nothing_over(self) -> None:
+        """An older head's record listed a file the newer review had just found a
+        defect in; falling back to it hid that file's diff at the head after."""
+
+        first = [changed("a.py", "value = 1"), changed("b.py", "value = 1")]
+        self.review("h1", first, [APPROVE])
+        second = [first[0], changed("b.py", "value = 1", "other = 2")]
+        both = finding_response("a.py", 1)
+        both["findings"].append({**both["findings"][0], "path": "b.py"})
+        confirmed_both = {
+            **CONFIRMED_JUDGMENT,
+            "judgments": [
+                {"ref": ref, "verdict": "confirmed", "reason": "Read the caller."}
+                for ref in ("F1", "F2")
+            ],
+        }
+        _, record, _ = self.review(
+            "h2", second, [both, confirmed_both], force=True
+        )
+        self.assertEqual(record["reviewed_patches"], {})
+
+        third = [first[0], changed("b.py", "value = 1", "other = 3")]
+        engine, _, _ = self.review("h3", third, [APPROVE])
+
+        material = engine.review.call_args.args[2]
+        self.assertEqual(material.carried_files, ())
+        self.assertIn("a/a.py", material.diff)
+
+    def test_a_change_of_reviewer_or_effort_reads_everything(self) -> None:
+        """The result is attributed to whoever reviews now, so they read it all."""
+
+        first = [changed("a.py", "value = 1"), changed("b.py", "value = 1")]
+        self.review("h1", first, [APPROVE])
+        self.settings = replace(self.settings, review_code_effort="high")
+
+        second = [first[0], changed("b.py", "value = 1", "other = 2")]
+        engine, _, terminal = self.review("h2", second, [APPROVE])
+
+        self.assertEqual(engine.review.call_args.args[2].carried_files, ())
+        self.assertIn("the code review rules or the reviewer changed", terminal)
+
     def test_everything_is_read_when_nothing_would_be_left_to_read(self) -> None:
         """A head whose every change was already read is reviewed whole again rather
         than approved on no reading at all."""
@@ -313,7 +356,9 @@ class OrchestrationTests(unittest.TestCase):
             third = [first[0], changed("b.py", "value = 1", "other = 3")]
             engine, _, terminal = self.review("h3", third, [APPROVE])
             self.assertEqual(engine.review.call_args.args[2].carried_files, ())
-            self.assertIn("the code review rules changed since", terminal)
+            self.assertIn(
+                "the code review rules or the reviewer changed since", terminal
+            )
 
 
 if __name__ == "__main__":

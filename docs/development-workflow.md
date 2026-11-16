@@ -102,8 +102,10 @@ command generated from commits that were reviewed already.
    gh pr merge <number> --merge --delete-branch
    ```
 
-   Rebasing would make a new head, and with it another full review. Rebase only when
-   the branch conflicts with `main`, push it with `git push --force-with-lease`,
+   Rebasing makes a new head. When the rebase leaves every file's diff as it was, that
+   head is reviewed in full again; otherwise only the files whose diff moved are
+   read. Rebase only when the branch conflicts with `main`, push it with
+   `git push --force-with-lease`,
    which is allowed on a feature branch and never on `main`, and let the new head be
    reviewed before merging.
 

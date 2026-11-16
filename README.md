@@ -512,10 +512,11 @@ rather than advisory notes nobody checked.
   posted, the earlier `LGTM` comments are marked as outdated, which collapses them
   without deleting them, so only the current verdict shows.
 - A PR reviewed again at a later head has only the files whose change moved read
-  again. A file whose change is exactly one an earlier head's review read and raised
-  nothing on, under the same code review rules, is named to the reviewer and left out
-  of the diff. A file with a finding or a blocking comment is always read again, and
-  a head where nothing would be left to read, or `--force`, reads everything.
+  again. A file whose change is exactly one the latest review read and raised nothing
+  on, under the same code review rules and the same reviewer, is named to the reviewer
+  and left out of the diff. A file with a finding or a blocking comment is always read
+  again, and a head where nothing would be left to read, or `--force`, reads
+  everything.
 - A PR that is merged or closed while being reviewed still receives its confirmed
   findings, on GitHub or in Slack, but never an approval or an `LGTM`. The defect is
   in the base branch by then, and the review already verified it against the exact

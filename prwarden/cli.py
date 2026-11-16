@@ -2010,6 +2010,30 @@ def _bundled_material(
 # head is simply reviewed whole.
 MAX_RECORDED_PATCHES = 1000
 REVIEWED_PATCHES_FIELD = "reviewed_patches"
+# The outcomes of a code review that read the change. The latest of them speaks for
+# the pull request: one that kept no file carries none over, even when an older head's
+# record would have, because the newer review may have found a defect in that file.
+REVIEWED_STATUSES = frozenset({"delivered", "approval_withheld"})
+
+
+def _review_basis(rules: Optional[ReviewRules], settings: Settings) -> str:
+    """Return what a carried-over verdict depends on besides the file's change.
+
+    The rules the review judged by, and the engine, model, and effort that judged:
+    a file another reviewer passed is read again when the operator changes who
+    reviews, or how hard, since the next result is attributed to that reviewer.
+    """
+
+    payload = json.dumps(
+        [
+            review_rules_fingerprint(rules),
+            settings.review_engine,
+            settings.review_model,
+            settings.review_code_effort or settings.review_effort,
+        ],
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class _CarriedReview(NamedTuple):
@@ -2037,16 +2061,16 @@ def _carried_review(
 ) -> "Optional[_CarriedReview]":
     """Return what the code level still has to read, or None to read everything.
 
-    A file is carried over only when its change is byte for byte one an earlier
-    head's review read and raised nothing on, judged by the same code review rules.
-    Everything else is read: a first review, a file with a finding or a blocking
-    comment there, a file whose change moved, rules that changed on the base branch,
-    and a head where nothing would be left to read, whose review is the whole change
-    again rather than none of it.
+    A file is carried over only when its change is byte for byte one the latest
+    review of this pull request read or carried and raised nothing on, judged by the
+    same rules and the same reviewer. Everything else is read: a first review, a
+    file with a finding or a blocking comment there, a file whose change moved,
+    changed rules or reviewer, and a head where nothing would be left to read, whose
+    review is the whole change again rather than none of it.
     """
 
-    found = store.latest_record_with(
-        repository.slug, pull_request.number, destination, REVIEWED_PATCHES_FIELD
+    found = store.latest_head_record(
+        repository.slug, pull_request.number, destination, REVIEWED_STATUSES
     )
     if found is None:
         return None
@@ -2069,10 +2093,10 @@ def _carried_review(
             f"to compare with the review of {head_sha[:12]}: {error}"
         )
         return None
-    if review_rules_fingerprint(rules) != basis:
+    if _review_basis(rules, settings) != basis:
         print(
-            "      -> Reviewing every file: the code review rules changed since "
-            f"{head_sha[:12]} was reviewed"
+            "      -> Reviewing every file: the code review rules or the reviewer "
+            f"changed since {head_sha[:12]} was reviewed"
         )
         return None
     carried_paths = set(carried)
@@ -2102,13 +2126,16 @@ def _reviewed_patch_record(
     findings: "Sequence[Finding]",
     blocking_comment_ids: "Sequence[str]",
     prior_comments: "Sequence[PriorReviewComment]",
+    review_settings: Settings,
 ) -> "dict[str, Any]":
     """Return what a terminal record keeps so the next head reads only what moved.
 
     The files this review read in full, together with those it carried over, less
     any it raised a finding on or withheld its approval over: those are read again
-    whatever the next head does to them. Empty when there is nothing to keep, or too
-    much.
+    whatever the next head does to them. Always written, empty when nothing is kept
+    or there would be too much to keep, because the latest review is the one the
+    next head is compared with: an older head's record could carry over a file this
+    review has just found a defect in.
     """
 
     fingerprints = patch_fingerprints(files)
@@ -2124,11 +2151,11 @@ def _reviewed_patch_record(
         (set(patch_fingerprints(read_files)) - unread) | set(material.carried_files)
     ) - held
     reviewed &= set(fingerprints)
-    if not reviewed or len(reviewed) > MAX_RECORDED_PATCHES:
-        return {}
+    if len(reviewed) > MAX_RECORDED_PATCHES:
+        reviewed = set()
     return {
         REVIEWED_PATCHES_FIELD: {path: fingerprints[path] for path in sorted(reviewed)},
-        "review_basis": review_rules_fingerprint(material.review_rules),
+        "review_basis": _review_basis(material.review_rules, review_settings),
     }
 
 
@@ -3288,6 +3315,7 @@ def _process_pull_request(
                 findings,
                 blocking_comment_ids,
                 prior_comments,
+                review_settings,
             ),
         )
         print(f"      -> Recorded as approval_withheld: {approval_reason}")
@@ -3418,6 +3446,7 @@ def _process_pull_request(
                     findings,
                     blocking_comment_ids,
                     prior_comments,
+                    review_settings,
                 ),
             )
             print(
@@ -3505,6 +3534,7 @@ def _process_pull_request(
             findings,
             blocking_comment_ids,
             prior_comments,
+            review_settings,
         ),
     }
     if closed_during_review:

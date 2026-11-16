@@ -396,21 +396,25 @@ A later head reads only what moved. Every `delivered` and `approval_withheld` re
 of the code level keeps `reviewed_patches`, a SHA-256 of each file's change that this
 review read in full or carried over and raised no finding on, leaving out any file
 under a finding or a blocking prior comment, and `review_basis`, a fingerprint of the
-code review rules it judged by, which ignores the base commit they were read at. A
-file's change is its path, status, earlier path, and patch with its hunk headers, so
+code review rules it judged by, ignoring the base commit they were read at, and of
+the engine, model, and effort that reviewed. The map is written even when it is
+empty, because the latest such record is the one the next head is compared with: an
+older head's record could list a file the newer review has just found a defect in.
+A file's change is its path, status, earlier path, and patch with its hunk headers, so
 the same edit against a base that has since moved counts as a new change. At the
 next review of the pull request, for the same destination, each changed file whose
-change matches the most recent such record is carried over: left out of the diff and
+change matches the latest such record is carried over: left out of the diff and
 the added-line index, so no finding can point at it, and named to the reviewer as a
 file it may read in the workspace and that a changed line can still break. The code
 level then reads, and bundles, only the rest. This applies to the code level alone,
 since the advisory levels read the whole change. Nothing is carried over under
-`--force`, when the base branch's rules changed, when the rules cannot be read for
-the comparison, or when nothing would be left to read, because a review of no file
-cannot speak for any. A review whose every file was read at one head or another,
-with no finding left on any of them, is a complete review and may be approved, as
-one covered by bundles is. A record keeps at most `MAX_RECORDED_PATCHES` files;
-past that the next head is reviewed whole.
+`--force`, when the base branch's rules or the reviewer changed, when the rules
+cannot be read for the comparison, or when nothing would be left to read, because a
+review of no file cannot speak for any. A review whose every file was read at one
+head or another, with no finding left on any of them, is a complete review and may
+be approved, as one covered by bundles is. A record keeps at most
+`MAX_RECORDED_PATCHES` files; past that it keeps none and the next head is reviewed
+whole. A replay reviews each pinned case whole, so it never exercises this.
 
 A partial review is constrained in four ways, and all four are required for it to be
 honest. Deferred files are absent from the added-line index, so no finding can be
