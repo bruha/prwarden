@@ -2233,7 +2233,14 @@ class ReviewEngineTests(unittest.TestCase):
         self.assertEqual(agent["allowedTools"], ["glob", "grep", "read"])
         self.assertEqual(
             agent["permissions"],
-            {"rules": [{"capability": "fs_read", "effect": "allow"}]},
+            {
+                "rules": [
+                    {"capability": "fs_read", "effect": "allow"},
+                    # Without it Kiro offered its skill tool, listing every skill
+                    # installed, about 10,000 tokens resent on every turn.
+                    {"capability": "skill", "effect": "deny"},
+                ]
+            },
         )
         self.assertEqual(agent["resources"], [])
         self.assertIs(agent["includeMcpJson"], False)

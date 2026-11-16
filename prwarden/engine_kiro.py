@@ -66,8 +66,18 @@ KIRO_WORKSPACE_FILES = {
 # marker is not rewritten, and one whose fingerprint does not match its content is
 # kept as the hand-edited file it then is, so the zero fingerprint below keeps Kiro's
 # hands off this one.
+#
+# Skills are denied outright. Without that rule Kiro still offered the agent its skill
+# tool, whose description lists every skill installed for the account, which was 184
+# on the machine this was measured on: about 10,000 tokens resent on every turn of a
+# review that must not activate one. Denying the capability removes the tool and its
+# list, and took a trivial call from about 16,000 tokens of tools to 6,000.
 KIRO_REVIEW_AGENT = "prwarden-review"
 KIRO_REVIEW_TOOLS = ("glob", "grep", "read")
+KIRO_REVIEW_PERMISSIONS = (
+    {"capability": "fs_read", "effect": "allow"},
+    {"capability": "skill", "effect": "deny"},
+)
 KIRO_WORKSPACE_FILES[f"agents/{KIRO_REVIEW_AGENT}.json"] = (
     json.dumps(
         {
@@ -78,7 +88,7 @@ KIRO_WORKSPACE_FILES[f"agents/{KIRO_REVIEW_AGENT}.json"] = (
             "resources": [],
             "includeMcpJson": False,
             "mcpServers": {},
-            "permissions": {"rules": [{"capability": "fs_read", "effect": "allow"}]},
+            "permissions": {"rules": [dict(rule) for rule in KIRO_REVIEW_PERMISSIONS]},
             "kiroUpgrade": {
                 "revision": 2,
                 "fingerprint": "sha256:" + "0" * 64,

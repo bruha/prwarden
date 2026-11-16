@@ -1077,7 +1077,8 @@ Built-in adapters:
   parsing before common finding validation. It refuses a head that ships Kiro
   configuration other than documents, because Kiro would load and could execute
   it, and gives the worktree its own setting that keeps the answer unrendered and
-  its own agent, which offers only those tools and replaces the default agent's
+  its own agent, which offers only those tools, denies skills so the list of every
+  installed skill is not resent with each turn, and replaces the default agent's
   system prompt, resent with every turn, with none.
 - `command`: runs an arbitrary command without a shell, sends the prompt on
   stdin, supplies schema and limits through environment variables, and expects
