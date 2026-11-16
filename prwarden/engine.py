@@ -65,6 +65,7 @@ PROMPT_DATA_TAGS = frozenset(
         "prior-review-comments-json",
         "removed-files",
         "review-rules",
+        "reviewed-files",
         "textless-files",
         "verification-candidates-json",
     }
@@ -223,6 +224,30 @@ def format_textless_files(material: ReviewMaterial) -> str:
     if not material.textless_files:
         return "(none)"
     return "\n".join(material.textless_files)
+
+
+def format_carried_files(material: ReviewMaterial) -> str:
+    """Return the block naming files an earlier head's review already read, if any.
+
+    Absent when there are none, so a first review's prompt is unchanged. The files
+    are left out of the diff and the eligible-line map, so nothing can point at
+    them, but a changed line can still break one, and the model is told to look.
+    """
+
+    if not material.carried_files:
+        return ""
+    names = "\n".join(material.carried_files)
+    return f"""
+Changed files whose change is exactly the one PR Warden's review of an earlier head
+of this pull request read and found no defect in. Their diff is left out below and
+no finding may point at them, but they are part of this change and readable in the
+workspace: read one wherever a changed line depends on it, report a defect that a
+changed line causes there on that changed line, and never conclude that something is
+missing from this change because it is not in the diff below:
+<reviewed-files>
+{contain_untrusted(names)}
+</reviewed-files>
+"""
 
 
 def format_dependency_links(material: ReviewMaterial) -> str:
@@ -2298,7 +2323,7 @@ be in one of these files:
 <deferred-files>
 {contain_untrusted(format_deferred_files(material))}
 </deferred-files>
-
+{format_carried_files(material)}
 Unified diff:
 (This may be empty when every changed file was fully removed.)
 <diff>

@@ -430,3 +430,7 @@ class ReviewMaterial:
     # they changed, and can be read in the workspace, but hold no design and no
     # documentation, and a lockfile's diff can be larger than the rest of the change.
     generated_files_left_out: "tuple[str, ...]" = ()
+    # Changed files whose change is exactly one an earlier head's code review of this
+    # pull request read and found nothing in. The code level leaves their diff out and
+    # names them, and nothing it raises may point at them.
+    carried_files: "tuple[str, ...]" = ()

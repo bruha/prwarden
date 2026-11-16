@@ -59,6 +59,7 @@ whatever the prompt says, so rewording it cannot loosen it.
 | Severity: "definite bug", "definite correctness defect… never use for style" | both | code for allowed values | `0c952a8` 08-06 | mild |
 | "Omit the finding when a prior comment already identifies the same underlying issue… If it is uncertain whether the issue is already covered, omit it." | both | prompt | `e8c6d23` 08-07, reworded `bc0a8dc` 08-31 | withhold on ties |
 | Removed, ignored, textless, and deferred files: "raise nothing about what they contain" | both | code for anchoring | `0091853`, `d478702` 08-07; `aba42a3` 08-27; `78faf29` 09-01 | scope |
+| Files an earlier head's review already read: "no finding may point at them… report a defect that a changed line causes there on that changed line, and never conclude that something is missing from this change because it is not in the diff" | both, code level | code for anchoring and for which files are carried over | 2026-11-16, this repository | scope; re-test whether a new model misses a defect a changed line causes in a carried file |
 | "Read the complete current version of every changed file…", "Absence from the diff is not evidence…", "Never report a candidate from diff context alone." | both | prompt | `6b0c05b` 08-11 | diligence |
 | "If equivalent protection already exists, omit the finding." | both | prompt | `6b0c05b` 08-11 | correct |
 | "If any required file or definition cannot be inspected, or the runtime claim cannot be established…, omit the finding." | both | prompt | `6b0c05b` 08-11 | withhold on ties |

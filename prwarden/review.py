@@ -343,6 +343,56 @@ def without_generated_files(material: ReviewMaterial) -> ReviewMaterial:
     )
 
 
+def patch_fingerprints(files: "Sequence[dict[str, Any]]") -> "dict[str, str]":
+    """Return a fingerprint of each changed file's change, keyed by its path.
+
+    Only a file GitHub sends a patch for has one, since the patch is what a review
+    reads. The fingerprint covers the path, the status, the path a rename came from,
+    and the patch with its hunk headers, so the same edit against a base that has
+    since moved reads as a different change and is reviewed again. It is a whole
+    SHA-256: the author writes both sides of every comparison, so a shortened hash
+    would be one they could collide on purpose.
+    """
+
+    fingerprints: "dict[str, str]" = {}
+    for file_data in files:
+        path = file_data.get("filename")
+        patch = file_data.get("patch")
+        if not isinstance(path, str) or not path or not isinstance(patch, str):
+            continue
+        payload = json.dumps(
+            [path, file_data.get("status"), file_data.get("previous_filename"), patch],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        fingerprints[path] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return fingerprints
+
+
+def review_rules_fingerprint(rules: Optional[ReviewRules]) -> str:
+    """Return a fingerprint of the code review rules a review judged by.
+
+    The base commit is left out, because it moves with every merge to the base
+    branch while the rules themselves rarely do; no rules and an empty set of rules
+    fingerprint alike.
+    """
+
+    sections = (
+        []
+        if rules is None
+        else [
+            [section.path, section.heading, section.text] for section in rules.sections
+        ]
+    )
+    truncated = rules is not None and rules.truncated
+    payload = json.dumps(
+        {"sections": sections, "truncated": truncated},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def build_review_material(
     files: list[dict[str, Any]],
     max_diff_bytes: int,
@@ -1629,6 +1679,7 @@ def _changed_paths(material: ReviewMaterial) -> "frozenset[str]":
     paths = set(material.added_lines)
     paths.update(material.ignored_missing_patch_files)
     paths.update(material.textless_files)
+    paths.update(material.carried_files)
     paths.update(file.path for file in material.removed_files)
     paths.update(file.path for file in material.moved_files)
     if material.diff_budget is not None:

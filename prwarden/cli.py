@@ -12,7 +12,16 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Sequence, TextIO, Union
+from typing import (
+    Any,
+    Callable,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Sequence,
+    TextIO,
+    Union,
+)
 
 from . import __version__, progress
 from .comment_template import CommentTemplateError
@@ -114,8 +123,10 @@ from .review import (
     ignores_omitted_patch,
     is_review_rule_source,
     omitted_patch_paths,
+    patch_fingerprints,
     review_policy_changes,
     review_rule_pathspecs,
+    review_rules_fingerprint,
     rule_source_changes,
     validate_approval_reason,
     validate_approval_verdict,
@@ -1993,6 +2004,134 @@ def _bundled_material(
     return replace(first, diff_budget=aggregate), tuple(bundles[1:])
 
 
+# A code review that read a file's change and found nothing in it need not read that
+# same change again at the next head. The record is bounded, so a pull request of
+# thousands of files cannot grow the state file without limit: past this, the next
+# head is simply reviewed whole.
+MAX_RECORDED_PATCHES = 1000
+REVIEWED_PATCHES_FIELD = "reviewed_patches"
+
+
+class _CarriedReview(NamedTuple):
+    """The code level's work when an earlier head's review already read part of it."""
+
+    head_sha: str
+    # The files whose change is exactly one that earlier review read and passed.
+    paths: "tuple[str, ...]"
+    # The changed files still to read, and the material and bundles built from them.
+    files: "list[dict[str, Any]]"
+    material: ReviewMaterial
+    bundles: "tuple[ReviewMaterial, ...]"
+
+
+def _carried_review(
+    settings: Settings,
+    repository: Repository,
+    pull_request: PullRequest,
+    store: JsonStateStore,
+    destination: str,
+    files: "list[dict[str, Any]]",
+    prior_comments: "tuple[PriorReviewComment, ...]",
+    generated_marks: "Optional[Mapping[str, Optional[bool]]]",
+    marks_unreadable: bool,
+) -> "Optional[_CarriedReview]":
+    """Return what the code level still has to read, or None to read everything.
+
+    A file is carried over only when its change is byte for byte one an earlier
+    head's review read and raised nothing on, judged by the same code review rules.
+    Everything else is read: a first review, a file with a finding or a blocking
+    comment there, a file whose change moved, rules that changed on the base branch,
+    and a head where nothing would be left to read, whose review is the whole change
+    again rather than none of it.
+    """
+
+    found = store.latest_record_with(
+        repository.slug, pull_request.number, destination, REVIEWED_PATCHES_FIELD
+    )
+    if found is None:
+        return None
+    head_sha, record = found
+    recorded = record.get(REVIEWED_PATCHES_FIELD)
+    basis = record.get("review_basis")
+    if not isinstance(recorded, dict) or not isinstance(basis, str):
+        return None
+    current = patch_fingerprints(files)
+    carried = tuple(
+        sorted(path for path, change in current.items() if recorded.get(path) == change)
+    )
+    if not carried or len(carried) == len(current):
+        return None
+    try:
+        rules = read_review_rules(repository, pull_request)
+    except (CommandError, ReviewError, WorkspaceError) as error:
+        print(
+            "      -> Reviewing every file: the code review rules could not be read "
+            f"to compare with the review of {head_sha[:12]}: {error}"
+        )
+        return None
+    if review_rules_fingerprint(rules) != basis:
+        print(
+            "      -> Reviewing every file: the code review rules changed since "
+            f"{head_sha[:12]} was reviewed"
+        )
+        return None
+    carried_paths = set(carried)
+    remaining = [
+        file_data
+        for file_data in files
+        if file_data.get("filename") not in carried_paths
+    ]
+    try:
+        first, bundles = _bundled_material(
+            remaining, settings, prior_comments, generated_marks, marks_unreadable
+        )
+    except (DiffTooLargeError, ReviewError):
+        return None
+    print(
+        f"      -> Reviewing {len(current) - len(carried)} of {len(current)} changed "
+        f"files with a diff; {len(carried)} carry the change already reviewed at "
+        f"{head_sha[:12]} with no finding, so their diff is left out"
+    )
+    return _CarriedReview(head_sha, carried, remaining, first, bundles)
+
+
+def _reviewed_patch_record(
+    files: "Sequence[dict[str, Any]]",
+    read_files: "Sequence[dict[str, Any]]",
+    material: ReviewMaterial,
+    findings: "Sequence[Finding]",
+    blocking_comment_ids: "Sequence[str]",
+    prior_comments: "Sequence[PriorReviewComment]",
+) -> "dict[str, Any]":
+    """Return what a terminal record keeps so the next head reads only what moved.
+
+    The files this review read in full, together with those it carried over, less
+    any it raised a finding on or withheld its approval over: those are read again
+    whatever the next head does to them. Empty when there is nothing to keep, or too
+    much.
+    """
+
+    fingerprints = patch_fingerprints(files)
+    budget = material.diff_budget
+    unread = {file.path for file in budget.deferred} if budget is not None else set()
+    blocking = set(blocking_comment_ids)
+    held = {finding.path for finding in findings} | {
+        comment.path
+        for comment in prior_comments
+        if comment.comment_id in blocking and comment.path
+    }
+    reviewed = (
+        (set(patch_fingerprints(read_files)) - unread) | set(material.carried_files)
+    ) - held
+    reviewed &= set(fingerprints)
+    if not reviewed or len(reviewed) > MAX_RECORDED_PATCHES:
+        return {}
+    return {
+        REVIEWED_PATCHES_FIELD: {path: fingerprints[path] for path in sorted(reviewed)},
+        "review_basis": review_rules_fingerprint(material.review_rules),
+    }
+
+
 def _bundle_material_from(
     primary: ReviewMaterial,
     bundle: ReviewMaterial,
@@ -2776,13 +2915,32 @@ def _process_pull_request(
             generated_marks,
             marks_unreadable=generated_marks is None,
         )
-        if extra_bundles:
+        # The advisory levels read the whole change; the code level may read less.
+        carried = (
+            None
+            if force
+            else _carried_review(
+                settings,
+                repository,
+                pull_request,
+                store,
+                destination,
+                files,
+                prior_comments,
+                generated_marks,
+                marks_unreadable=generated_marks is None,
+            )
+        )
+        code_files = files if carried is None else carried.files
+        code_first = material if carried is None else carried.material
+        code_bundles = extra_bundles if carried is None else carried.bundles
+        if code_bundles:
             print(
-                f"      -> Reviewing in {len(extra_bundles) + 1} bundles: the "
+                f"      -> Reviewing in {len(code_bundles) + 1} bundles: the "
                 f"change is larger than one review can read"
             )
-        _report_diff_budget(material)
-        partial_budget = material.diff_budget
+        _report_diff_budget(code_first)
+        partial_budget = code_first.diff_budget
         if live and partial_budget is not None and partial_budget.is_partial:
             _notify_manual_review(
                 settings,
@@ -2914,6 +3072,14 @@ def _process_pull_request(
                     "receive findings but never an approval: "
                     + ", ".join(policy_changes)
                 )
+            if carried is not None:
+                # From here on the code level reads only what no earlier head's
+                # review already read, with every other part of its context intact.
+                material = replace(
+                    _bundle_material_from(material, code_first),
+                    carried_files=carried.paths,
+                )
+            extra_bundles = code_bundles
             review_material = material
             rejected_candidates = 0
             (
@@ -3115,6 +3281,14 @@ def _process_pull_request(
             ),
             unread_generated_marks=unread_marks if unread_paths else {},
             **({"policy_changes": list(policy_changes)} if policy_changes else {}),
+            **_reviewed_patch_record(
+                files,
+                code_files,
+                material,
+                findings,
+                blocking_comment_ids,
+                prior_comments,
+            ),
         )
         print(f"      -> Recorded as approval_withheld: {approval_reason}")
         return
@@ -3237,6 +3411,14 @@ def _process_pull_request(
                 blocking_comment_ids=[],
                 feedback_fingerprint=_feedback_fingerprint(latest_prior_comments),
                 failed_checks=list(failing),
+                **_reviewed_patch_record(
+                    files,
+                    code_files,
+                    material,
+                    findings,
+                    blocking_comment_ids,
+                    prior_comments,
+                ),
             )
             print(
                 "      -> Recorded as approval_withheld; a re-run that passes or a "
@@ -3314,7 +3496,17 @@ def _process_pull_request(
         store.set_status(state_key, "delivery_uncertain", error=str(error))
         raise DeliveryUncertainError(str(error)) from error
 
-    delivery_details = {"receipt_id": receipt_id}
+    delivery_details = {
+        "receipt_id": receipt_id,
+        **_reviewed_patch_record(
+            files,
+            code_files,
+            material,
+            findings,
+            blocking_comment_ids,
+            prior_comments,
+        ),
+    }
     if closed_during_review:
         delivery_details["closed_during_review"] = True
     store.set_status(state_key, "delivered", **delivery_details)

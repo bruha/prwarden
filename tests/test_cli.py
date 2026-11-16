@@ -3640,15 +3640,54 @@ class OrchestrationTests(unittest.TestCase):
             self.assertIn("Not reviewed: (repository root) (88 B)", message)
 
             # A later push re-reviews and must not ask again, because the request
-            # is made once per pull request rather than once per head.
+            # is made once per pull request rather than once per head. The push
+            # edits the file the first review read, so it is read again and the
+            # change is still too large to read whole.
             engine.review.return_value = {
                 "verdict": "approve",
                 "approval_reason": "No qualifying defects remain.",
                 "findings": [],
             }
-            again = self.run_partial_review(directory, engine, head="head2")
+            edited = self.partially_reviewable_files()
+            edited[0] = {**edited[0], "patch": edited[0]["patch"] + "\n+value = 41"}
+            again = self.run_partial_review(
+                directory, engine, head="head2", changed_files=edited
+            )
             self.assertIn("already requested", again["terminal"])
             self.assertEqual(result["send_slack"].call_count, 1)
+
+    def test_the_next_head_reads_only_what_a_partial_review_left_unread(self) -> None:
+        """A file the first review read in full and passed is not read again while
+        its change is the same, so the file the budget left out fits on its own and
+        the pull request is covered after all: every file was read at one head."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            engine = Mock()
+            engine.review.return_value = {
+                "verdict": "approve",
+                "approval_reason": "No qualifying defects remain.",
+                "findings": [],
+            }
+            first = self.run_partial_review(directory, engine)
+            self.assertEqual(first["record"]["status"], "approval_withheld")
+            self.assertEqual(list(first["record"]["reviewed_patches"]), ["app.py"])
+
+            again = self.run_partial_review(directory, engine, head="head2")
+
+            material = engine.review.call_args.args[2]
+            self.assertIn("other = 1", material.diff)
+            self.assertNotIn("value = 1", material.diff)
+            self.assertEqual(material.carried_files, ("app.py",))
+            self.assertNotIn("app.py", material.added_lines)
+            self.assertIn(
+                "Reviewing 1 of 2 changed files with a diff; 1 carry the change "
+                "already reviewed at head ",
+                again["terminal"],
+            )
+            self.assertEqual(again["record"]["status"], "delivered")
+            self.assertEqual(
+                sorted(again["record"]["reviewed_patches"]), ["app.py", "other.py"]
+            )
 
     def test_an_unread_file_is_not_re_reviewed_while_nothing_can_change(
         self,
