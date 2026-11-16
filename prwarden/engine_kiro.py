@@ -52,19 +52,53 @@ KIRO_WORKSPACE_FILES = {
         '"chat.enableCodeIntelligence": false}\n'
     ),
 }
+# Kiro's default agent carries an IDE assistant's system prompt of some 20,000
+# characters, resent on every turn of a review that takes thirty. A review needs none
+# of it, since the controller's prompt says everything the model is to do, so every
+# call runs as this agent instead: no system prompt, no MCP servers, and no tool but
+# reading and searching files, which is all a review is trusted with anyway. The
+# head's own instruction files still reach the model; see KIRO_LOADED_INSTRUCTIONS.
+#
+# It is written in the format Kiro CLI 3.1 upgrades agents to. Given the older format
+# alone, Kiro rewrote the file on its first call, adding a permission for skills and
+# a `.bak` copy beside it, and the next call in the worktree refused the head for
+# configuration the controller had not written. An agent that carries the upgrade
+# marker is not rewritten, and one whose fingerprint does not match its content is
+# kept as the hand-edited file it then is, so the zero fingerprint below keeps Kiro's
+# hands off this one.
+KIRO_REVIEW_AGENT = "prwarden-review"
+KIRO_REVIEW_TOOLS = ("glob", "grep", "read")
+KIRO_WORKSPACE_FILES[f"agents/{KIRO_REVIEW_AGENT}.json"] = (
+    json.dumps(
+        {
+            "name": KIRO_REVIEW_AGENT,
+            "description": "PR Warden's read-only pull-request review",
+            "tools": list(KIRO_REVIEW_TOOLS),
+            "allowedTools": list(KIRO_REVIEW_TOOLS),
+            "resources": [],
+            "includeMcpJson": False,
+            "mcpServers": {},
+            "permissions": {"rules": [{"capability": "fs_read", "effect": "allow"}]},
+            "kiroUpgrade": {
+                "revision": 2,
+                "fingerprint": "sha256:" + "0" * 64,
+                "source": "sha256:" + "0" * 64,
+            },
+        },
+        indent=2,
+    )
+    + "\n"
+)
 # What Kiro writes into the controller's directory during a call. Its `code` tool still
 # writes `.kiro/settings/lsp.json` with code intelligence off, and starts nothing from
 # it, but the next call in the same worktree then found configuration the controller
 # did not write and refused the head. A head that ships the file is refused before any
-# call, so one found after a call is Kiro's own and is removed before the next.
-KIRO_GENERATED_FILES = ("settings/lsp.json",)
-# Kiro CLI 3.1 also creates an empty `agents` directory there on every call, and the
-# next call refused the head for it. Git keeps no empty directory, so a head cannot
-# ship one: an empty one found after a call is Kiro's and is removed. One holding
-# anything, or a link, could name an agent Kiro would load, so it stays to be refused.
-KIRO_GENERATED_DIRECTORIES = ("agents",)
+# call, so one found after a call is Kiro's own and is removed before the next. So is
+# the copy Kiro keeps of an agent it upgrades, in case a later Kiro upgrades this one.
+KIRO_GENERATED_FILES = ("settings/lsp.json", f"agents/{KIRO_REVIEW_AGENT}.json.bak")
 # What Kiro adds to the model's context from the directory it starts in: its default
 # agent's resources, which custom agents inherit, checked with a file in each place.
+# Kiro CLI 3.1 still loads `AGENTS.md` under the controller's agent above.
 KIRO_LOADED_INSTRUCTIONS = ("AGENTS.md", "README.md", ".kiro/steering/**/*.md")
 _WORKSPACE_LOCK = threading.Lock()
 
@@ -101,8 +135,12 @@ def remove_kiro_generated_files(root: Path) -> None:
     """Remove what Kiro wrote into the controller's directory during a call.
 
     Only the named files, only as files or links: a link is removed, never followed,
-    and anything else is left for the next call's refusal to name. The named
-    directories are removed only while empty, and never through a link.
+    and anything else is left for the next call's refusal to name. A controller file
+    Kiro rewrote during the call, as it rewrites an agent it upgrades, is written back,
+    since the call that began found it exactly as the controller wrote it and only
+    Kiro could have changed it; a link in its place is left to be refused. The `agents`
+    directory Kiro CLI 3.1 creates on every call needs no removal: it holds the
+    controller's own agent, so the next call finds only what the controller wrote.
     """
 
     workspace = root / KIRO_WORKSPACE_DIRECTORY
@@ -117,17 +155,16 @@ def remove_kiro_generated_files(root: Path) -> None:
                         f"Could not remove {path}, which Kiro wrote during the "
                         f"review: {error}"
                     ) from error
-        for relative in KIRO_GENERATED_DIRECTORIES:
+        for relative, content in KIRO_WORKSPACE_FILES.items():
             path = workspace / relative
-            if path.is_symlink() or not path.is_dir():
+            if path.is_symlink() or not path.is_file():
                 continue
             try:
-                if any(path.iterdir()):
-                    continue
-                path.rmdir()
+                if path.read_bytes() != content.encode("utf-8"):
+                    path.write_text(content, encoding="utf-8")
             except OSError as error:
                 raise EngineError(
-                    f"Could not remove {path}, which Kiro created during the "
+                    f"Could not restore {path}, which Kiro rewrote during the "
                     f"review: {error}"
                 ) from error
 
@@ -225,6 +262,8 @@ class KiroEngine:
             *self.settings.review_engine_command,
             "chat",
             "--no-interactive",
+            "--agent",
+            KIRO_REVIEW_AGENT,
             "--trust-tools=read,grep,glob",
             "--wrap",
             "never",
