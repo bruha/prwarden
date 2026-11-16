@@ -126,6 +126,7 @@ from .review import (
     validate_docs_findings,
     validate_docs_judgments,
     validate_findings,
+    without_generated_files,
 )
 from .reviewer_identity import format_review_attribution, format_review_plan
 from .secret_scan import (
@@ -3890,7 +3891,7 @@ def _design_level(
 
     reviewer = _AdvisoryReviewer("design review", settings, engine, fallback)
     design_material = replace(
-        material,
+        without_generated_files(material),
         level=DESIGN_LEVEL,
         max_design_findings=settings.max_design_findings,
         verification_candidates=(),
@@ -4037,7 +4038,7 @@ def _docs_level(
 
     reviewer = _AdvisoryReviewer("documentation review", settings, engine, fallback)
     docs_material = replace(
-        material,
+        without_generated_files(material),
         level=DOCS_LEVEL,
         max_docs_findings=settings.max_docs_findings,
         documentation_files=discover_documentation(repository.path),

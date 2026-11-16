@@ -55,6 +55,7 @@ PROMPT_DATA_TAGS = frozenset(
         "deferred-files",
         "diff",
         "file-history",
+        "generated-files",
         "ignored-missing-patch-files",
         "installed-dependencies",
         "linked-issues",
@@ -670,12 +671,28 @@ Changed files left out of the diff below because the complete diff exceeded this
 review's budget. They are part of this change, so never conclude that something is
 absent from it because you cannot see it here; you may read them in the workspace:
 {contain_untrusted(format_deferred_files(material))}
-
+{_generated_files_left_out(material)}
 No command runs and no command output exists, so every question is answered by
 reading this workspace. Read only paths you have seen in the diff or in a listing or
 search result from this workspace: a path that looks conventional for this kind of
 project is not evidence that it exists here.
 {context}"""
+
+
+def _generated_files_left_out(material: ReviewMaterial) -> str:
+    """Name the generated files left out of an advisory level's diff, if any."""
+
+    if not material.generated_files_left_out:
+        return ""
+    names = "\n".join(material.generated_files_left_out)
+    return f"""
+Generated files, such as dependency lockfiles, that this change edits but whose diff
+is left out below, because they hold no design or documentation of their own. Read
+one in the workspace if a question turns on it:
+<generated-files>
+{contain_untrusted(names)}
+</generated-files>
+"""
 
 
 def _design_citation_rules() -> str:

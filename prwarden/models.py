@@ -426,3 +426,7 @@ class ReviewMaterial:
     # The base branch's recent commits on the files this change edits, read once per
     # pull request and shared by every level and bundle.
     file_history: "tuple[HistoryCommit, ...]" = ()
+    # Dependency lockfiles and the like whose diff an advisory level does not read:
+    # they changed, and can be read in the workspace, but hold no design and no
+    # documentation, and a lockfile's diff can be larger than the rest of the change.
+    generated_files_left_out: "tuple[str, ...]" = ()
