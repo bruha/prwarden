@@ -432,7 +432,12 @@ fewer than the code level allows.
 
 The level runs on a pull request whose diff was too large to read completely, since
 the shape of a change is what nobody can read all of, and it does not run at all on a
-release promotion. `DESIGN_EXCLUDED_HEAD_BRANCHES` holds case-insensitive globs
+release promotion. Both advisory levels read the diff without the sections of
+dependency lockfiles and the other files `GENERATED_FILE_NAMES` lists
+(`prwarden/config.py`), which they name instead and may still read in the workspace:
+such a file holds no design and no documentation, and its diff can outweigh the rest
+of the change on every turn of the call. The code level reads those sections.
+`DESIGN_EXCLUDED_HEAD_BRANCHES` holds case-insensitive globs
 matched against the whole head branch name, `develop` and `release/*` by default: a
 promotion carries no new design, because every change in it was designed and reviewed
 on the feature pull request that put it on the promoted branch. The match is on whole

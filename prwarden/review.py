@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterator, Mapping, NamedTuple, Optional, Sequence
 
+from .config import GENERATED_FILE_NAMES
 from .engine import (
     DESIGN_CATEGORIES,
     DESIGN_FIELD_LIMITS,
@@ -297,6 +298,49 @@ def omitted_patch_paths(files: "list[dict[str, Any]]") -> "tuple[str, ...]":
             continue
         paths.append(path)
     return tuple(paths)
+
+
+DIFF_SECTION_PREFIX = "diff --git a/"
+
+
+def _diff_section_path(header: str) -> Optional[str]:
+    """Return the path a `diff --git a/<path> b/<path>` header names, if it is one."""
+
+    rest = header[len(DIFF_SECTION_PREFIX) :]
+    path = rest[: (len(rest) - len(" b/")) // 2]
+    return path if path and rest == f"{path} b/{path}" else None
+
+
+def without_generated_files(material: ReviewMaterial) -> ReviewMaterial:
+    """Return the material with dependency lockfiles and the like out of its diff.
+
+    For the advisory levels only. A lockfile holds no design and no documentation,
+    and its diff can be larger than the rest of the change put together, which every
+    advisory call then paid for on each of its turns. The code level still reads
+    it, because a resolved version or source is a defect it can report. What is
+    left out is named, so a level can still read it in the workspace.
+    """
+
+    kept: "list[str]" = []
+    left_out: "list[str]" = []
+    keep = True
+    # The controller wrote every header, and a patch line starts with a space, a
+    # sign, a backslash, or `@@`, so a line starting with the prefix is a header.
+    for line in material.diff.splitlines(keepends=True):
+        if line.startswith(DIFF_SECTION_PREFIX):
+            path = _diff_section_path(line.rstrip("\n"))
+            keep = path is None or PurePosixPath(path).name not in GENERATED_FILE_NAMES
+            if not keep:
+                left_out.append(str(path))
+        if keep:
+            kept.append(line)
+    if not left_out:
+        return material
+    return replace(
+        material,
+        diff="".join(kept).rstrip("\n") + "\n",
+        generated_files_left_out=tuple(left_out),
+    )
 
 
 def build_review_material(
