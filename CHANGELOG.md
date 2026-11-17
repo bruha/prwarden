@@ -9,8 +9,20 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.5.0 a3b4029a4e2f01345ad2f881d96e27ca658a9df8 -->
+<!-- release-baseline: 3.5.1 eace16b37eb6f6a5fdafc185b4cb24fbd57a6301 -->
 ## [Unreleased]
+
+## [3.5.1] - 2026-11-17
+
+### Fixed
+
+- keep another developer's PR Warden notes out of the code level (`a764983`).
+
+### Documentation
+
+- the evaluation corpus selects findings by marker and account together (`3b15dde`).
+- say where prior feedback leaves out PR Warden's marked notes (`885de92`).
+- point prior feedback at the section on other installations (`eace16b`).
 
 ## [3.5.0] - 2026-11-17
 
