@@ -984,18 +984,23 @@ against the worktree, and the pass cannot alter them. Severity is the single
 correction available, because only this pass has weighed the impact it established.
 A corrected severity is never silent: the finding keeps the severity the reviewer
 gave and the verifier's reason, collapsed to one line, and the GitHub comment, the
-Slack message, the terminal, and the review history say "the verifier raised this
-from LOW to HIGH" or lowered it, with that reason. A judgment that restates the
+Slack message, and the terminal say "the verifier raised this from LOW to HIGH" or
+lowered it, with that reason. The review history keeps both, and `prwarden history`
+marks the finding "high (was low)". A judgment that restates the
 reviewer's severity is no correction. The verifier is told that the author reads the
 reason of a corrected judgment, so it says what about the impact decided the change.
 
 Every posted finding also says what was checked, from facts the controller holds
 rather than a confidence any model states: how many of its citations matched the
-reviewed commit, and which verifier confirmed it. A different model is claimed only
-when the reviewer's and the verifier's models are both named and differ; a verifier
-on another engine with the same model, or with a provider default, confirmed it "in a
-separate pass", and a reviewer that verified its own candidates "re-checked" it. A
-committed credential says that PR Warden's own pattern check found it, not a model.
+reviewed commit, and which verifier confirmed it. The verifier is recorded on each
+finding as it is confirmed, because a review read in bundles can hand its
+verification to a fallback part way through. A different model is claimed only when
+the two model IDs name different models, compared by the model they display as
+without the effort tier a host appends, so one model on two hosts is not called two;
+a verifier with the same model on another engine, or with a provider default,
+confirmed it "in a separate pass", and a reviewer that verified its own candidates
+"re-checked" it. A committed credential says that PR Warden's own pattern check found
+it, not a model.
 
 Restating was the source of a whole failure class. Seven verification responses were
 rejected for excerpts that were textually right but reformatted, and because a

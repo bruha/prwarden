@@ -148,6 +148,7 @@ from .review import (
     without_generated_files,
 )
 from .reviewer_identity import (
+    describe_confirmation,
     describe_severity_change,
     format_review_attribution,
     format_review_plan,
@@ -2644,6 +2645,14 @@ def _verify_code_candidates(
         confirmed,
         collect_rejection_reasons(structured_output, candidates),
     )
+    # Said on each finding now, while it is known which verifier judged this pass:
+    # a later bundle may meet a verifier that failed and hand over to its fallback.
+    reviewer = (review_settings.review_engine, review_settings.review_model)
+    verifier = _verification_identity(verification, settings)
+    confirmation = describe_confirmation(
+        *reviewer, *((None, None) if verifier == reviewer else verifier)
+    )
+    confirmed = [replace(item, confirmation=confirmation) for item in confirmed]
     return (
         structured_output,
         confirmed,

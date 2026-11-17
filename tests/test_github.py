@@ -560,6 +560,11 @@ class GitHubFeedbackTests(unittest.TestCase):
                 "**Checked:** 3 citations matched this commit; re-checked by the "
                 "same model in a separate pass.",
             ),
+            "one model spelled by another host": (
+                ("antigravity", "claude-opus-5-5-high"),
+                "**Checked:** 3 citations matched this commit; confirmed by "
+                "Claude Opus 5.5 (High) @ Antigravity in a separate pass.",
+            ),
         }
         for name, (verifier, expected) in cases.items():
             with self.subTest(name):
@@ -567,6 +572,26 @@ class GitHubFeedbackTests(unittest.TestCase):
                     f"**[HIGH] Title**\n\n{expected}\n\nProblem.",
                     self.checked_comment(finding, *verifier),
                 )
+
+    def test_the_verifier_a_finding_was_confirmed_by_is_the_one_it_names(self):
+        """Recorded as it was confirmed, so a hand-over in a later bundle does not
+        rename the verifier of an earlier one."""
+
+        finding = Finding(
+            "high",
+            "Title",
+            "a.py",
+            1,
+            "Problem.",
+            "s",
+            confirmation="confirmed by Claude Sonnet 5.5 @ Claude in a separate pass",
+        )
+
+        self.assertIn(
+            "**Checked:** 0 citations matched this commit; confirmed by Claude "
+            "Sonnet 5.5 @ Claude in a separate pass.",
+            self.checked_comment(finding, "kiro", "gpt-5.6-terra"),
+        )
 
     def test_a_committed_key_says_a_pattern_found_it(self):
         finding = Finding(

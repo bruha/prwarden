@@ -173,6 +173,47 @@ def format_review_attribution(
     return f"{attribution}, verified by {verifier}"
 
 
+def same_model(first: Optional[str], second: Optional[str]) -> bool:
+    """Return whether two model IDs could name one model, as far as they say.
+
+    Hosts spell one model differently, `claude-opus-5.5` on one and
+    `claude-opus-5-5-high` on another, so the IDs are compared by the model they
+    display as, without the effort tier or variant a host appends. A provider
+    default names no model, so it could be any one.
+    """
+
+    if not first or not second:
+        return True
+
+    def family(model: str) -> str:
+        shown = format_model_display_name(model)
+        return re.sub(r"\s*\([^)]*\)$", "", shown).casefold()
+
+    return family(first) == family(second)
+
+
+def describe_confirmation(
+    review_engine: str,
+    review_model: Optional[str],
+    verify_engine: Optional[str] = None,
+    verify_model: Optional[str] = None,
+) -> str:
+    """Say who confirmed a finding, and whether that was another model.
+
+    ``verify_engine`` is None when the reviewer verified its own candidates. A
+    different model is claimed only when the two IDs name different models.
+    """
+
+    if verify_engine is None:
+        return "re-checked by the same model in a separate pass"
+    verifier = format_reviewer_identity(verify_engine, verify_model)
+    if not same_model(review_model, verify_model):
+        return (
+            f"confirmed by {verifier}, a different model from the one that found it"
+        )
+    return f"confirmed by {verifier} in a separate pass"
+
+
 def describe_checks(
     finding: Finding,
     review_engine: str,
@@ -184,23 +225,20 @@ def describe_checks(
 
     Never a confidence a model states about itself: the controller counts the
     citations it matched against the reviewed commit and names the verifier that
-    confirmed the finding. A different model is claimed only when both are named
-    and differ, since a provider default could be the same model.
+    confirmed the finding. That is the finding's own, recorded when it was
+    confirmed, because a review read in bundles can hand its verification to a
+    fallback part way; the review's verifier stands in only for a finding that
+    carries none.
     """
 
     if finding.found_by_pattern:
         return "found by PR Warden's own pattern check, not by a model"
     cited = len(finding.evidence) + len(finding.counterevidence)
     matched = f"{cited} citation{'s' if cited != 1 else ''} matched this commit"
-    if verify_engine is None:
-        return f"{matched}; re-checked by the same model in a separate pass"
-    verifier = format_reviewer_identity(verify_engine, verify_model)
-    if review_model and verify_model and review_model != verify_model:
-        return (
-            f"{matched}; confirmed by {verifier}, a different model from the one "
-            "that found it"
-        )
-    return f"{matched}; confirmed by {verifier} in a separate pass"
+    confirmation = finding.confirmation or describe_confirmation(
+        review_engine, review_model, verify_engine, verify_model
+    )
+    return f"{matched}; {confirmation}"
 
 
 def describe_severity_change(finding: Finding) -> str:

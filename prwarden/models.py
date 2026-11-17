@@ -196,6 +196,9 @@ class Finding:
     # verifier's one sentence saying why; both empty when it agreed.
     original_severity: str = ""
     severity_reason: str = ""
+    # Who confirmed this finding, said when it was confirmed: a review read in
+    # bundles can hand its verification to a fallback part way through.
+    confirmation: str = ""
 
 
 @dataclass(frozen=True)

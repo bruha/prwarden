@@ -10,7 +10,13 @@ from unittest.mock import Mock, patch
 from prwarden import cli
 from prwarden.config import Settings
 from prwarden.engine import DESIGN_LEVEL, EngineError, design_candidate_ref
-from prwarden.models import DesignAssessment, PullRequest, Repository, ReviewMaterial
+from prwarden.models import (
+    DesignAssessment,
+    Finding,
+    PullRequest,
+    Repository,
+    ReviewMaterial,
+)
 from prwarden.review import ReviewError
 from tests.test_design_level import design_response
 
@@ -166,6 +172,50 @@ class CodeVerifierAttributionTests(unittest.TestCase):
         self.assertEqual(before, ("kiro", "gpt-5.6-terra"))
         self.assertEqual(after, ("claude", "claude-sonnet-5-5"))
         self.assertEqual(itself, (None, None))
+
+    def test_each_finding_names_the_verifier_that_confirmed_it(self) -> None:
+        """A later bundle can meet a failed verifier, so the first bundle's findings
+        must keep the verifier that judged them."""
+
+        finding = Finding("high", "Title", "app.py", 1, "p", "s")
+        with tempfile.TemporaryDirectory() as directory:
+            base = settings(directory)
+            primary, fallback = Mock(), Mock()
+            primary.review.side_effect = EngineError("Kiro is down")
+            verification = paired(primary, fallback, base)
+
+            def verify() -> Finding:
+                with patch(
+                    "prwarden.cli._review_with_validation_retry",
+                    return_value=({}, [finding], False, "", ()),
+                ), patch("sys.stdout", new_callable=StringIO):
+                    _, confirmed, _, _, _ = cli._verify_code_candidates(
+                        base,
+                        verification,
+                        base,
+                        Mock(),
+                        Repository("app", "owner/app", Path(directory)),
+                        PullRequest(1, "Title", "", "author", "head", "url"),
+                        ReviewMaterial("diff", {"app.py": frozenset({1})}),
+                        [finding],
+                    )
+                return confirmed[0]
+
+            first = verify()
+            with patch("sys.stdout", new_callable=StringIO):
+                verification.engine.review("r", "p", "m")
+            second = verify()
+
+        self.assertEqual(
+            first.confirmation,
+            "confirmed by GPT-5.6 Terra @ Kiro, a different model from the one that "
+            "found it",
+        )
+        self.assertEqual(
+            second.confirmation,
+            "confirmed by Claude Sonnet 5.5 @ Claude, a different model from the one "
+            "that found it",
+        )
 
 
 class AdvisoryVerifierAttributionTests(unittest.TestCase):
