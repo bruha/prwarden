@@ -9,8 +9,18 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.3.1 48757670ef6d34ae54f0c3bf4f575b3d00b1bc1d -->
+<!-- release-baseline: 3.4.0 03887af570e775318d8ad47b1c384834e7dbf3f8 -->
 ## [Unreleased]
+
+## [3.4.0] - 2026-11-17
+
+### Added
+
+- keep a history of every review and read it with prwarden history (`d0b035d`).
+
+### Documentation
+
+- a dry run records no review state, only its history (`03887af`).
 
 ## [3.3.1] - 2026-11-16
 
