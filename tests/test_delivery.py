@@ -174,6 +174,23 @@ class DeliveryFormattingTests(unittest.TestCase):
         self.assertTrue(message.endswith("_Reviewed by GPT-5.1 Codex @ Codex_"))
         self.assertEqual(message.count("https://github.com/owner/app/pull/12"), 1)
         self.assertNotIn("```", message)
+        self.assertNotIn("most severe", message)
+
+    def test_slack_message_says_how_many_findings_wait_for_the_next_review(self):
+        message = format_slack_message(
+            Repository(name="app", slug="owner/app"),
+            PullRequest(12, "Fix", "", "reviewer", "abc", "https://example.invalid"),
+            [Finding("high", "Data loss", "src/app.py", 42, "p", "s")],
+            "codex",
+            None,
+            withheld=3,
+        )
+
+        self.assertIn(
+            "_This review confirmed 4 defects and shows the most severe. The next "
+            "review reads the files of the rest again._",
+            message,
+        )
 
     def test_slack_messages_name_a_separate_verification_engine(self):
         repository = Repository(name="app", slug="owner/app")

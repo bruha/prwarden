@@ -173,6 +173,9 @@ class Finding:
     # base branch, and the file it is in; empty for a defect that breaks no rule.
     rule: str = ""
     rule_source: str = ""
+    # Found by PR Warden's own pattern check rather than by a model, as a committed
+    # credential is: no model raised it, so none can talk it away or crowd it out.
+    found_by_pattern: bool = False
 
 
 @dataclass(frozen=True)

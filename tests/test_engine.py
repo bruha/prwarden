@@ -1577,6 +1577,27 @@ class ReviewEngineTests(unittest.TestCase):
         # Shared with the verifier, so it must never read as a reason to reject.
         self.assertIn("never whether one is\nreported or confirmed", prompt)
 
+    def test_the_prompt_asks_for_each_cause_once_and_the_most_severe_first(self):
+        """One cause raised on every line it reached buries the findings that differ."""
+
+        repository = Repository("app", "owner/app", Path("/tmp/review"))
+        pull_request = PullRequest(1, "Title", "", "author", "sha", "url")
+        material = ReviewMaterial("diff", {"app.py": frozenset({1})})
+
+        prompt = " ".join(build_prompt(repository, pull_request, material, 7).split())
+
+        self.assertIn(
+            "Report at most 7 confirmed defects introduced by the changed lines; "
+            "when more qualify, report the most severe.",
+            prompt,
+        )
+        self.assertIn("Report each root cause once", prompt)
+        self.assertIn(
+            "cite the other lines it affects as evidence, rather than raising a "
+            "finding on each of them",
+            prompt,
+        )
+
     def test_command_adapter_uses_stable_stdin_and_environment_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             repository = Repository("app", "owner/app", Path(directory))

@@ -107,6 +107,24 @@ class ReviewRecordTests(unittest.TestCase):
             history.describe(entry, "code"), "dry run: would post 1 finding"
         )
 
+    def test_findings_over_the_limit_are_counted_and_said(self) -> None:
+        """Not shown on the pull request, so the history is where they are counted."""
+
+        record = record_for()
+        record.code_result((FINDING,), approve=False, reason="", withheld=4)
+        record.observe_state(
+            {},
+            {head_key(): {"status": "delivered", "receipt_id": "11"}},
+        )
+
+        entry = record.entry()
+
+        self.assertEqual(entry["code"]["withheld"], 4)
+        self.assertEqual(
+            history.describe(entry, "code"),
+            "1 finding posted; 4 more confirmed, over the limit",
+        )
+
     def test_a_review_that_raised_is_recorded_failed_never_as_its_noted_result(
         self,
     ) -> None:

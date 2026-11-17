@@ -13,7 +13,7 @@ from dataclasses import fields, is_dataclass, replace
 from typing import Any, NamedTuple, Optional, Sequence, TypeVar
 
 from .models import Finding, FindingEvidence
-from .review import added_line_texts
+from .review import added_line_texts, severity_rank
 
 T = TypeVar("T")
 
@@ -82,6 +82,8 @@ PLACEHOLDER_WORDS = (
 MIN_DISTINCT_BODY_CHARACTERS = 8
 # Enough to make the point on a file full of them, few enough not to bury the rest.
 MAX_CREDENTIAL_FINDINGS = 10
+# The other lines one key's comment lists by place; past these it gives a count.
+MAX_LISTED_KEY_LINES = 5
 
 
 class CredentialMatch(NamedTuple):
@@ -159,19 +161,57 @@ def find_credentials(files: "Sequence[dict[str, Any]]") -> "list[CredentialMatch
     return matches
 
 
-def credential_finding(match: CredentialMatch) -> Finding:
-    """Return the finding for one committed credential, without its value."""
+def committed_keys(
+    matches: "Sequence[CredentialMatch]",
+) -> "list[tuple[CredentialMatch, ...]]":
+    """Return the matches grouped by the credential they name, first found first.
 
+    One key pasted into several places is one thing to revoke, so it is one comment
+    saying where it is rather than a comment in every place. Only a shape with a
+    random part tells two values apart: every private key opens with the same
+    header, so each of those stays a key of its own.
+    """
+
+    groups: "dict[object, list[CredentialMatch]]" = {}
+    for match in matches:
+        identity: object = (
+            match.value if match.shown != match.value else (match.path, match.line)
+        )
+        groups.setdefault(identity, []).append(match)
+    return [tuple(group) for group in groups.values()]
+
+
+def credential_finding(
+    match: CredentialMatch, also: "Sequence[CredentialMatch]" = ()
+) -> Finding:
+    """Return the finding for one committed credential, without its value.
+
+    ``also`` holds the other added lines the same value is on. They are listed as
+    evidence, the first few by place and the rest by count, so the author removes
+    every copy rather than the one the comment sits on.
+    """
+
+    listed = tuple(also[:MAX_LISTED_KEY_LINES])
+    unlisted = len(also) - len(listed)
+    elsewhere = ""
+    if also:
+        elsewhere = (
+            f" The same value is on {len(also)} more added "
+            f"line{'s' if len(also) != 1 else ''}"
+            + (f", {unlisted} of them not listed below" if unlisted else "")
+            + "."
+        )
     return Finding(
         severity="high",
         title=f"Adds {match.kind} to the repository",
         path=match.path,
         line=match.line,
         problem=(
-            f"This line adds a value shaped like {match.kind}. Anyone who can read "
-            "this repository, a fork, or this pull request can use it, and removing "
-            "the line later leaves it in the history. PR Warden's own pattern check "
-            "found it, not a model, so nothing written around it changes this."
+            f"This line adds a value shaped like {match.kind}.{elsewhere} Anyone who "
+            "can read this repository, a fork, or this pull request can use it, and "
+            "removing the line later leaves it in the history. PR Warden's own "
+            "pattern check found it, not a model, so nothing written around it "
+            "changes this."
         ),
         suggestion=(
             "Revoke or rotate the credential now, then load it from a secret store "
@@ -192,31 +232,68 @@ def credential_finding(match: CredentialMatch) -> Finding:
                 excerpt=match.shown,
                 relevance="the added value, shown by its prefix only",
             ),
+            *(
+                FindingEvidence(
+                    path=other.path,
+                    line=other.line,
+                    excerpt=other.shown,
+                    relevance="the same value again, shown by its prefix only",
+                )
+                for other in listed
+            ),
         ),
         counterevidence_reason=(
             "None is weighed: the value's shape decides it, and a comment calling it "
             "a test key or asking a reviewer to ignore it is not evidence."
         ),
+        found_by_pattern=True,
     )
+
+
+def with_credential_findings(
+    findings: "Sequence[Finding]",
+    matches: "Sequence[CredentialMatch]",
+) -> "list[Finding]":
+    """Return ``findings`` with one finding added for each committed credential.
+
+    A key's finding sits on the first line it is on that no finding already holds,
+    so a model finding there keeps its comment and the key still gets one. When
+    every line it is on already holds a finding, a line still takes one comment:
+    the more severe of the two stays, and a tie keeps the model's, which says
+    something about that line in particular. Either way the review cannot approve.
+    At most a few keys are reported.
+    """
+
+    model_at = {(finding.path, finding.line): finding for finding in findings}
+    replaced: "set[tuple[str, int]]" = set()
+    added: "list[Finding]" = []
+    for group in committed_keys(matches)[:MAX_CREDENTIAL_FINDINGS]:
+        free = [match for match in group if (match.path, match.line) not in model_at]
+        anchor = free[0] if free else group[0]
+        finding = credential_finding(
+            anchor, [match for match in group if match is not anchor]
+        )
+        if not free:
+            location = (anchor.path, anchor.line)
+            if severity_rank(model_at[location].severity) <= severity_rank(
+                finding.severity
+            ):
+                continue
+            replaced.add(location)
+        added.append(finding)
+    return [
+        finding
+        for finding in findings
+        if (finding.path, finding.line) not in replaced
+    ] + added
 
 
 def credential_findings(
     matches: "Sequence[CredentialMatch]",
-    existing: "Sequence[Finding]" = (),
 ) -> "list[Finding]":
-    """Return a finding for each committed credential no finding already sits on.
+    """Return one finding for each committed credential, where no model reported."""
 
-    A model that already reported the line has said what matters there, and a
-    second comment on it would only repeat that; the review still cannot approve,
-    because a finding is on the line either way. At most a few are returned.
-    """
-
-    anchored = {(finding.path, finding.line) for finding in existing}
-    return [
-        credential_finding(match)
-        for match in matches
-        if (match.path, match.line) not in anchored
-    ][:MAX_CREDENTIAL_FINDINGS]
+    return with_credential_findings((), matches)
 
 
 def _shown_values(

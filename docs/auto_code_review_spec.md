@@ -397,6 +397,19 @@ approval, but no bundle may grant one, because an approval speaks for the whole 
 request. A change every bundle covered is a complete review and may be approved; a
 change with anything left over remains a partial review under the rules below.
 
+One limit holds across the whole review. Each bundle's response is capped at
+`MAX_FINDINGS` on its own, and committed credentials are found apart from any model, so
+together they could post several times that. Once every bundle is verified and the
+credentials are added, `review.select_findings` posts at most `MAX_FINDINGS` of them,
+the most severe first, with findings of one severity in the order they were confirmed.
+A committed credential is always among them, ahead of a model finding of its severity,
+because no model's judgment may push out what its shape decided. The confirmed findings
+the limit leaves over are not posted, and the review body says how many there were;
+their files are left out of `reviewed_patches`, so the next head reads them again
+rather than carrying them over as clean. They never let the review approve. The prompt
+asks for the same from each response: the most severe first when more qualify, and each
+root cause once, on the line where it is, with the other lines it affects as evidence.
+
 A later head reads only what moved. Every `delivered` and `approval_withheld` record
 of the code level keeps `reviewed_patches`, a SHA-256 of each file's change that this
 review read in full or carried over and raised no finding on, leaving out any file
@@ -1177,10 +1190,15 @@ credential with a distinctive shape: AWS access key IDs, GitHub classic and
 fine-grained tokens, Slack tokens and incoming webhook URLs, Stripe live keys,
 Google, OpenAI, and Anthropic API keys, npm tokens, and private-key block headers.
 A value whose random part contains a placeholder word such as `EXAMPLE`, or fewer
-than eight distinct characters, is not one. Each hit becomes a `high` finding on
-that added line, appended to the confirmed findings without verification, at most
-ten per review, unless a confirmed finding already sits on that line, so the review
-delivers findings and cannot approve. The finding names the kind of credential and
+than eight distinct characters, is not one. Each committed value becomes one `high`
+finding, added to the confirmed findings without verification, for at most ten values
+per review, so the review delivers findings and cannot approve. A value on several
+added lines, in one file or several, is one finding on the first of them that no
+confirmed finding already holds, listing the next five by place and the rest by count;
+a private key is told apart only by its line, because every one opens with the same
+header. When a confirmed finding holds every line a value is on, one comment per line
+still holds: the more severe of the two stays, and a tie keeps the model's. The
+finding names the kind of credential and
 shows only the value's fixed prefix. The credentials are found once, before any level
 runs, and every credential on every matched line is replaced by its prefix wherever
 it appears in the code level's findings and in the design and documentation notes,

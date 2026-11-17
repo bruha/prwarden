@@ -26,6 +26,7 @@ from prwarden.review import (
     validate_approval_reason,
     UNCLASSIFIED_REJECTION,
     CandidateRejection,
+    select_findings,
     validate_blocking_comment_ids,
     validate_code_judgments,
     validate_findings,
@@ -1066,6 +1067,65 @@ def rejection_candidate(path: str = "app.py", line: int = 4) -> Finding:
         impact="impact",
         evidence=(FindingEvidence(path, line, "value = 1", "relevance"),),
     )
+
+
+class SelectFindingsTests(unittest.TestCase):
+    """One limit for a whole review, the most severe where an author reads first."""
+
+    def finding(self, severity: str, line: int, key: bool = False) -> Finding:
+        return Finding(
+            severity,
+            f"{severity} {line}",
+            "app.py",
+            line,
+            "p",
+            "s",
+            found_by_pattern=key,
+        )
+
+    def test_findings_are_sorted_most_severe_first_keeping_confirmed_order(self):
+        findings = [
+            self.finding("low", 1),
+            self.finding("high", 2),
+            self.finding("medium", 3),
+            self.finding("high", 4),
+            self.finding("critical", 5),
+        ]
+
+        posted, withheld = select_findings(findings, 10)
+
+        self.assertEqual([item.line for item in posted], [5, 2, 4, 3, 1])
+        self.assertEqual(withheld, [])
+
+    def test_the_limit_keeps_the_most_severe_and_returns_the_rest(self):
+        findings = [self.finding("low", line) for line in range(1, 4)] + [
+            self.finding("medium", 4),
+            self.finding("critical", 5),
+        ]
+
+        posted, withheld = select_findings(findings, 3)
+
+        self.assertEqual([item.line for item in posted], [5, 4, 1])
+        self.assertEqual([item.line for item in withheld], [2, 3])
+
+    def test_a_committed_key_is_always_posted_and_leads_its_severity(self):
+        findings = [self.finding("critical", line) for line in range(1, 4)] + [
+            self.finding("high", 4),
+            self.finding("high", 5, key=True),
+        ]
+
+        posted, withheld = select_findings(findings, 3)
+
+        self.assertEqual([item.line for item in posted], [1, 2, 5])
+        self.assertEqual([item.line for item in withheld], [3, 4])
+
+    def test_keys_beyond_the_limit_wait_like_any_other_finding(self):
+        findings = [self.finding("high", line, key=True) for line in range(1, 4)]
+
+        posted, withheld = select_findings(findings, 2)
+
+        self.assertEqual([item.line for item in posted], [1, 2])
+        self.assertEqual([item.line for item in withheld], [3])
 
 
 class CodeJudgmentTests(unittest.TestCase):

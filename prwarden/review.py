@@ -48,7 +48,10 @@ from .workspace import MAX_BASE_FILE_BYTES
 
 
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-ALLOWED_SEVERITIES = {"critical", "high", "medium", "low"}
+# Most severe first: the order findings are posted in, and which of them are kept
+# when a review confirms more than it may post.
+SEVERITY_ORDER = ("critical", "high", "medium", "low")
+ALLOWED_SEVERITIES = set(SEVERITY_ORDER)
 # A check whose conclusion says this head did not pass it. `cancelled`, `skipped`,
 # and `neutral` are not here: a run cancelled because no runner came, or skipped by
 # its own conditions, says nothing about the code.
@@ -2105,6 +2108,43 @@ def validate_code_judgments(
             f"Verification left candidates unjudged: {', '.join(unjudged)}"
         )
     return confirmed
+
+
+def severity_rank(severity: str) -> int:
+    """Return where a severity sorts, the most severe first."""
+
+    if severity in SEVERITY_ORDER:
+        return SEVERITY_ORDER.index(severity)
+    return len(SEVERITY_ORDER)
+
+
+def select_findings(
+    findings: "Sequence[Finding]", limit: int
+) -> "tuple[list[Finding], list[Finding]]":
+    """Return the findings to post, most severe first, and those over the limit.
+
+    Each bundle of a large change is capped on its own, and committed keys are found
+    apart from any model, so together they could post several times the limit. One
+    limit across all of them keeps the worst where an author reads first. A
+    committed key is always posted, ahead of a model finding of its severity: it was
+    found by its shape, so no model's judgment may push it out. Findings of one
+    severity keep the order they were confirmed in.
+
+    The findings left over are confirmed defects too. The caller says so on the
+    review and reads their files again at the next head, so none is dropped, only
+    left for the next review.
+    """
+
+    def order(finding: Finding) -> "tuple[int, int]":
+        return (severity_rank(finding.severity), 0 if finding.found_by_pattern else 1)
+
+    keys = [finding for finding in findings if finding.found_by_pattern]
+    others = sorted(
+        (finding for finding in findings if not finding.found_by_pattern), key=order
+    )
+    room = max(limit - len(keys), 0)
+    posted = sorted(keys[:limit] + others[:room], key=order)
+    return posted, keys[limit:] + others[room:]
 
 
 def validate_approval_verdict(

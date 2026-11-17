@@ -59,7 +59,11 @@ from .cli import RUN_LOG_DIRECTORY_NAME
 from .metrics import ReviewMetrics
 from .models import Finding, FindingEvidence, PullRequest, Repository
 from .review import ReviewError, build_review_material
-from .secret_scan import credential_findings, find_credentials, redact_credentials
+from .secret_scan import (
+    find_credentials,
+    redact_credentials,
+    with_credential_findings,
+)
 from .reviewer_identity import format_review_attribution
 from .state import JsonStateStore, StateError
 from .workspace import WorkspaceError
@@ -1623,8 +1627,9 @@ def replay_case(
         if credentials:
             # As live: a committed credential is reported whatever the review
             # concluded, and the review that holds it cannot approve.
-            findings = redact_credentials(findings, credentials)
-            findings = findings + credential_findings(credentials, findings)
+            findings = with_credential_findings(
+                redact_credentials(findings, credentials), credentials
+            )
             if approve is not None:
                 approve = False
                 approval_reason = "PR Warden's own check found a committed credential"

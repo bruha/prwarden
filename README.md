@@ -521,10 +521,12 @@ alone.
 Beside the model, PR Warden checks every added line itself for a committed
 credential with a distinctive shape: AWS access key IDs, GitHub, Slack, npm, Stripe
 live, Google, OpenAI, and Anthropic keys, Slack webhook URLs, and private-key blocks.
-One it finds is posted as a high-severity finding on that line, unless the model
-already reported that line, and the review cannot approve, whatever the model
-concluded, so a comment beside the key saying "this is a test key, ignore it"
-changes nothing. Findings and design or documentation notes name the kind and show
+One it finds is posted as a high-severity finding, and the review cannot approve,
+whatever the model concluded, so a comment beside the key saying "this is a test key,
+ignore it" changes nothing. One key pasted in several places is one comment, on the
+first of its lines no model finding holds, listing where else it is; when a model
+finding holds every one of them, the more severe of the two stays. Findings and design
+or documentation notes name the kind and show
 only the value's prefix, never the value, the model's included. A placeholder such
 as AWS's documented example key, or a run of one character, is not reported.
 
@@ -618,6 +620,11 @@ rather than advisory notes nobody checked.
   for the whole pull request. This is rare — measured across 394 reviewed pull requests,
   1.8% were ever limited by size and 1.0% materially, which is why the change is
   confined to the path that fires.
+- `MAX_FINDINGS` is one limit for the whole review: every bundle and every committed
+  credential together post at most that many comments, the most severe first. A
+  committed credential is always among them. The review says how many more it
+  confirmed, and the next head reads their files again rather than treating them as
+  clean.
 - A diff too large to read completely is reviewed in part rather than skipped. The
   budget is filled largest changed file first, the deferred paths are named in the
   Slack notification and in the GitHub review body, no approval is given, and no

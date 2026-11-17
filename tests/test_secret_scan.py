@@ -44,6 +44,7 @@ from prwarden.secret_scan import (
     find_credential,
     find_credentials,
     redact_credentials,
+    with_credential_findings,
 )
 from prwarden.state import JsonStateStore
 from tests.test_cli import CONFIRMED_JUDGMENT, READY_SNAPSHOT, finding_response
@@ -165,6 +166,82 @@ class AddedLineTests(unittest.TestCase):
         self.assertEqual(
             len(credential_findings(find_credentials(files))), MAX_CREDENTIAL_FINDINGS
         )
+
+    def test_one_key_on_several_lines_is_one_comment_listing_the_others(self) -> None:
+        """One value is one thing to revoke, wherever it was pasted."""
+
+        files = [
+            {
+                "filename": "config.py",
+                "patch": patch_adding(*(f"KEY_{n} = {PLANTED!r}" for n in range(5))),
+            },
+            {
+                "filename": "deploy.sh",
+                "patch": patch_adding(*(f"TOKEN={PLANTED}" for _ in range(3))),
+            },
+        ]
+
+        findings = credential_findings(find_credentials(files))
+
+        self.assertEqual(len(findings), 1)
+        finding = findings[0]
+        self.assertEqual((finding.path, finding.line), ("config.py", 1))
+        self.assertTrue(finding.found_by_pattern)
+        self.assertEqual(
+            [(item.path, item.line) for item in finding.evidence],
+            [("config.py", line) for line in range(1, 6)] + [("deploy.sh", 1)],
+        )
+        self.assertIn(
+            "The same value is on 7 more added lines, 2 of them not listed below.",
+            finding.problem,
+        )
+        self.assertNotIn(PLANTED, str(asdict(finding)))
+
+    def test_two_private_keys_stay_two_comments(self) -> None:
+        """Every private key opens with the same header, so the header alone cannot
+        say that two of them are one key."""
+
+        files = [
+            {"filename": "a.pem", "patch": patch_adding(PRIVATE_KEY_HEADER)},
+            {"filename": "b.pem", "patch": patch_adding(PRIVATE_KEY_HEADER)},
+        ]
+
+        findings = credential_findings(find_credentials(files))
+
+        self.assertEqual([finding.path for finding in findings], ["a.pem", "b.pem"])
+
+    def test_a_key_moves_off_a_line_a_model_finding_holds(self) -> None:
+        files = [
+            {
+                "filename": "config.py",
+                "patch": patch_adding(f"KEY = {PLANTED!r}", f"COPY = {PLANTED!r}"),
+            }
+        ]
+        model = Finding("low", "Unused name", "config.py", 1, "p", "s")
+
+        merged = with_credential_findings([model], find_credentials(files))
+
+        self.assertEqual(
+            [(item.line, item.found_by_pattern) for item in merged],
+            [(1, False), (2, True)],
+        )
+
+    def test_a_key_with_no_free_line_keeps_the_more_severe_finding(self) -> None:
+        files = [{"filename": "config.py", "patch": patch_adding(f"KEY = {PLANTED!r}")}]
+        matches = find_credentials(files)
+
+        for severity, kept in (
+            ("low", True),
+            ("medium", True),
+            ("high", False),
+            ("critical", False),
+        ):
+            with self.subTest(severity=severity):
+                model = Finding(severity, "Model", "config.py", 1, "p", "s")
+                merged = with_credential_findings([model], matches)
+                self.assertEqual(
+                    [item.found_by_pattern for item in merged], [kept]
+                )
 
 
 class FindingTests(unittest.TestCase):
@@ -486,9 +563,11 @@ class PlantedReviewTests(unittest.TestCase):
                 )
 
     def test_a_model_finding_on_the_key_is_kept_without_the_value(self) -> None:
-        """One comment per line, and not even the model's excerpt keeps the key."""
+        """One comment per line, a tie keeps the model's, and not even the model's
+        excerpt keeps the key."""
 
         response = finding_response("config.py", 2)
+        response["findings"][0]["severity"] = "high"
         response["findings"][0]["title"] = f"Hardcoded token {PLANTED}"
         response["findings"][0]["evidence"] = [
             {
@@ -510,6 +589,54 @@ class PlantedReviewTests(unittest.TestCase):
         self.assertNotIn(PLANTED, str([asdict(item) for item in posted]))
         self.assertIn("gh" + "p_…", posted[0].title)
         self.assertIn("gh" + "p_…", posted[0].evidence[0].excerpt)
+
+    def test_a_less_severe_model_finding_on_the_key_gives_way_to_it(self) -> None:
+        """The key's line takes one comment, and a medium finding there would have
+        hidden the high one that says to revoke it."""
+
+        engine = Mock()
+        engine.review.side_effect = [
+            self.response_citing("API_KEY", line=2),
+            CONFIRMED_JUDGMENT,
+        ]
+
+        result = self.review(engine)
+
+        self.assertEqual(
+            [(item.path, item.line, item.title) for item in result["posted"]],
+            [("config.py", 2, "Adds a GitHub token to the repository")],
+        )
+
+    def response_citing(self, excerpt: str, line: int) -> dict:
+        response = finding_response("config.py", line)
+        response["findings"][0]["evidence"][0]["excerpt"] = excerpt
+        return response
+
+    def test_a_model_finding_on_the_key_keeps_its_line_when_the_key_has_another(
+        self,
+    ) -> None:
+        """The key moves to the next line it is on, so both are posted."""
+
+        self.PLANTED_LINES = (f"API_KEY = {PLANTED!r}", f"COPY = {PLANTED!r}")
+        engine = Mock()
+        engine.review.side_effect = [
+            self.response_citing("API_KEY", line=1),
+            CONFIRMED_JUDGMENT,
+        ]
+
+        result = self.review(engine)
+
+        self.assertEqual(
+            [(item.path, item.line, item.title) for item in result["posted"]],
+            [
+                ("config.py", 2, "Adds a GitHub token to the repository"),
+                ("config.py", 1, "Incorrect value"),
+            ],
+        )
+        self.assertEqual(
+            [(item.line, item.excerpt) for item in result["posted"][0].evidence],
+            [(2, "gh" + "p_…"), (1, "gh" + "p_…")],
+        )
 
 
 if __name__ == "__main__":

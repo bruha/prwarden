@@ -42,6 +42,7 @@ from .delivery import (
     format_slack_message,
     format_stale_review_message,
     send_slack_message,
+    withheld_note,
 )
 from .engine import (
     code_candidate_ref,
@@ -134,6 +135,7 @@ from .review import (
     review_rule_pathspecs,
     review_rules_fingerprint,
     rule_source_changes,
+    select_findings,
     validate_approval_reason,
     validate_approval_verdict,
     validate_blocking_comment_ids,
@@ -148,9 +150,9 @@ from .review import (
 from .reviewer_identity import format_review_attribution, format_review_plan
 from .secret_scan import (
     CredentialMatch,
-    credential_findings,
     find_credentials,
     redact_credentials,
+    with_credential_findings,
 )
 from .state import JsonStateStore, StateError, StateLockedError
 from .workspace import (
@@ -2255,6 +2257,28 @@ def _partial_review_note(budget: Optional[DiffBudget]) -> Optional[str]:
     )
 
 
+def _review_body(
+    budget: Optional[DiffBudget],
+    posted: "Sequence[Finding]",
+    withheld: "Sequence[Finding]",
+) -> Optional[str]:
+    """Return the review body: what the review did not read, and did not show.
+
+    Inline comments alone imply that they are everything the review found in
+    everything it read, so either gap is said where the author reads it.
+    """
+
+    notes = [
+        note
+        for note in (
+            _partial_review_note(budget),
+            withheld_note(len(posted), len(withheld)) if withheld else None,
+        )
+        if note
+    ]
+    return "\n\n".join(notes) or None
+
+
 def _only_became_resolved(
     reviewed: PriorReviewComment,
     latest: PriorReviewComment,
@@ -2934,6 +2958,8 @@ def _process_pull_request(
     unread_paths: "tuple[str, ...]" = ()
     unread_marks: "dict[str, str]" = {}
     policy_changes: "tuple[str, ...]" = ()
+    # Confirmed findings over the one limit a review posts, kept for its record.
+    withheld_findings: "list[Finding]" = []
 
     try:
         initial_snapshot = get_pull_request_snapshot(repository, pull_request)
@@ -3278,8 +3304,9 @@ def _process_pull_request(
                 f"credential{'s' if len(credentials) != 1 else ''}: "
                 + ", ".join(f"{item.path}:{item.line}" for item in credentials)
             )
-            findings = redact_credentials(findings, credentials)
-            findings = findings + credential_findings(credentials, findings)
+            findings = with_credential_findings(
+                redact_credentials(findings, credentials), credentials
+            )
             approve = False
             approval_reason = ""
         if approve and policy_changes:
@@ -3299,6 +3326,16 @@ def _process_pull_request(
                     f"      -> Corrected finding path: "
                     f"{reported_path} -> {finding.path}"
                 )
+        # One limit across every bundle and every committed key, the most severe
+        # first. What it leaves over is still confirmed, so its files are read
+        # again at the next head rather than carried over as clean.
+        findings, withheld_findings = select_findings(findings, settings.max_findings)
+        if withheld_findings:
+            print(
+                f"      -> Posting the {len(findings)} most severe of "
+                f"{len(findings) + len(withheld_findings)} confirmed findings; the "
+                "next review reads the files of the rest again"
+            )
     except PullRequestIneligibleError as error:
         _record_ineligible_skip(
             store, state_key, error, live=live, history_record=history_record
@@ -3342,7 +3379,10 @@ def _process_pull_request(
 
     if history_record is not None:
         history_record.code_result(
-            findings, approve=approve, reason=approval_reason
+            findings,
+            approve=approve,
+            reason=approval_reason,
+            withheld=len(withheld_findings),
         )
     clean_candidate = not findings and approve
     if not live:
@@ -3566,6 +3606,7 @@ def _process_pull_request(
                     reviewer_engine,
                     reviewer_model,
                     *verifier,
+                    withheld=len(withheld_findings),
                 ),
             )
         else:
@@ -3577,7 +3618,7 @@ def _process_pull_request(
                 reviewer_model,
                 settings.github_comment_template,
                 *verifier,
-                body=_partial_review_note(material.diff_budget),
+                body=_review_body(material.diff_budget, findings, withheld_findings),
             )
     except DeliveryError as error:
         store.set_status(state_key, "failed", error=str(error))
@@ -3591,11 +3632,13 @@ def _process_pull_request(
 
     delivery_details = {
         "receipt_id": receipt_id,
+        # Every confirmed finding holds its file, posted or not: one carried over
+        # as clean would never be read again, and its defect never posted.
         **_reviewed_patch_record(
             files,
             code_files,
             material,
-            findings,
+            [*findings, *withheld_findings],
             blocking_comment_ids,
             prior_comments,
             review_settings,

@@ -213,9 +213,18 @@ class ReviewRecord:
         self._levels[level] = {"status": FAILED, "error": _bounded(error)}
 
     def code_result(
-        self, findings: "Sequence[Finding]", *, approve: bool, reason: str
+        self,
+        findings: "Sequence[Finding]",
+        *,
+        approve: bool,
+        reason: str,
+        withheld: int = 0,
     ) -> None:
-        """Note what the code level concluded, before anything is delivered."""
+        """Note what the code level concluded, before anything is delivered.
+
+        ``withheld`` counts the confirmed findings over the limit a review posts,
+        which are not shown and whose files the next review reads again.
+        """
 
         verdict = "findings" if findings else "approve" if approve else "withhold"
         result: "dict[str, Any]" = {
@@ -223,6 +232,8 @@ class ReviewRecord:
             "verdict": verdict,
             "findings": [_code_finding(finding) for finding in findings],
         }
+        if withheld > 0:
+            result["withheld"] = withheld
         if verdict == "withhold" and reason:
             result["reason"] = _bounded(reason)
         self._levels["code"] = result
@@ -595,6 +606,12 @@ def describe(entry: "Mapping[str, Any]", level: str) -> str:
     noun = LEVEL_NOUNS.get(level, "finding")
     if level == MANUAL_REVIEW:
         return MANUAL_REVIEW_OUTCOMES.get(str(status), _with("manual review", detail))
+    withheld = data.get("withheld")
+    over_limit = (
+        f"; {withheld} more confirmed, over the limit"
+        if isinstance(withheld, int) and not isinstance(withheld, bool) and withheld > 0
+        else ""
+    )
     if status == "delivered":
         if data.get("receipt") == EXISTING_REVIEW_RECEIPT:
             return "skipped: this head already had a review on GitHub"
@@ -603,7 +620,7 @@ def describe(entry: "Mapping[str, Any]", level: str) -> str:
             text = f"{_plural(count, noun)} {where}"
             if data.get("closed_during_review"):
                 text += " after the pull request closed"
-            return text
+            return text + over_limit
         if destination == SLACK_DESTINATION:
             return "LGTM sent to Slack"
         if destination == OWN_GITHUB_DESTINATION:
@@ -615,10 +632,10 @@ def describe(entry: "Mapping[str, Any]", level: str) -> str:
             return "dry run: would approve"
         if level == "code" and verdict == "withhold":
             return _with("dry run: would withhold approval", detail)
-        return f"dry run: would post {_plural(count, noun)}"
+        return f"dry run: would post {_plural(count, noun)}{over_limit}"
     if status == UNDELIVERED:
         found = f"found {_plural(count, noun)}, not delivered" if count else ""
-        return _with(found or "not delivered", detail)
+        return _with(found or "not delivered", detail) + over_limit
     if status == "merge_conflict":
         return "approval withheld: merge conflict"
     text = STATUS_OUTCOMES.get(str(status))

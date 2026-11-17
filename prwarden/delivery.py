@@ -42,6 +42,7 @@ def format_slack_message(
     review_model: Optional[str],
     verify_engine: Optional[str] = None,
     verify_model: Optional[str] = None,
+    withheld: int = 0,
 ) -> str:
     lines = [
         f"*PR #{pull_request.number} Code Review Feedback ({repository.name})*",
@@ -78,12 +79,29 @@ def format_slack_message(
         verify_engine,
         verify_model,
     )
+    if withheld:
+        lines.append(f"_{withheld_note(len(findings), withheld)}_")
+        lines.append("")
     lines.extend(
         [
             f"_{reviewer}_",
         ]
     )
     return "\n".join(lines).rstrip()
+
+
+def withheld_note(shown: int, withheld: int) -> str:
+    """Say that a review confirmed more findings than it shows, and what follows.
+
+    Inline comments alone read as everything the review found, so a review that
+    left some for the next one says so where the author reads it.
+    """
+
+    most_severe = "the most severe" if shown == 1 else f"the {shown} most severe"
+    return (
+        f"This review confirmed {shown + withheld} defects and shows {most_severe}. "
+        "The next review reads the files of the rest again."
+    )
 
 
 def format_docs_slack_message(

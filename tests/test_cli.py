@@ -3222,6 +3222,7 @@ class OrchestrationTests(unittest.TestCase):
         marks_unreadable: bool = False,
         linked_issues: tuple = (),
         checks=(),
+        max_findings: "Optional[int]" = None,
     ) -> dict:
         repository = Repository("app", "owner/app", Path(directory))
         pull_request = PullRequest(
@@ -3235,6 +3236,7 @@ class OrchestrationTests(unittest.TestCase):
                 "max_diff_bytes": max_diff_bytes,
                 "ignored_missing_patch_patterns": ignored_missing_patch_patterns,
                 "max_review_bundles": max_review_bundles,
+                **({} if max_findings is None else {"max_findings": max_findings}),
             }
         )
         (Path(directory) / "app.py").write_text(
@@ -3405,6 +3407,68 @@ class OrchestrationTests(unittest.TestCase):
         # bundle that raises nothing cannot silently drop what another one found.
         comments = result["submit_review"].call_args.args[2]
         self.assertEqual([comment.path for comment in comments], ["other.py"])
+
+    def test_one_limit_across_bundles_posts_the_most_severe_first(self) -> None:
+        """Each bundle may confirm up to the limit, and together they could bury an
+        author; what the limit leaves over is said, and its file is read again."""
+
+        def confirmed(count: int) -> dict:
+            return {
+                **CONFIRMED_JUDGMENT,
+                "judgments": [
+                    {"ref": f"F{index}", "verdict": "confirmed", "reason": "Read it."}
+                    for index in range(1, count + 1)
+                ],
+            }
+
+        def at(path: str, line: int, severity: str, excerpt: str) -> dict:
+            finding = finding_response(path, line)["findings"][0]
+            finding["severity"] = severity
+            finding["evidence"][0]["excerpt"] = excerpt
+            return finding
+
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "other.py").write_text("other = 1\n", encoding="utf-8")
+            engine = Mock()
+            engine.review.side_effect = [
+                {
+                    **finding_response("app.py", 1),
+                    "findings": [
+                        at("app.py", 1, "medium", "value = 1"),
+                        at("app.py", 2, "high", "value = 2"),
+                    ],
+                },
+                confirmed(2),
+                {
+                    **finding_response("other.py", 1),
+                    "findings": [at("other.py", 1, "low", "other = 1")],
+                },
+                confirmed(1),
+            ]
+
+            result = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=600,
+                max_review_bundles=4,
+                max_findings=2,
+            )
+
+        posted = result["submit_review"].call_args.args[2]
+        self.assertEqual(
+            [(item.path, item.line, item.severity) for item in posted],
+            [("app.py", 2, "high"), ("app.py", 1, "medium")],
+        )
+        self.assertEqual(
+            result["submit_review"].call_args.kwargs["body"],
+            "This review confirmed 3 defects and shows the 2 most severe. The next "
+            "review reads the files of the rest again.",
+        )
+        self.assertIn("Posting the 2 most severe of 3 confirmed", result["terminal"])
+        # Carried over as clean, the left-over finding's file would never be read
+        # again, and its defect would never be posted.
+        self.assertEqual(result["record"]["status"], "delivered")
+        self.assertNotIn("other.py", result["record"]["reviewed_patches"])
 
     def test_an_undiffable_file_is_reviewed_around_rather_than_fatal(self) -> None:
         """A generated file GitHub will not diff no longer blocks a pull request.

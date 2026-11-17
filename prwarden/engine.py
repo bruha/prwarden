@@ -2192,7 +2192,11 @@ response carries: at least one finding, or at least one currently unresolved
 blocking reference. When neither can be established against this workspace,
 return `approve` rather than withholding on a concern you cannot show.
 
-Report at most {max_findings} confirmed defects introduced by the changed lines.
+Report at most {max_findings} confirmed defects introduced by the changed lines;
+when more qualify, report the most severe. Report each root cause once: when one
+cause makes several added lines wrong, anchor a single finding on the line where
+the cause is and cite the other lines it affects as evidence, rather than raising
+a finding on each of them.
 {scope}
 
 Changed test code is code under review, held to every rule here, and its runtime
