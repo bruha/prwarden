@@ -1307,7 +1307,10 @@ bodies, resolved and unresolved inline review threads, human pull-request
 conversation comments, and exact-head check runs. Each inline comment includes
 its resolution state. Resolved feedback supplies context but cannot block
 approval. Bot-authored review summaries and conversation comments are excluded
-as noise; inline bot findings remain available. The common prompt requires every
+as noise; inline bot findings remain available. Conversation comments carrying a
+PR Warden design, documentation, or `LGTM` marker, such as another developer's
+installation posts, are left out of the code level's feedback and kept for the
+advisory levels, as described under the documentation level. The common prompt requires every
 engine to omit a finding when prior
 feedback already describes the same underlying issue, including when the
 wording or reported location differs. If the complete prior-feedback text
@@ -1682,7 +1685,9 @@ mask or replace the original command failure.
 - Inline feedback is fetched through GitHub GraphQL so resolved and unresolved
   review threads can carry explicit resolution state into review context.
   Human review summaries and PR conversation comments remain part of the
-  context; bot summaries and bot conversation comments are filtered as noise.
+  context; bot summaries and bot conversation comments are filtered as noise,
+  and PR Warden's own marked advisory and `LGTM` comments, from any installation,
+  stay out of the code level's context and its pre-delivery re-read.
 - Engine commands are argument arrays and do not use a shell.
 - Engine subprocesses receive a minimal environment plus explicitly allowlisted
   provider variables; delivery secrets are not inherited by default. The account
