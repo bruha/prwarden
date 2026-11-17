@@ -18,9 +18,9 @@ Installing again replaces the schedule. Times are the machine's local time.
 ## Always live
 
 A schedule runs `prwarden --live`, and `install` refuses until `.env` sets
-`AUTO_REVIEW_DRY_RUN=0`. A dry run records nothing, so a scheduled one would review
-every open pull request again at every slot, spending credits each time for a log
-nobody reads. Preview one pull request first, then open the gate:
+`AUTO_REVIEW_DRY_RUN=0`. A dry run records no review state, only its review
+history, so a scheduled one would review every open pull request again at every
+slot, spending credits each time for a log nobody reads. Preview one pull request first, then open the gate:
 
 ```sh
 prwarden --repo your-org/example-app --pr 123   # dry run: nothing is posted

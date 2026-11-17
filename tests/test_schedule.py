@@ -184,7 +184,7 @@ class InstallTests(unittest.TestCase):
         return result, output.getvalue()
 
     def test_a_schedule_is_refused_until_the_live_gate_is_open(self) -> None:
-        """A dry run records nothing, so it would pay again at every slot."""
+        """A dry run records no review state, so it would pay again at every slot."""
 
         dry = replace(self.settings, dry_run=True)
         for platform in ("launchd", "systemd"):

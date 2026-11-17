@@ -1,8 +1,8 @@
 """Install, show, and remove the timer that runs PR Warden on a schedule.
 
 macOS gets a per-user LaunchAgent and Linux a systemd user timer. Either one runs
-`prwarden --live`: a dry run records nothing, so a scheduled one would review every
-open pull request again at every slot and spend credits each time for a log nobody
+`prwarden --live`: a dry run records no review state, so a scheduled one would review
+every open pull request again at every slot and spend credits each time for a log nobody
 reads. Installing therefore requires the configuration's own live gate to be open,
 which is the operator's decision, made after a preview.
 """

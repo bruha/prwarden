@@ -194,8 +194,8 @@ review invocation can be mistaken for one.
   a GitHub token or role that can do more than reviewing needs (see above).
 - `schedule install` writes a per-user LaunchAgent on macOS or a systemd user
   timer on Linux that runs `prwarden --live`, and refuses while the configuration
-  keeps `AUTO_REVIEW_DRY_RUN` on: a dry run records nothing, so a scheduled one
-  would review the same heads at every slot. On macOS it also refuses while
+  keeps `AUTO_REVIEW_DRY_RUN` on: a dry run records no review state, only its
+  review history, so a scheduled one would review the same heads at every slot. On macOS it also refuses while
   another LaunchAgent runs PR Warden.
 - `history` only reads the review history on this host, beside the state file a run
   would use, and asks neither GitHub nor a model anything; it does not resolve the
