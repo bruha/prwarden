@@ -774,10 +774,12 @@ Labels are mined from delivered history rather than authored by hand. For every 
 finding the reviewer has posted, `evaluate label` asks what the author did next, by
 diffing the commit the finding was anchored to against the pull request's later head
 and reading the hunk ranges on the old side: a finding whose lines were then edited was
-worth posting. Findings are selected by the comment template's own marker, never by
-author, because the reviewer posts under a human account and that person comments too;
-selecting by author collected human review remarks as though the reviewer had written
-them. A rebase is reported as its own outcome, since it rewrites everything and proves
+worth posting. Findings are selected by the comment template's own marker and by the
+reviewer's account together. Never by author alone, because the reviewer posts under a
+human account and that person comments too: selecting by author collected human review
+remarks as though the reviewer had written them. Never by marker alone either, because
+another developer's PR Warden marks its findings the same way under their own name. A
+rebase is reported as its own outcome, since it rewrites everything and proves
 nothing about one comment, and only findings authors acted on are scored, because a
 comment nobody acted on is evidence of neither correctness nor error.
 
