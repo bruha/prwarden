@@ -93,7 +93,8 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
   documentation levels are advisory: neither may block a merge, withhold an
   approval, post a review comment, or change the run's exit code, and their
   failures stay contained to the level that had them. Their own earlier notes,
-  read back so a rerun does not repeat them, never reach the code level.
+  read back so a rerun does not repeat them, and the notes and `LGTM` comments of
+  another developer's PR Warden never reach the code level.
 - The documentation level proposes documentation edits only. A disagreement it finds
   is reported as text for the document, never as a code change and never as a defect.
 - Preserve provider neutrality: adapters translate the common contract;

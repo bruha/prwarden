@@ -545,6 +545,33 @@ def list_prior_review_comments(
     return comments
 
 
+def code_level_feedback(
+    comments: "Sequence[PriorReviewComment]",
+) -> "tuple[PriorReviewComment, ...]":
+    """Return the feedback the code level may weigh, without any advisory note.
+
+    Another developer can run PR Warden too, under their own name. Its design and
+    documentation notes and its LGTM comments then arrive here as that person's
+    conversation comments, and the code level would read them as anyone's feedback
+    and could cite one to withhold an approval. Advisory notes never do that, whoever
+    runs PR Warden, so every conversation comment carrying an advisory or LGTM
+    marker is left out of what the code level weighs, cites, and reads as new
+    feedback. Only a comment's author, or a maintainer who could delete it anyway,
+    can put a marker in it, so a marker can never make another person's objection
+    advisory. The advisory levels still read these notes, so as not to repeat them,
+    and another installation's inline findings stay: they are review comments, and
+    one left unresolved still stands in the way of an approval.
+    """
+
+    advisory = (DESIGN_COMMENT_MARKER, DOCS_COMMENT_MARKER, LGTM_COMMENT_MARKER)
+    return tuple(
+        comment
+        for comment in comments
+        if comment.kind != "conversation"
+        or not any(carries_marker(comment.body, marker) for marker in advisory)
+    )
+
+
 def list_own_advisory_notes(
     repository: Repository,
     pull_request: PullRequest,
@@ -595,12 +622,14 @@ def list_review_comments_by_reviewer(
 ) -> "list[dict[str, Any]]":
     """Return every inline finding this reviewer has posted in a repository.
 
-    Selected by the template's own marker rather than by author. The reviewer posts
+    Selected by the template's own marker and by author together. The reviewer posts
     under a human GitHub account, and that person comments too: filtering by author
     alone collected that person's own review remarks as though the reviewer had
     written them, which would have quietly poisoned any corpus built from this. The
-    marker is mandatory in the comment template, so it identifies
-    a delivered finding and nothing else.
+    marker is mandatory in the comment template, so it identifies a delivered
+    finding and nothing else, but it identifies one from any installation: another
+    developer's PR Warden marks its findings the same way under their own name, and
+    those are not this reviewer's.
 
     Read only to build an evaluation corpus from delivered history, never during a
     review. Replies are excluded: a thread reply is a conversation, while the top
@@ -612,6 +641,9 @@ def list_review_comments_by_reviewer(
         f"contains({json.dumps(marker)})"
         for marker in marker_variants(REVIEW_COMMENT_MARKER)
     )
+    # GitHub compares logins without regard to case; a login is letters, digits,
+    # and hyphens, so lowercasing it is the whole of that comparison.
+    author = json.dumps(reviewer_username.lower())
     output = _run_for(
         repository,
         [
@@ -621,6 +653,7 @@ def list_review_comments_by_reviewer(
             f"repos/{repository.slug}/pulls/comments?per_page=100",
             "--jq",
             ".[] | select(.in_reply_to_id == null) "
+            f"| select((.user.login // \"\" | ascii_downcase) == {author}) "
             f"| select(.body | ({marked})) "
             "| {comment_id: .id, number: (.pull_request_url | split(\"/\") | last "
             "| tonumber), path: .path, line: (.original_line // .line), "

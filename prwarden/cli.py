@@ -63,6 +63,7 @@ from .github import (
     DESIGN_COMMENT_MARKER,
     DOCS_COMMENT_MARKER,
     MAX_PRIOR_REVIEW_BYTES,
+    code_level_feedback,
     delivered_review_findings_resolved,
     format_design_comment,
     format_docs_comment,
@@ -2793,6 +2794,9 @@ def _process_pull_request(
     )
 
     prior_comments: Optional[tuple[PriorReviewComment, ...]] = None
+    # Everything posted to the pull request, which the advisory levels must not
+    # repeat; `prior_comments` is the part the code level may weigh and cite.
+    feedback: Optional[tuple[PriorReviewComment, ...]] = None
     reconsidering_delivered_review = False
     if not force and store.is_terminal(state_key):
         record = store.get(state_key) or {}
@@ -2822,11 +2826,12 @@ def _process_pull_request(
             )
             return
         else:
-            prior_comments = list_prior_review_comments(
+            feedback = list_prior_review_comments(
                 repository,
                 pull_request,
                 account,
             )
+            prior_comments = code_level_feedback(feedback)
             current_fingerprint = _feedback_fingerprint(prior_comments)
             recorded_blockers = record.get("blocking_comment_ids")
             valid_recorded_blockers = (
@@ -3004,12 +3009,13 @@ def _process_pull_request(
                     base_sha=conflict_base,
                 )
             return
-        if prior_comments is None:
-            prior_comments = list_prior_review_comments(
+        if prior_comments is None or feedback is None:
+            feedback = list_prior_review_comments(
                 repository,
                 pull_request,
                 account,
             )
+            prior_comments = code_level_feedback(feedback)
         if prior_comments:
             print(
                 f"      -> Considering {len(prior_comments)} existing review "
@@ -3135,13 +3141,16 @@ def _process_pull_request(
                         )
                 for note in workspace.dependency_notes:
                     print(f"      -> Dependency evidence: {note}")
+            # The advisory levels read every comment, another installation's notes
+            # included, so as not to repeat them; the code level never sees those.
+            advisory_material = replace(material, prior_comments=feedback)
             if settings.design_level:
                 _run_design_level(
                     settings,
                     repository,
                     exact_repository,
                     pull_request,
-                    material,
+                    advisory_material,
                     engine,
                     verification,
                     store,
@@ -3159,7 +3168,7 @@ def _process_pull_request(
                     repository,
                     exact_repository,
                     pull_request,
-                    material,
+                    advisory_material,
                     engine,
                     verification,
                     store,
@@ -3435,10 +3444,12 @@ def _process_pull_request(
         return
 
     try:
-        latest_prior_comments = list_prior_review_comments(
-            repository,
-            pull_request,
-            account,
+        latest_prior_comments = code_level_feedback(
+            list_prior_review_comments(
+                repository,
+                pull_request,
+                account,
+            )
         )
     except CommandError as error:
         store.set_status(state_key, "failed", error=str(error))

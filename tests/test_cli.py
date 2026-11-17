@@ -2832,6 +2832,109 @@ class OrchestrationTests(unittest.TestCase):
 
             submit_approval.assert_not_called()
 
+    def another_installations_review(self, feedback, **levels) -> dict:
+        """Review once while another developer's PR Warden has posted ``feedback``."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            pull_request = PullRequest(1, "Title", "", "author", "head", "url")
+            settings = replace(self.settings(directory, repository), **levels)
+            engine = Mock()
+            engine.review.return_value = {
+                "verdict": "approve",
+                "approval_reason": "No qualifying defects remain.",
+                "findings": [],
+            }
+
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", side_effect=feedback
+            ), patch(
+                "prwarden.cli.list_changed_files",
+                return_value=[
+                    {"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}
+                ],
+            ), patch(
+                "prwarden.cli.get_pull_request_snapshot",
+                side_effect=[READY_SNAPSHOT, READY_SNAPSHOT],
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli.send_slack_message", return_value="http-200"
+            ), patch(
+                "prwarden.cli._run_design_level"
+            ) as design, patch(
+                "prwarden.cli._run_docs_level"
+            ) as docs, patch(
+                "prwarden.cli.submit_approval", return_value="approval-9"
+            ) as submit_approval:
+                (Path(directory) / "app.py").write_text("value = 1\n")
+                workspace.return_value.__enter__.return_value = repository
+                with JsonStateStore(settings.state_file) as store:
+                    cli._process_pull_request(
+                        settings,
+                        repository,
+                        pull_request,
+                        store,
+                        engine,
+                        live=True,
+                        force=False,
+                    )
+                    record = store.get(
+                        store.key(repository.slug, 1, "head", "github")
+                    )
+        return {
+            "record": record,
+            "engine": engine,
+            "design": design,
+            "docs": docs,
+            "submit_approval": submit_approval,
+        }
+
+    def colleague_note(self, marker: str, number: int) -> PriorReviewComment:
+        return PriorReviewComment(
+            f"conversation:{number}",
+            "conversation",
+            "colleague",
+            f"Advisory note\n{marker}",
+        )
+
+    def test_another_installations_notes_reach_only_the_advisory_levels(self) -> None:
+        """Another developer's PR Warden posts notes under their name. Advisory
+        notes never withhold an approval, whoever runs PR Warden, but neither level
+        should repeat them."""
+
+        from prwarden.github import DESIGN_COMMENT_MARKER
+
+        human = PriorReviewComment(
+            "conversation:1", "conversation", "colleague", "Is this tested?"
+        )
+        note = self.colleague_note(DESIGN_COMMENT_MARKER, 2)
+
+        result = self.another_installations_review(
+            [(human, note), (human, note)], design_level=True, docs_level=True
+        )
+
+        given = result["engine"].review.call_args.args[2].prior_comments
+        self.assertEqual(given, (human,))
+        for level in ("design", "docs"):
+            with self.subTest(level=level):
+                given = result[level].call_args.args[4].prior_comments
+                self.assertEqual(given, (human, note))
+        result["submit_approval"].assert_called_once()
+
+    def test_another_installations_note_arriving_mid_review_is_no_objection(
+        self,
+    ) -> None:
+        """A note is not feedback an approval has to answer, so one posted while
+        this review ran does not throw the review away."""
+
+        from prwarden.github import LGTM_COMMENT_MARKER
+
+        note = self.colleague_note(LGTM_COMMENT_MARKER, 3)
+
+        result = self.another_installations_review([(), (note,)])
+
+        self.assertEqual(result["record"]["status"], "delivered")
+        result["submit_approval"].assert_called_once()
+
     def test_lgtm_approves_team_pull_request(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = Repository("app", "owner/app", Path(directory))

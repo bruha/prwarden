@@ -163,6 +163,43 @@ class ReviewerCommentMiningTests(unittest.TestCase):
             query,
         )
         self.assertIn("in_reply_to_id == null", query)
+        # And by author: another developer's PR Warden marks its findings the same
+        # way under their own name, and those are not this reviewer's.
+        self.assertIn(
+            'select((.user.login // "" | ascii_downcase) == "pr-author")', query
+        )
+
+    def test_another_installations_advisory_notes_never_reach_the_code_level(self):
+        """Advisory notes never withhold an approval, whoever runs PR Warden."""
+
+        from prwarden.github import (
+            DESIGN_COMMENT_MARKER,
+            DOCS_COMMENT_MARKER,
+            LGTM_COMMENT_MARKER,
+            REVIEW_COMMENT_MARKER,
+            code_level_feedback,
+        )
+        from prwarden.models import PriorReviewComment
+
+        def comment(kind: str, body: str, number: int) -> PriorReviewComment:
+            return PriorReviewComment(
+                f"{kind}:{number}", kind, "colleague", body, None, None, None
+            )
+
+        human = comment("conversation", "This drops the saved value.", 1)
+        finding = comment("inline", f"**[HIGH] Bug**\n{REVIEW_COMMENT_MARKER}", 2)
+        summary = comment("review", "This review read 3 of 9 changed files.", 3)
+        notes = [
+            comment("conversation", f"Design\n{DESIGN_COMMENT_MARKER}", 4),
+            comment("conversation", f"Docs\n{DOCS_COMMENT_MARKER}", 5),
+            comment("conversation", f"## LGTM\n{LGTM_COMMENT_MARKER}", 6),
+            # Posted before the rename, under the old name.
+            comment("conversation", "Design\n<!-- ai-code-reviewer:design -->", 7),
+        ]
+
+        kept = code_level_feedback([human, finding, summary, *notes])
+
+        self.assertEqual(kept, (human, finding, summary))
 
 
 class GitHubFeedbackTests(unittest.TestCase):

@@ -512,6 +512,33 @@ then be able to withhold an approval. A failed lookup fails that level alone. No
 delivered to Slack cannot be read back, so on a repository that routes them there a
 repeat is possible.
 
+Another developer may run PR Warden too, on their own machine and under their own
+GitHub account, and nothing is shared between the two: each keeps its own state,
+history, and schedule, and touches only what its own account posted. Its comments
+reach this installation as that developer's feedback, and three rules keep them from
+colliding with this review:
+
+- Its design and documentation notes and its `LGTM` comments never reach the code
+  level. `github.code_level_feedback` leaves every conversation comment that carries
+  a design, documentation, or `LGTM` marker, under either name of this tool, out of
+  what the code level weighs and may cite as a blocker, out of the feedback
+  fingerprint an `approval_withheld` record is reconsidered by, and out of the
+  feedback re-read before delivery, so a note posted during a review is not an
+  objection to it. Advisory notes never withhold an approval, whoever runs PR
+  Warden. Only a comment's author, or a maintainer who could delete it anyway, can
+  put a marker in it, so a marker never makes another person's objection advisory.
+  The design and documentation levels still read these notes, and are told not to
+  repeat them.
+- Its inline findings are review comments like a colleague's: the code level is told
+  not to repeat them, and one left unresolved stands in the way of an approval until
+  someone resolves it, as any reviewer's would.
+- Selecting by marker alone would collect its findings too, so the evaluation corpus
+  takes inline findings by marker and by this reviewer's account together.
+
+Each installation approves as its own account, so two developers who both run it can
+each approve a pull request; whether two approvals from tools satisfy a review rule
+is the repository's branch protection to decide.
+
 The design level is advisory by construction. Its confirmed findings post as one
 pull-request conversation comment, or go to Slack for the reviewer's own pull
 requests, and they never block a merge, withhold an approval, enter a review, or

@@ -406,12 +406,21 @@ The history is kept beside the state file, in `history/`, for
 decision reads it, and deleting it changes nothing. It covers the runs of this host
 and installation only; drafts and pull requests with an excluded label are left out
 before any review, so they never appear. What a review posted is also on the pull
-request, and each comment PR Warden writes carries a hidden `<!-- prwarden` marker:
+request, and each comment PR Warden writes carries a hidden `<!-- prwarden` marker.
+Another developer's PR Warden marks its comments the same way under their own name,
+so select by your reviewer account as well:
 
 ```sh
 gh pr view 123 -R your-org/example-app --json reviews,comments \
-  --jq '[(.reviews[], .comments[]) | select(.body | contains("<!-- prwarden"))]'
+  --jq '[(.reviews[], .comments[]) | select(.author.login == "your-reviewer")
+    | select(.body | contains("<!-- prwarden"))]'
 ```
+
+When another developer runs PR Warden on the same pull requests, neither needs to
+know about the other. Its findings count as a colleague's: they are not repeated, and
+one left unresolved holds back this installation's approval. Its design notes,
+documentation notes, and `LGTM` comments never hold back an approval, and are not
+repeated either.
 
 To let another agent answer "did PR Warden review this?", add a line like this to its
 instructions, such as `AGENTS.md` or `CLAUDE.md`:
