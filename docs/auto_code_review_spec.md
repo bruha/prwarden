@@ -679,8 +679,11 @@ Every run appends one line per pull request it looked at to its own file under
 transcript and created mode `0600`. A line records the run, live or dry, the
 repository, number, title, author, and URL, the head read and any head it replaced
 mid-review, and for each of the code, design, and documentation levels the outcome,
-its reason or error, the delivery receipt, and the confirmed findings after
-credential redaction. A manual-review request and the model time spent are recorded
+its reason or error, the delivery receipt, and the findings it would post or posted,
+after credential redaction, each with the severity the reviewer gave when the
+verifier changed it and the verifier's reason. Confirmed findings over the one limit
+a review posts are counted, under `withheld`, rather than listed, as the pull request
+only hears their count. A manual-review request and the model time spent are recorded
 when they happened.
 
 Outcomes come from two places. What a live review settles is written to the state
