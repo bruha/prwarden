@@ -9,8 +9,24 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.4.0 03887af570e775318d8ad47b1c384834e7dbf3f8 -->
+<!-- release-baseline: 3.5.0 a3b4029a4e2f01345ad2f881d96e27ca658a9df8 -->
 ## [Unreleased]
+
+## [3.5.0] - 2026-11-17
+
+### Added
+
+- post the most severe findings under one limit, one comment per key (`99a0c52`).
+- say on each comment what was checked and how the verifier changed severity (`c640369`).
+
+### Fixed
+
+- post every committed key past the limit, and apply the limit in a replay (`d303dca`).
+- name each finding's own verifier, and one model on two hosts as one (`a3b4029`).
+
+### Documentation
+
+- the review history lists the findings posted and counts those over the limit (`7ae15ef`).
 
 ## [3.4.0] - 2026-11-17
 
