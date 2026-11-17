@@ -2125,26 +2125,32 @@ def select_findings(
 
     Each bundle of a large change is capped on its own, and committed keys are found
     apart from any model, so together they could post several times the limit. One
-    limit across all of them keeps the worst where an author reads first. A
-    committed key is always posted, ahead of a model finding of its severity: it was
-    found by its shape, so no model's judgment may push it out. Findings of one
-    severity keep the order they were confirmed in.
+    limit across all of them keeps the worst where an author reads first. Findings of
+    one severity keep the order they were confirmed in.
+
+    Every finding that tells the author about a committed key is posted, whether PR
+    Warden's pattern check wrote it or a model's finding kept the key's line, and
+    counts towards the limit; only model findings are left over. A key left unsaid
+    stays live in the history, and there are at most a few of them, so no limit, and
+    no model's judgment of severity, may push one out of the review.
 
     The findings left over are confirmed defects too. The caller says so on the
     review and reads their files again at the next head, so none is dropped, only
     left for the next review.
     """
 
+    def first(finding: Finding) -> bool:
+        return finding.found_by_pattern or finding.covers_credential
+
     def order(finding: Finding) -> "tuple[int, int]":
         return (severity_rank(finding.severity), 0 if finding.found_by_pattern else 1)
 
-    keys = [finding for finding in findings if finding.found_by_pattern]
+    keys = [finding for finding in findings if first(finding)]
     others = sorted(
-        (finding for finding in findings if not finding.found_by_pattern), key=order
+        (finding for finding in findings if not first(finding)), key=order
     )
     room = max(limit - len(keys), 0)
-    posted = sorted(keys[:limit] + others[:room], key=order)
-    return posted, keys[limit:] + others[room:]
+    return sorted(keys + others[:room], key=order), others[room:]
 
 
 def validate_approval_verdict(

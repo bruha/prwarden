@@ -83,6 +83,7 @@ SHAPES = {
 }
 PRIVATE_KEY_HEADER = "-----BEGIN " + "OPENSSH PRIVATE KEY-----"
 PLANTED = generated("gh" + "p_", 36)
+SECOND = generated("gh" + "p_", 38)
 
 
 def patch_adding(*lines: str, start: int = 1) -> str:
@@ -242,6 +243,8 @@ class AddedLineTests(unittest.TestCase):
                 self.assertEqual(
                     [item.found_by_pattern for item in merged], [kept]
                 )
+                # The model's finding that keeps the line stands for the key.
+                self.assertEqual(merged[0].covers_credential, not kept)
 
 
 class FindingTests(unittest.TestCase):
@@ -444,7 +447,9 @@ class PlantedReviewTests(unittest.TestCase):
     def setUp(self) -> None:
         without_review_rules(self)
 
-    def review(self, engine: Mock, advisory: bool = False) -> dict:
+    def review(
+        self, engine: Mock, advisory: bool = False, max_findings: int = 10
+    ) -> dict:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "config.py").write_text(
@@ -466,7 +471,7 @@ class PlantedReviewTests(unittest.TestCase):
                 review_model=None,
                 review_timeout_seconds=300,
                 max_diff_bytes=100000,
-                max_findings=10,
+                max_findings=max_findings,
                 design_level=advisory,
                 docs_level=advisory,
             )
@@ -637,6 +642,25 @@ class PlantedReviewTests(unittest.TestCase):
             [(item.line, item.excerpt) for item in result["posted"][0].evidence],
             [(2, "gh" + "p_…"), (1, "gh" + "p_…")],
         )
+
+    def test_no_limit_leaves_a_key_unmentioned(self) -> None:
+        """One key has a free line and one sits under a model's finding of its
+        severity, which stands for it there; with room for one comment, both are
+        still posted."""
+
+        self.PLANTED_LINES = (f"API_KEY = {PLANTED!r}", f"OTHER = {SECOND!r}")
+        response = self.response_citing("OTHER", line=2)
+        response["findings"][0]["severity"] = "high"
+        engine = Mock()
+        engine.review.side_effect = [response, CONFIRMED_JUDGMENT]
+
+        result = self.review(engine, max_findings=1)
+
+        self.assertEqual(
+            [(item.line, item.found_by_pattern) for item in result["posted"]],
+            [(1, True), (2, False)],
+        )
+        self.assertTrue(result["posted"][1].covers_credential)
 
 
 if __name__ == "__main__":

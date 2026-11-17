@@ -621,10 +621,10 @@ rather than advisory notes nobody checked.
   1.8% were ever limited by size and 1.0% materially, which is why the change is
   confined to the path that fires.
 - `MAX_FINDINGS` is one limit for the whole review: every bundle and every committed
-  credential together post at most that many comments, the most severe first. A
-  committed credential is always among them. The review says how many more it
-  confirmed, and the next head reads their files again rather than treating them as
-  clean.
+  credential together post at most that many comments, the most severe first. Every
+  committed credential is posted, even past the limit, and counts towards it, so only
+  model findings are left over. The review says how many more it confirmed, and the
+  next head reads their files again rather than treating them as clean.
 - A diff too large to read completely is reviewed in part rather than skipped. The
   budget is filled largest changed file first, the deferred paths are named in the
   Slack notification and in the GitHub review body, no approval is given, and no

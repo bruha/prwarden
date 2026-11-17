@@ -260,12 +260,14 @@ def with_credential_findings(
     so a model finding there keeps its comment and the key still gets one. When
     every line it is on already holds a finding, a line still takes one comment:
     the more severe of the two stays, and a tie keeps the model's, which says
-    something about that line in particular. Either way the review cannot approve.
-    At most a few keys are reported.
+    something about that line in particular and is then marked as covering the key,
+    so no limit on what a review posts can leave the key unmentioned. Either way the
+    review cannot approve. At most a few keys are reported.
     """
 
     model_at = {(finding.path, finding.line): finding for finding in findings}
     replaced: "set[tuple[str, int]]" = set()
+    covering: "set[tuple[str, int]]" = set()
     added: "list[Finding]" = []
     for group in committed_keys(matches)[:MAX_CREDENTIAL_FINDINGS]:
         free = [match for match in group if (match.path, match.line) not in model_at]
@@ -278,11 +280,14 @@ def with_credential_findings(
             if severity_rank(model_at[location].severity) <= severity_rank(
                 finding.severity
             ):
+                covering.add(location)
                 continue
             replaced.add(location)
         added.append(finding)
     return [
-        finding
+        replace(finding, covers_credential=True)
+        if (finding.path, finding.line) in covering
+        else finding
         for finding in findings
         if (finding.path, finding.line) not in replaced
     ] + added

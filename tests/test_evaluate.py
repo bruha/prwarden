@@ -914,6 +914,7 @@ class ReplayBundlingTests(unittest.TestCase):
             max_diff_bytes=600,
             max_review_bundles=4,
             ignored_missing_patch_patterns=(),
+            max_findings=10,
             state_file=Path("/tmp/state.json"),
             repositories=(Repository("app", "owner/app", Path("/tmp")),),
         )
@@ -1311,15 +1312,38 @@ class ReplayEvidenceTests(unittest.TestCase):
     def test_a_confirmed_finding_is_named_in_the_transcript(self) -> None:
         """A replay delivers nothing, so its transcript is the only record."""
 
+        finding = Mock(
+            severity="medium", path="app.py", line=7, title="Stale value kept"
+        )
+
+        reported = self.replay([finding])
+
+        self.assertIn("Confirmed finding [MEDIUM] app.py:7 Stale value kept", reported)
+
+    def test_a_replay_holds_back_what_the_limit_leaves_over_as_live(self) -> None:
+        """Scored on what a live run would post, and naming what it would not."""
+
+        findings = [
+            Finding("medium", "Stale value kept", "app.py", 7, "p", "s"),
+            Finding("high", "Data lost", "app.py", 9, "p", "s"),
+        ]
+
+        reported = self.replay(findings, max_findings=1)
+
+        self.assertIn("Confirmed finding [HIGH] app.py:9 Data lost", reported)
+        self.assertIn(
+            "Held for the next review [MEDIUM] app.py:7 Stale value kept", reported
+        )
+        self.assertNotIn("Confirmed finding [MEDIUM]", reported)
+
+    def replay(self, findings, max_findings: int = 10) -> str:
         case = ReplayCase("owner/app", 1, "a" * 40, "b" * 40)
         settings = Mock(
             max_diff_bytes=600,
             max_review_bundles=1,
             ignored_missing_patch_patterns=(),
+            max_findings=max_findings,
             state_file=Path("/tmp/state.json"),
-        )
-        finding = Mock(
-            severity="medium", path="app.py", line=7, title="Stale value kept"
         )
         with patch("prwarden.evaluate._repository_for") as repository_for, patch(
             "prwarden.evaluate.changed_files", return_value=[{"filename": "app.py"}]
@@ -1350,13 +1374,12 @@ class ReplayEvidenceTests(unittest.TestCase):
             workspace.return_value.__enter__.return_value = repository_for.return_value
             workspace.return_value.dependency_links = ()
             workspace.return_value.dependency_notes = ()
-            review.return_value = ({}, [finding], False, "", [], settings, Mock())
-            verify.return_value = ({}, [finding], False, "", [])
+            review.return_value = ({}, list(findings), False, "", [], settings, Mock())
+            verify.return_value = ({}, list(findings), False, "", [])
 
             replay_case(settings, case, ReviewMetrics())
 
-        reported = output.getvalue()
-        self.assertIn("Confirmed finding [MEDIUM] app.py:7 Stale value kept", reported)
+        return output.getvalue()
 
 
 class PassStabilityTests(unittest.TestCase):
@@ -1660,6 +1683,7 @@ class RecordedCandidateTests(unittest.TestCase):
             max_diff_bytes=600,
             max_review_bundles=1,
             ignored_missing_patch_patterns=(),
+            max_findings=10,
             state_file=Path("/tmp/state.json"),
             design_level=True,
             docs_level=True,
@@ -2151,6 +2175,7 @@ class ReplayDecisionTests(unittest.TestCase):
             max_diff_bytes=600,
             max_review_bundles=4,
             ignored_missing_patch_patterns=(),
+            max_findings=10,
             state_file=Path("/tmp/state.json"),
             repositories=(repository,),
             design_level=False,

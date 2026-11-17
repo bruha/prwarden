@@ -176,6 +176,9 @@ class Finding:
     # Found by PR Warden's own pattern check rather than by a model, as a committed
     # credential is: no model raised it, so none can talk it away or crowd it out.
     found_by_pattern: bool = False
+    # A model's finding kept on the only line left for a committed credential, so it
+    # is the one comment there and is posted as the key's own would be.
+    covers_credential: bool = False
 
 
 @dataclass(frozen=True)

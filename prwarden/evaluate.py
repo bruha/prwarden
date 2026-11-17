@@ -58,7 +58,7 @@ from . import progress
 from .cli import RUN_LOG_DIRECTORY_NAME
 from .metrics import ReviewMetrics
 from .models import Finding, FindingEvidence, PullRequest, Repository
-from .review import ReviewError, build_review_material
+from .review import ReviewError, build_review_material, select_findings
 from .secret_scan import (
     find_credentials,
     redact_credentials,
@@ -1647,6 +1647,14 @@ def replay_case(
                 approve = False
                 approval_reason = cli._policy_change_reason(policy_changes)
 
+    # As live: one limit across every bundle and every committed key, the most
+    # severe first, so a replay scores what a live run would post.
+    findings, held_back = select_findings(findings, settings.max_findings)
+    for finding in held_back:
+        print(
+            f"      -> Held for the next review [{finding.severity.upper()}] "
+            f"{finding.path}:{finding.line} {finding.title}"
+        )
     for finding in findings:
         # Named because a replay delivers nothing, so this transcript is the only
         # record of what the review actually held. The rejected candidates were

@@ -1119,10 +1119,25 @@ class SelectFindingsTests(unittest.TestCase):
         self.assertEqual([item.line for item in posted], [1, 2, 5])
         self.assertEqual([item.line for item in withheld], [3, 4])
 
-    def test_keys_beyond_the_limit_wait_like_any_other_finding(self):
-        findings = [self.finding("high", line, key=True) for line in range(1, 4)]
+    def test_every_key_is_posted_even_past_the_limit(self):
+        """A key left unsaid stays live in the history; only model findings wait."""
+
+        findings = [self.finding("high", line, key=True) for line in range(1, 4)] + [
+            self.finding("critical", 4)
+        ]
 
         posted, withheld = select_findings(findings, 2)
+
+        self.assertEqual([item.line for item in posted], [1, 2, 3])
+        self.assertEqual([item.line for item in withheld], [4])
+
+    def test_a_model_finding_covering_a_key_is_posted_like_the_key(self):
+        """It is the one comment on the key's line, so a limit must not drop it."""
+
+        covering = replace(self.finding("high", 2), covers_credential=True)
+        findings = [self.finding("high", 1, key=True), covering, self.finding("low", 3)]
+
+        posted, withheld = select_findings(findings, 1)
 
         self.assertEqual([item.line for item in posted], [1, 2])
         self.assertEqual([item.line for item in withheld], [3])

@@ -402,11 +402,16 @@ One limit holds across the whole review. Each bundle's response is capped at
 together they could post several times that. Once every bundle is verified and the
 credentials are added, `review.select_findings` posts at most `MAX_FINDINGS` of them,
 the most severe first, with findings of one severity in the order they were confirmed.
-A committed credential is always among them, ahead of a model finding of its severity,
-because no model's judgment may push out what its shape decided. The confirmed findings
+Every finding that tells the author about a committed credential is posted, even past
+the limit, and counts towards it: a credential's own finding, ahead of a model finding
+of its severity, and a model finding that kept the only line a credential is on. A key
+left unsaid stays live in the history, and there are at most ten. Only model findings
+are left over. The confirmed findings
 the limit leaves over are not posted, and the review body says how many there were;
 their files are left out of `reviewed_patches`, so the next head reads them again
-rather than carrying them over as clean. They never let the review approve. The prompt
+rather than carrying them over as clean. They never let the review approve. A replay
+applies the same limit, so it scores what a live run would post, and names on its
+transcript each finding it held back. The prompt
 asks for the same from each response: the most severe first when more qualify, and each
 root cause once, on the line where it is, with the other lines it affects as evidence.
 
