@@ -1190,6 +1190,48 @@ class CodeJudgmentTests(unittest.TestCase):
         self.assertEqual(confirmed[0].path, candidates[0].path)
         self.assertEqual(confirmed[0].evidence, candidates[0].evidence)
 
+    def test_a_corrected_severity_keeps_what_it_was_and_the_reason(self):
+        """The author sees that the two passes disagreed, and why."""
+
+        candidates = (rejection_candidate("app.py", 1),)
+
+        confirmed = validate_code_judgments(
+            {
+                "judgments": [
+                    {
+                        "ref": "F1",
+                        "verdict": "confirmed",
+                        "reason": "  Every save\nreaches it.  ",
+                        "severity": "high",
+                    }
+                ]
+            },
+            candidates,
+        )
+
+        self.assertEqual(candidates[0].severity, "medium")
+        self.assertEqual(confirmed[0].original_severity, "medium")
+        self.assertEqual(confirmed[0].severity_reason, "Every save reaches it.")
+
+    def test_a_restated_severity_is_no_correction(self):
+        candidates = (rejection_candidate("app.py", 1),)
+
+        confirmed = validate_code_judgments(
+            {
+                "judgments": [
+                    {
+                        "ref": "F1",
+                        "verdict": "confirmed",
+                        "reason": "Read the caller.",
+                        "severity": "Medium",
+                    }
+                ]
+            },
+            candidates,
+        )
+
+        self.assertIs(confirmed[0], candidates[0])
+
     def test_unsupported_severity_correction_is_rejected(self):
         with self.assertRaises(ReviewError) as raised:
             validate_code_judgments(

@@ -5,7 +5,12 @@ import urllib.request
 from typing import Optional, Sequence
 
 from .models import DesignFinding, DocsFinding, Finding, PullRequest, Repository
-from .reviewer_identity import format_review_attribution, format_reviewer_identity
+from .reviewer_identity import (
+    describe_checks,
+    describe_severity_change,
+    format_review_attribution,
+    format_reviewer_identity,
+)
 
 
 class DeliveryError(RuntimeError):
@@ -55,6 +60,15 @@ def format_slack_message(
             [
                 f"{index}. *[{finding.severity.upper()}] {finding.title}*",
                 f"• File: `{finding.path}` (Line {finding.line})",
+                "• Checked: "
+                + describe_checks(
+                    finding, review_engine, review_model, verify_engine, verify_model
+                ),
+                *(
+                    [f"• Severity: {describe_severity_change(finding)}"]
+                    if finding.original_severity
+                    else []
+                ),
                 f"• Problem: {finding.problem}",
                 *(
                     [f"• Repository rule (`{finding.rule_source}`): {finding.rule}"]

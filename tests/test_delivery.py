@@ -176,6 +176,39 @@ class DeliveryFormattingTests(unittest.TestCase):
         self.assertNotIn("```", message)
         self.assertNotIn("most severe", message)
 
+    def test_slack_message_says_what_was_checked_and_a_changed_severity(self):
+        finding = Finding(
+            "high",
+            "Data loss",
+            "src/app.py",
+            42,
+            "p",
+            "s",
+            original_severity="low",
+            severity_reason="Every save reaches it.",
+        )
+
+        message = format_slack_message(
+            Repository(name="app", slug="owner/app"),
+            PullRequest(12, "Fix", "", "reviewer", "abc", "https://example.invalid"),
+            [finding],
+            "kiro",
+            "claude-opus-5.5",
+            "kiro",
+            "gpt-5.6-terra",
+        )
+
+        self.assertIn(
+            "• Checked: 0 citations matched this commit; confirmed by GPT-5.6 Terra "
+            "@ Kiro, a different model from the one that found it\n",
+            message,
+        )
+        self.assertIn(
+            "• Severity: the verifier raised this from LOW to HIGH: Every save "
+            "reaches it.\n",
+            message,
+        )
+
     def test_slack_message_says_how_many_findings_wait_for_the_next_review(self):
         message = format_slack_message(
             Repository(name="app", slug="owner/app"),

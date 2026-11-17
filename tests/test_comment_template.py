@@ -30,6 +30,8 @@ class CommentTemplateTests(unittest.TestCase):
             "line": "42",
             "problem": "Data is discarded.",
             "rule": "",
+            "checked": "**Checked:** 2 citations matched this commit.",
+            "severity_change": "",
             "trigger": "Save a replacement.",
             "impact": "Stored data is lost.",
             "evidence": "- `src/app.py:42` — replacement",
@@ -54,6 +56,11 @@ class CommentTemplateTests(unittest.TestCase):
         rendered = template.render(self.values())
 
         self.assertTrue(rendered.startswith("**[HIGH] Data loss**"))
+        self.assertIn(
+            "**[HIGH] Data loss**\n\n**Checked:** 2 citations matched this commit."
+            "\n\nData is discarded.",
+            rendered,
+        )
         self.assertIn("**Trigger:** Save a replacement.", rendered)
         self.assertIn("**Evidence:**\n- `src/app.py:42`", rendered)
         self.assertIn("_Reviewed by Model @ Engine_", rendered)

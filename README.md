@@ -775,7 +775,11 @@ The controller validates cited evidence against the exact PR worktree and uses
 a separate adversarial verification pass for candidate findings, optionally on a
 second engine and model. That pass judges each candidate by reference and never
 restates one, so a confirmed finding is delivered with the citation the controller
-already validated; the only change it can make is the severity. When the primary engine itself fails, an optional
+already validated; the only change it can make is the severity, and a comment whose
+severity it changed says so, from what to what, with the verifier's reason. Each
+comment opens with what was checked: how many citations matched the reviewed commit
+and which model confirmed it, or that PR Warden's own pattern check found a committed
+key. When the primary engine itself fails, an optional
 fallback engine reviews instead, at the design, documentation, and code levels alike, under identical validation, and the delivered
 attribution names the engine that actually reviewed. A claim about a dependency's API must cite the installed
 package at the resolved version, so the controller links the checkout's installed

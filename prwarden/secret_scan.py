@@ -12,8 +12,8 @@ import re
 from dataclasses import fields, is_dataclass, replace
 from typing import Any, NamedTuple, Optional, Sequence, TypeVar
 
-from .models import Finding, FindingEvidence
-from .review import added_line_texts, severity_rank
+from .models import Finding, FindingEvidence, severity_rank
+from .review import added_line_texts
 
 T = TypeVar("T")
 

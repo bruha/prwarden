@@ -20,6 +20,8 @@ from .models import (
     Repository,
 )
 from .reviewer_identity import (
+    describe_checks,
+    describe_severity_change,
     format_engine_display_name,
     format_model_display_name,
     format_review_attribution,
@@ -1245,6 +1247,7 @@ def format_github_comment(
         if finding.rule
         else ""
     )
+    severity_change = describe_severity_change(finding)
     return comment_template.render(
         {
             "severity": finding.severity.upper(),
@@ -1253,6 +1256,14 @@ def format_github_comment(
             "line": str(finding.line),
             "problem": finding.problem,
             "rule": rule,
+            "checked": "**Checked:** "
+            + describe_checks(
+                finding, review_engine, review_model, verify_engine, verify_model
+            )
+            + ".",
+            "severity_change": (
+                f"**Severity:** {severity_change}" if severity_change else ""
+            ),
             "trigger": finding.trigger,
             "impact": finding.impact,
             "evidence": evidence,

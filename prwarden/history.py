@@ -104,6 +104,12 @@ def _code_finding(finding: Finding) -> "dict[str, Any]":
     }
     if finding.rule:
         entry["rule"] = finding.rule
+    if finding.original_severity:
+        # What the reviewer said before the verifier corrected it, and why.
+        entry["original_severity"] = finding.original_severity
+        entry["severity_reason"] = finding.severity_reason
+    if finding.found_by_pattern:
+        entry["found_by"] = "pattern"
     return entry
 
 
@@ -666,6 +672,9 @@ def _finding_line(finding: Any) -> Optional[str]:
     if not isinstance(finding, Mapping):
         return None
     severity = _clean(finding.get("severity") or "")
+    was = finding.get("original_severity")
+    if isinstance(was, str) and was:
+        severity += f" (was {_clean(was)})"
     title = _clean(finding.get("title") or "")
     path = finding.get("path")
     line = finding.get("line")

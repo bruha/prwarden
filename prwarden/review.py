@@ -26,6 +26,7 @@ from .engine import (
 )
 from .models import (
     MISSING_LIST_ENTRY,
+    SEVERITY_ORDER,
     DeferredFile,
     DesignFinding,
     DiffBudget,
@@ -43,14 +44,12 @@ from .models import (
     ReviewRules,
     ReviewRuleSection,
     WorkspaceSearch,
+    severity_rank,
 )
 from .workspace import MAX_BASE_FILE_BYTES
 
 
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-# Most severe first: the order findings are posted in, and which of them are kept
-# when a review confirms more than it may post.
-SEVERITY_ORDER = ("critical", "high", "medium", "low")
 ALLOWED_SEVERITIES = set(SEVERITY_ORDER)
 # A check whose conclusion says this head did not pass it. `cancelled`, `skipped`,
 # and `neutral` are not here: a run cancelled because no runner came, or skipped by
@@ -2081,7 +2080,7 @@ def validate_code_judgments(
                 "Verification judgment verdict must be 'confirmed' or 'rejected', "
                 f"not {verdict!r}"
             )
-        _required_string(
+        reason = _required_string(
             raw_judgment, "reason", RESPONSE_FIELD_LIMITS["rejection_reason"]
         )
         if verdict != "confirmed":
@@ -2099,8 +2098,19 @@ def validate_code_judgments(
                 f"Verification corrected {reference} to an unsupported severity: "
                 f"{raw_severity!r}"
             )
+        severity = raw_severity.strip().lower()
+        if severity == candidate.severity:
+            confirmed.append(candidate)
+            continue
+        # The one disagreement a confirmed finding can carry, kept with the reason
+        # so the author sees that the two passes differed, and why.
         confirmed.append(
-            replace(candidate, severity=raw_severity.strip().lower())
+            replace(
+                candidate,
+                severity=severity,
+                original_severity=candidate.severity,
+                severity_reason=" ".join(reason.split()),
+            )
         )
     unjudged = [reference for reference in supplied if reference not in seen]
     if unjudged:
@@ -2108,14 +2118,6 @@ def validate_code_judgments(
             f"Verification left candidates unjudged: {', '.join(unjudged)}"
         )
     return confirmed
-
-
-def severity_rank(severity: str) -> int:
-    """Return where a severity sorts, the most severe first."""
-
-    if severity in SEVERITY_ORDER:
-        return SEVERITY_ORDER.index(severity)
-    return len(SEVERITY_ORDER)
 
 
 def select_findings(

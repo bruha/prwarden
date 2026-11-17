@@ -147,7 +147,11 @@ from .review import (
     validate_findings,
     without_generated_files,
 )
-from .reviewer_identity import format_review_attribution, format_review_plan
+from .reviewer_identity import (
+    describe_severity_change,
+    format_review_attribution,
+    format_review_plan,
+)
 from .secret_scan import (
     CredentialMatch,
     find_credentials,
@@ -1510,6 +1514,8 @@ def _print_findings(findings: list[Finding], approve: bool) -> None:
             f"      -> [{finding.severity.upper()}] {finding.path}:{finding.line} "
             f"{finding.title}"
         )
+        if finding.original_severity:
+            print(f"         Severity: {describe_severity_change(finding)}")
         print(f"         Problem: {finding.problem}")
         if finding.rule:
             print(f"         Rule ({finding.rule_source}): {finding.rule}")

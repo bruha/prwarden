@@ -3,6 +3,19 @@ from pathlib import Path
 from typing import Optional
 
 
+# Most severe first: the order findings are posted in, and which of them are kept
+# when a review confirms more than it may post.
+SEVERITY_ORDER = ("critical", "high", "medium", "low")
+
+
+def severity_rank(severity: str) -> int:
+    """Return where a severity sorts, the most severe first."""
+
+    if severity in SEVERITY_ORDER:
+        return SEVERITY_ORDER.index(severity)
+    return len(SEVERITY_ORDER)
+
+
 @dataclass(frozen=True)
 class Repository:
     name: str
@@ -179,6 +192,10 @@ class Finding:
     # A model's finding kept on the only line left for a committed credential, so it
     # is the one comment there and is posted as the key's own would be.
     covers_credential: bool = False
+    # The severity the reviewer gave, when the verifier corrected it, and the
+    # verifier's one sentence saying why; both empty when it agreed.
+    original_severity: str = ""
+    severity_reason: str = ""
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,8 @@
 import re
 from typing import Optional
 
+from .models import Finding, severity_rank
+
 
 ENGINE_DISPLAY_NAMES = {
     "antigravity": "Antigravity",
@@ -169,3 +171,46 @@ def format_review_attribution(
         return attribution
     verifier = format_reviewer_identity(verify_engine, verify_model)
     return f"{attribution}, verified by {verifier}"
+
+
+def describe_checks(
+    finding: Finding,
+    review_engine: str,
+    review_model: Optional[str],
+    verify_engine: Optional[str] = None,
+    verify_model: Optional[str] = None,
+) -> str:
+    """Say what was checked before a confirmed finding was posted, from facts alone.
+
+    Never a confidence a model states about itself: the controller counts the
+    citations it matched against the reviewed commit and names the verifier that
+    confirmed the finding. A different model is claimed only when both are named
+    and differ, since a provider default could be the same model.
+    """
+
+    if finding.found_by_pattern:
+        return "found by PR Warden's own pattern check, not by a model"
+    cited = len(finding.evidence) + len(finding.counterevidence)
+    matched = f"{cited} citation{'s' if cited != 1 else ''} matched this commit"
+    if verify_engine is None:
+        return f"{matched}; re-checked by the same model in a separate pass"
+    verifier = format_reviewer_identity(verify_engine, verify_model)
+    if review_model and verify_model and review_model != verify_model:
+        return (
+            f"{matched}; confirmed by {verifier}, a different model from the one "
+            "that found it"
+        )
+    return f"{matched}; confirmed by {verifier} in a separate pass"
+
+
+def describe_severity_change(finding: Finding) -> str:
+    """Say how the verifier corrected a finding's severity and why, or nothing."""
+
+    if not finding.original_severity:
+        return ""
+    raised = severity_rank(finding.severity) < severity_rank(finding.original_severity)
+    return (
+        f"the verifier {'raised' if raised else 'lowered'} this from "
+        f"{finding.original_severity.upper()} to {finding.severity.upper()}: "
+        f"{finding.severity_reason}"
+    )

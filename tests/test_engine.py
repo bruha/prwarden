@@ -3116,6 +3116,12 @@ class ReviewEngineTests(unittest.TestCase):
         self.assertIn("auditing this pass", verification)
         self.assertIn("not yours to rewrite", verification)
         self.assertIn("The one correction available to you is\n`severity`", verification)
+        # Shown to the author beside the new severity, so it must explain the change.
+        self.assertIn(
+            "The author reads the\n`reason` of a judgment that corrects severity",
+            verification,
+        )
+        self.assertNotIn("The author reads the", generation)
         self.assertNotIn("judge candidates by reference", generation)
         for prompt in (generation, verification):
             self.assertNotIn("rejected_candidates", prompt)

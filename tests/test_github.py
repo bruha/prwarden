@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -426,6 +427,8 @@ class GitHubFeedbackTests(unittest.TestCase):
             "\n\n".join(
                 [
                     "**[MEDIUM] Incorrect value**",
+                    "**Checked:** 1 citation matched this commit; re-checked by the "
+                    "same model in a separate pass.",
                     "This value causes a definite failure.",
                     "**Trigger:** The invalid branch receives an empty identifier.",
                     "**Impact:** The request fails before data is persisted.",
@@ -509,6 +512,101 @@ class GitHubFeedbackTests(unittest.TestCase):
             "verified by GPT-5.6 Terra @ Kiro_",
             body,
         )
+
+    def checked_comment(self, finding, *verifier):
+        template = load_comment_template(
+            DEFAULT_GITHUB_COMMENT_TEMPLATE_FILE, DEFAULT_GITHUB_COMMENT_TAGS_FILE
+        )
+        return format_github_comment(
+            finding, "kiro", "claude-opus-5.5", template, *verifier
+        )
+
+    def test_the_checked_line_states_only_what_the_controller_established(self):
+        """Never a number a model makes up: citations counted, verifier named."""
+
+        finding = Finding(
+            "high",
+            "Title",
+            "src/app.py",
+            1,
+            "Problem.",
+            "Change.",
+            evidence=(
+                FindingEvidence("src/app.py", 1, "value", "Relevance."),
+                FindingEvidence("src/lib.py", 4, "helper", "Relevance."),
+            ),
+            counterevidence=(FindingEvidence("tests/a.py", 2, "case", "Covered?"),),
+        )
+
+        cases = {
+            "another model": (
+                ("kiro", "gpt-5.6-terra"),
+                "**Checked:** 3 citations matched this commit; confirmed by "
+                "GPT-5.6 Terra @ Kiro, a different model from the one that found it.",
+            ),
+            "the same model elsewhere": (
+                ("claude", "claude-opus-5.5"),
+                "**Checked:** 3 citations matched this commit; confirmed by "
+                "Claude Opus 5.5 @ Claude in a separate pass.",
+            ),
+            "a provider default": (
+                ("codex", None),
+                "**Checked:** 3 citations matched this commit; confirmed by "
+                "provider default (model ID not configured) @ Codex in a separate "
+                "pass.",
+            ),
+            "the reviewer itself": (
+                (),
+                "**Checked:** 3 citations matched this commit; re-checked by the "
+                "same model in a separate pass.",
+            ),
+        }
+        for name, (verifier, expected) in cases.items():
+            with self.subTest(name):
+                self.assertIn(
+                    f"**[HIGH] Title**\n\n{expected}\n\nProblem.",
+                    self.checked_comment(finding, *verifier),
+                )
+
+    def test_a_committed_key_says_a_pattern_found_it(self):
+        finding = Finding(
+            "high", "Adds a key", "a.py", 1, "p", "s", found_by_pattern=True
+        )
+
+        self.assertIn(
+            "**Checked:** found by PR Warden's own pattern check, not by a model.",
+            self.checked_comment(finding, "kiro", "gpt-5.6-terra"),
+        )
+
+    def test_a_severity_the_verifier_changed_is_shown_with_its_reason(self):
+        raised = Finding(
+            "high",
+            "Title",
+            "a.py",
+            1,
+            "Problem.",
+            "s",
+            original_severity="low",
+            severity_reason="Every save reaches it, so data is lost.",
+        )
+        lowered = replace(raised, severity="low", original_severity="critical")
+
+        self.assertIn(
+            "\n\n**Severity:** the verifier raised this from LOW to HIGH: Every "
+            "save reaches it, so data is lost.\n\nProblem.",
+            self.checked_comment(raised, "kiro", "gpt-5.6-terra"),
+        )
+        self.assertIn(
+            "lowered this from CRITICAL to LOW",
+            self.checked_comment(lowered, "kiro", "gpt-5.6-terra"),
+        )
+        unchanged = self.checked_comment(
+            replace(raised, original_severity="", severity_reason=""),
+            "kiro",
+            "gpt-5.6-terra",
+        )
+        self.assertNotIn("**Severity:**", unchanged)
+        self.assertIn("found it.\n\nProblem.", unchanged)
 
     def test_verifier_tags_fall_back_to_the_reviewing_engine(self):
         finding = Finding(

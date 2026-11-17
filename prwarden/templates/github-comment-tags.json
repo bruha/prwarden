@@ -5,6 +5,8 @@
   "line": "line",
   "problem": "problem",
   "rule": "rule",
+  "checked": "checked",
+  "severity-change": "severity_change",
   "trigger": "trigger",
   "impact": "impact",
   "evidence": "evidence",

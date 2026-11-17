@@ -1,5 +1,9 @@
 **[[severity]] [title]**
 
+[checked]
+
+[severity-change]
+
 [problem]
 
 [rule]

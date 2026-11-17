@@ -2030,7 +2030,9 @@ The candidate's own text is not yours to rewrite: the controller already validat
 every citation it contains and keeps its own copy, so retyping a path, a line, or an
 excerpt could only introduce an error. The one correction available to you is
 `severity`, which you may set on a confirmed judgment when the candidate's own
-severity overstates or understates the impact you established.
+severity overstates or understates the impact you established. The author reads the
+`reason` of a judgment that corrects severity beside the corrected value, so there
+it says what about the impact decided the change.
 
 On a rejected judgment, also set `rejection_class` to the one that fits:
 `not_a_defect` when the claim is wrong about what the code does, `already_handled`

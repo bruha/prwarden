@@ -356,6 +356,33 @@ class HistoryCommandTests(unittest.TestCase):
         # Newest first.
         self.assertLess(output.index("1 finding posted"), output.index("skipped"))
 
+    def test_a_severity_the_verifier_changed_shows_what_it_was(self) -> None:
+        record = ReviewRecord(
+            REPOSITORY, PULL_REQUEST, run="run-1", live=False, destination="github"
+        )
+        corrected = Finding(
+            "high",
+            "Unchecked value",
+            "app.py",
+            3,
+            "p",
+            "s",
+            original_severity="low",
+            severity_reason="Every save reaches it.",
+        )
+        record.code_result((corrected,), approve=False, reason="")
+        entry = record.entry()
+        self.write(entry)
+
+        code, output, errors = self.run_main("--repo", "app", "--pr", "7")
+
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(entry["code"]["findings"][0]["original_severity"], "low")
+        self.assertEqual(
+            entry["code"]["findings"][0]["severity_reason"], "Every save reaches it."
+        )
+        self.assertIn("high (was low)  app.py:3  Unchecked value", output)
+
     def test_json_carries_every_entry_newest_first_with_words_and_links(self) -> None:
         older = dict(self.delivered(), recorded_at="2026-01-01T00:00:00+00:00")
         self.write(older, self.delivered())

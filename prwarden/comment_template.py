@@ -24,6 +24,8 @@ SUPPORTED_COMMENT_FIELDS = frozenset(
         "line",
         "problem",
         "rule",
+        "checked",
+        "severity_change",
         "trigger",
         "impact",
         "evidence",

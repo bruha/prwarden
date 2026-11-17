@@ -27,6 +27,8 @@ approvals.
 | `[path]` | `path` | Repository-relative source path | `src/forms/schema.ts` |
 | `[line]` | `line` | New-file line receiving the inline comment | `67` |
 | `[problem]` | `problem` | Confirmed root cause: what the code does wrong and why | `The fallback runs before the saved value loads, so it discards it.` |
+| `[checked]` | `checked` | What was checked before the finding was posted, as Markdown: citations matched against the reviewed commit and the verifier that confirmed it, or PR Warden's own pattern check for a committed key | ``**Checked:** 3 citations matched this commit; confirmed by GPT-5.6 Terra @ Kiro, a different model from the one that found it.`` |
+| `[severity-change]` | `severity_change` | How the verifier changed the severity and why, as Markdown; empty when it kept the reviewer's | ``**Severity:** the verifier raised this from LOW to HIGH: Every save reaches it.`` |
 | `[rule]` | `rule` | The repository code review rule the change breaks, with its file, as Markdown; empty when it breaks none | ``**Repository rule** (`AGENTS.md`): > Never log an email address.`` |
 | `[trigger]` | `trigger` | Concrete condition or action that reaches the defect | `Submit the form with an empty identifier.` |
 | `[impact]` | `impact` | Observable result for users or the system | `The request fails before data is saved.` |
@@ -53,11 +55,15 @@ values and `[done-by]` omits the redundant `verified by` clause. An inline
 comment describes a confirmed finding, so a rendered comment is attributed to the
 engine that verified it. The one exception is a committed credential found by PR
 Warden's own pattern check: no engine found or verified it, it still carries the
-review's `[done-by]`, and its `[problem]` says the pattern check found it.
+review's `[done-by]`, and its `[checked]` and `[problem]` say the pattern check found
+it.
 
 A tag alone on its line whose value is empty takes that line and the blank line
 after it, so `[rule]` leaves no gap in the comment on a finding that breaks no
-repository rule. Text inside a value is never changed.
+repository rule, and `[severity-change]` none on a finding whose severity the
+verifier kept. Text inside a value is never changed. A template copied before
+`[checked]` and `[severity-change]` existed keeps working without them; add them
+to show what they say.
 
 The template must contain exactly one tag mapped to the `marker` registry value.
 GitHub does not display the HTML comment, but the marker remains in the comment
