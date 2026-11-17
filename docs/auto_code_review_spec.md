@@ -1310,7 +1310,7 @@ approval. Bot-authored review summaries and conversation comments are excluded
 as noise; inline bot findings remain available. Conversation comments carrying a
 PR Warden design, documentation, or `LGTM` marker, such as another developer's
 installation posts, are left out of the code level's feedback and kept for the
-advisory levels, as described under the documentation level. The common prompt requires every
+advisory levels, as described under Review Levels. The common prompt requires every
 engine to omit a finding when prior
 feedback already describes the same underlying issue, including when the
 wording or reported location differs. If the complete prior-feedback text
