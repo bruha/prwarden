@@ -336,6 +336,24 @@ def terminal_stream(stream: TextIO) -> TextIO:
     return stream
 
 
+def format_duration(seconds: float) -> str:
+    """Return a wall-clock span as a person reads it: `5s`, `1m26s`, `1h01m01s`."""
+
+    total_seconds = int(max(0.0, seconds) + 0.5)
+    minutes, seconds_part = divmod(total_seconds, 60)
+    hours, minutes_part = divmod(minutes, 60)
+    if hours:
+        formatted = f"{hours}h"
+        if minutes_part:
+            formatted += f"{minutes_part:02d}m"
+        if seconds_part:
+            formatted += f"{seconds_part:02d}s"
+        return formatted
+    if minutes:
+        return f"{minutes}m{seconds_part:02d}s" if seconds_part else f"{minutes}m"
+    return f"{seconds_part}s"
+
+
 def prune_transcripts(directory: Path, retention_days: int) -> None:
     """Delete transcripts in ``directory`` last written over ``retention_days`` ago.
 
@@ -344,14 +362,22 @@ def prune_transcripts(directory: Path, retention_days: int) -> None:
     losing an old transcript is not worth failing a review over, and a run that
     deletes one another run is still writing simply misses it next time.
     """
+    prune_older_files(directory, "run-*.log", retention_days)
+
+
+def prune_older_files(directory: Path, pattern: str, retention_days: int) -> None:
+    """Delete files matching ``pattern`` last written over ``retention_days`` ago.
+
+    Best-effort, for the reasons `prune_transcripts` gives.
+    """
     if retention_days < 1:
-        raise ValueError("Transcript retention must be at least one day")
+        raise ValueError("Retention must be at least one day")
     cutoff = time.time() - retention_days * SECONDS_PER_DAY
     try:
-        transcripts = list(directory.glob("run-*.log"))
+        candidates = list(directory.glob(pattern))
     except OSError:
         return
-    for path in transcripts:
+    for path in candidates:
         try:
             if path.is_file() and path.stat().st_mtime < cutoff:
                 path.unlink()

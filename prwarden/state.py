@@ -190,6 +190,23 @@ class JsonStateStore:
                 latest = (written, head, dict(record))
         return None if latest is None else (latest[1], latest[2])
 
+    def pull_request_records(
+        self, repository: str, pr_number: int
+    ) -> "dict[str, dict[str, Any]]":
+        """Return a copy of every record kept for one pull request, by key.
+
+        Head records and pull-request records alike, so a caller comparing two
+        calls sees every outcome written in between, whichever level wrote it.
+        """
+
+        prefix = "{0}#{1}#".format(repository, pr_number)
+        with self._records_lock:
+            return {
+                key: dict(record)
+                for key, record in self.data["records"].items()
+                if key.startswith(prefix) and isinstance(record, dict)
+            }
+
     def _load(self) -> None:
         if not self.path.exists():
             return

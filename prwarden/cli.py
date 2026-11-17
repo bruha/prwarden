@@ -86,6 +86,12 @@ from .github import (
     validate_object_name,
 )
 from .github_status import describe_github_incident
+from .history import (
+    HISTORY_DIRECTORY_NAME,
+    ReviewHistory,
+    ReviewRecord,
+    prune as prune_history,
+)
 from .models import (
     DesignAssessment,
     DocsAssessment,
@@ -189,7 +195,7 @@ BOARD_FALLBACK_TERMINAL_SIZE = (80, 24)
 INTERRUPTED_EXIT_CODE = 130
 RUN_LOG_DIRECTORY_NAME = "run-logs"
 # Commands that look after this installation instead of reviewing.
-ADMIN_COMMANDS = ("doctor", "schedule", "setup")
+ADMIN_COMMANDS = ("doctor", "history", "schedule", "setup")
 PLAN_TITLE_WIDTH = 60
 # The progress line is styled with the terminal's own text colour, never a palette
 # colour: a theme decides what each palette entry looks like, and Solarized Dark sets
@@ -301,20 +307,7 @@ def _feedback_fingerprint(comments: tuple[PriorReviewComment, ...]) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
-def _format_duration(seconds: float) -> str:
-    total_seconds = int(max(0.0, seconds) + 0.5)
-    minutes, seconds_part = divmod(total_seconds, 60)
-    hours, minutes_part = divmod(minutes, 60)
-    if hours:
-        formatted = f"{hours}h"
-        if minutes_part:
-            formatted += f"{minutes_part:02d}m"
-        if seconds_part:
-            formatted += f"{seconds_part:02d}s"
-        return formatted
-    if minutes:
-        return f"{minutes}m{seconds_part:02d}s" if seconds_part else f"{minutes}m"
-    return f"{seconds_part}s"
+_format_duration = progress.format_duration
 
 
 def _clamp(text: str, width: int) -> str:
@@ -714,7 +707,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Review configured GitHub pull requests with a pluggable review engine."
         ),
         epilog="Other commands: `prwarden setup` writes a configuration, "
-        "`prwarden doctor` checks it, and `prwarden schedule` reviews on a timer.",
+        "`prwarden doctor` checks it, `prwarden schedule` reviews on a timer, and "
+        "`prwarden history` shows what the reviews did.",
     )
     parser.add_argument(
         "--version",
@@ -2518,10 +2512,42 @@ def _record_ineligible_skip(
     error: PullRequestIneligibleError,
     *,
     live: bool,
+    history_record: Optional[ReviewRecord] = None,
 ) -> None:
     if live:
         store.set_status(state_key, "skipped_ineligible", reason=str(error))
-    print(f"      -> Skipped: {error}; nothing was delivered")
+    _report_skip(history_record, "code", f"{error}; nothing was delivered")
+
+
+def _report_skip(
+    history_record: Optional[ReviewRecord],
+    level: str,
+    reason: str,
+    *,
+    earlier: Optional["Mapping[str, Any]"] = None,
+) -> None:
+    """Report a level that did not run, and note why in the review history."""
+
+    print(f"      -> Skipped: {reason}")
+    _note_skip(history_record, level, reason, earlier=earlier)
+
+
+def _note_skip(
+    history_record: Optional[ReviewRecord],
+    level: str,
+    reason: str,
+    *,
+    earlier: Optional["Mapping[str, Any]"] = None,
+) -> None:
+    if history_record is not None:
+        history_record.skip(level, reason, earlier)
+
+
+def _note_failure(
+    history_record: Optional[ReviewRecord], level: str, error: str
+) -> None:
+    if history_record is not None:
+        history_record.failed(level, error)
 
 
 def _verify_code_candidates(
@@ -2706,8 +2732,11 @@ def _process_pull_request(
     verification: Optional[VerificationPass] = None,
     verification_activity: Optional[_VerificationActivity] = None,
     fallback: Optional[FallbackReviewer] = None,
+    history_record: Optional[ReviewRecord] = None,
 ) -> None:
     destination = _destination(repository, pull_request, settings.reviewer_username)
+    if history_record is not None:
+        history_record.attempt(pull_request.head_sha, destination)
     account = reviewer_account(repository, settings.reviewer_username)
     verifier: tuple[Optional[str], Optional[str]] = (None, None)
     reviewer_engine = settings.review_engine
@@ -2746,7 +2775,12 @@ def _process_pull_request(
                 "reconsidering approval"
             )
         elif status != "approval_withheld":
-            print(f"      -> Skipped: state is {record.get('status')}")
+            _report_skip(
+                history_record,
+                "code",
+                f"state is {record.get('status')}",
+                earlier=record,
+            )
             return
         else:
             prior_comments = list_prior_review_comments(
@@ -2780,16 +2814,23 @@ def _process_pull_request(
             ):
                 reason = record.get("reason")
                 detail = f": {reason}" if isinstance(reason, str) and reason else ""
-                print(f"      -> Skipped: state is approval_withheld{detail}")
+                _report_skip(
+                    history_record,
+                    "code",
+                    f"state is approval_withheld{detail}",
+                    earlier=record,
+                )
                 return
             recorded_policy = _recorded_policy_changes(record)
             if recorded_policy:
                 # The head is the same, so it changes the same policy, and another
                 # review would end at the same withheld approval.
-                print(
-                    "      -> Skipped: approval stays withheld while this head changes "
-                    "review policy (" + ", ".join(recorded_policy) + "); a person "
-                    "approves it, and a later head or --force reviews it again"
+                _report_skip(
+                    history_record,
+                    "code",
+                    "approval stays withheld while this head changes review policy "
+                    "(" + ", ".join(recorded_policy) + "); a person approves it, "
+                    "and a later head or --force reviews it again",
                 )
                 return
             recorded_unread = _recorded_unread_paths(record)
@@ -2806,11 +2847,13 @@ def _process_pull_request(
                 # revisit: for this head and these settings another review would
                 # defer the same files and withhold the approval again, so it
                 # would spend a full review to reach the recorded result.
-                print(
-                    "      -> Skipped: approval stays withheld while "
+                _report_skip(
+                    history_record,
+                    "code",
+                    "approval stays withheld while "
                     + ", ".join(recorded_unread)
                     + " cannot be read; a later head, an ignore pattern, a larger "
-                    "MAX_DIFF_BYTES, or --force reopens it"
+                    "MAX_DIFF_BYTES, or --force reopens it",
                 )
                 return
             recorded_failed = _recorded_failed_checks(record)
@@ -2822,16 +2865,20 @@ def _process_pull_request(
                         list_pull_request_checks(repository, pull_request)
                     )
                 except CommandError as error:
-                    print(
-                        "      -> Skipped: approval stays withheld; this head's "
-                        f"checks could not be read: {error}"
+                    _report_skip(
+                        history_record,
+                        "code",
+                        "approval stays withheld; this head's checks could not be "
+                        f"read: {error}",
                     )
                     return
                 if failing:
-                    print(
-                        "      -> Skipped: approval stays withheld while "
+                    _report_skip(
+                        history_record,
+                        "code",
+                        "approval stays withheld while "
                         f"{_describe_failed_checks(failing)} failed at this head; a "
-                        "re-run that passes, a later head, or --force reopens it"
+                        "re-run that passes, a later head, or --force reopens it",
                     )
                     return
                 print(
@@ -2863,7 +2910,9 @@ def _process_pull_request(
             account,
         )
     ):
-        print("      -> Skipped: current head already has a submitted review")
+        _report_skip(
+            history_record, "code", "current head already has a submitted review"
+        )
         if live:
             store.set_status(
                 state_key,
@@ -2906,7 +2955,7 @@ def _process_pull_request(
         )
         if settled_conflict is not None:
             reason, conflict_base = settled_conflict
-            print(f"      -> Skipped: {reason}")
+            _report_skip(history_record, "code", reason)
             if live:
                 store.set_status(
                     state_key,
@@ -3061,6 +3110,7 @@ def _process_pull_request(
                     force=force,
                     fallback=fallback,
                     credentials=credentials,
+                    history_record=history_record,
                 )
             if settings.docs_level:
                 _run_docs_level(
@@ -3079,6 +3129,7 @@ def _process_pull_request(
                     docs_fingerprint=documentation_change_fingerprint(files),
                     fallback=fallback,
                     credentials=credentials,
+                    history_record=history_record,
                 )
             # Read here, after the advisory levels: the rules bind the code level
             # alone, so failing to read them must not cost the other levels.
@@ -3249,10 +3300,13 @@ def _process_pull_request(
                     f"{reported_path} -> {finding.path}"
                 )
     except PullRequestIneligibleError as error:
-        _record_ineligible_skip(store, state_key, error, live=live)
+        _record_ineligible_skip(
+            store, state_key, error, live=live, history_record=history_record
+        )
         return
     except DiffTooLargeError as error:
         print(f"      -> Skipped oversized pull request: {error}")
+        _note_skip(history_record, "code", f"oversized pull request: {error}")
         if not live:
             return
         notified = _notify_manual_review(
@@ -3286,6 +3340,10 @@ def _process_pull_request(
             store.set_status(state_key, "failed", error=str(error))
         raise
 
+    if history_record is not None:
+        history_record.code_result(
+            findings, approve=approve, reason=approval_reason
+        )
     clean_candidate = not findings and approve
     if not live:
         _print_findings(findings, approve)
@@ -3369,12 +3427,16 @@ def _process_pull_request(
         # timing, and the defect is now in the base branch where nobody is
         # looking for it.
         if not findings:
-            _record_ineligible_skip(store, state_key, error, live=live)
+            _record_ineligible_skip(
+                store, state_key, error, live=live, history_record=history_record
+            )
             return
         closed_during_review = True
         print(f"      -> {error}; delivering findings without an approval")
     except PullRequestIneligibleError as error:
-        _record_ineligible_skip(store, state_key, error, live=live)
+        _record_ineligible_skip(
+            store, state_key, error, live=live, history_record=history_record
+        )
         return
     except (CommandError, ReviewError) as error:
         store.set_status(state_key, "failed", error=str(error))
@@ -3390,7 +3452,9 @@ def _process_pull_request(
                     final_snapshot,
                 )
             except PullRequestIneligibleError as error:
-                _record_ineligible_skip(store, state_key, error, live=live)
+                _record_ineligible_skip(
+                    store, state_key, error, live=live, history_record=history_record
+                )
                 return
             except (CommandError, ReviewError) as error:
                 store.set_status(state_key, "failed", error=str(error))
@@ -3598,6 +3662,7 @@ def _process_pull_request_with_head_restarts(
     fallback: Optional[FallbackReviewer] = None,
     usage: Optional[_ModelUsage] = None,
     metrics: Optional[ReviewMetrics] = None,
+    history: Optional[ReviewHistory] = None,
 ) -> None:
     current_pull_request = pull_request
     # Measured per pull request, restarts included: a head that moved mid-review
@@ -3638,6 +3703,26 @@ def _process_pull_request_with_head_restarts(
         if fallback is not None
         else None
     )
+    history_record = (
+        ReviewRecord(
+            repository,
+            pull_request,
+            run=history.run,
+            live=live,
+            destination=_destination(
+                repository, pull_request, settings.reviewer_username
+            ),
+        )
+        if history is not None
+        else None
+    )
+    # Read before the review, so what it records is told apart from what earlier
+    # runs left behind.
+    recorded_before = (
+        store.pull_request_records(repository.slug, pull_request.number)
+        if history_record is not None
+        else {}
+    )
     try:
         _review_with_head_restarts(
             settings,
@@ -3650,13 +3735,57 @@ def _process_pull_request_with_head_restarts(
             verification=measured_verification,
             verification_activity=verification_activity,
             fallback=measured_fallback,
+            history_record=history_record,
         )
+    except KeyboardInterrupt:
+        if history_record is not None:
+            history_record.interrupt()
+        raise
+    except Exception as error:
+        if history_record is not None:
+            history_record.fail(error)
+        raise
     finally:
         spend = pull_request_usage.describe()
         if spend:
             print(f"      -> Spent {spend}")
         if usage is not None:
             usage.merge(pull_request_usage)
+        if history_record is not None and history is not None:
+            _write_history(
+                history,
+                history_record,
+                pull_request_usage,
+                store,
+                recorded_before,
+            )
+
+
+def _write_history(
+    history: ReviewHistory,
+    record: ReviewRecord,
+    spent: _ModelUsage,
+    store: JsonStateStore,
+    recorded_before: "Mapping[str, Mapping[str, Any]]",
+) -> None:
+    """Append what this review did to the run's history, whatever happened to it.
+
+    A defect here costs the history its line and never the review, whose own
+    outcome, or its error, is what the caller goes on to report.
+    """
+
+    try:
+        record.spend(spent.seconds, spent.invocations, spent.credits)
+        record.observe_state(
+            recorded_before,
+            store.pull_request_records(record.repository, record.number),
+        )
+        history.append(record.entry())
+    except Exception as error:
+        print(
+            f"Note: review history not recorded: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
 
 
 def _write_metrics(
@@ -3701,6 +3830,7 @@ def _review_with_head_restarts(
     verification: Optional[VerificationPass] = None,
     verification_activity: Optional[_VerificationActivity] = None,
     fallback: Optional[FallbackReviewer] = None,
+    history_record: Optional[ReviewRecord] = None,
 ) -> None:
     current_pull_request = pull_request
     for restart_count in range(MAX_HEAD_CHANGE_RESTARTS + 1):
@@ -3716,6 +3846,7 @@ def _review_with_head_restarts(
                 verification=verification,
                 verification_activity=verification_activity,
                 fallback=fallback,
+                history_record=history_record,
             )
             return
         except PullRequestHeadChangedError as error:
@@ -3841,6 +3972,7 @@ def _execute_review_tasks(
     incident_notice: "_GithubIncidentNotice",
     usage: Optional["_ModelUsage"] = None,
     metrics: Optional[ReviewMetrics] = None,
+    history: Optional[ReviewHistory] = None,
 ) -> "list[str]":
     """Review the selected pull requests and return their failure details.
 
@@ -3865,6 +3997,7 @@ def _execute_review_tasks(
             incident_notice=incident_notice,
             usage=usage,
             metrics=metrics,
+            history=history,
         )
 
     errors: "dict[str, str]" = {}
@@ -3904,6 +4037,7 @@ def _execute_review_tasks(
                             fallback=fallback,
                             usage=usage,
                             metrics=metrics,
+                            history=history,
                         )
                     except REVIEW_FAILURES as error:
                         key = (
@@ -3961,6 +4095,7 @@ def _review_tasks_in_sequence(
     incident_notice: "_GithubIncidentNotice",
     usage: Optional["_ModelUsage"] = None,
     metrics: Optional[ReviewMetrics] = None,
+    history: Optional[ReviewHistory] = None,
 ) -> "list[str]":
     """Review one pull request at a time, reporting each step as it happens."""
     errors: "list[str]" = []
@@ -3982,6 +4117,7 @@ def _review_tasks_in_sequence(
                 fallback=fallback,
                 usage=usage,
                 metrics=metrics,
+                history=history,
             )
         except REVIEW_FAILURES as error:
             errors.append(
@@ -4526,6 +4662,7 @@ def _run_docs_level(
     docs_fingerprint: Optional[str],
     fallback: Optional[FallbackReviewer] = None,
     credentials: "Sequence[CredentialMatch]" = (),
+    history_record: Optional[ReviewRecord] = None,
 ) -> None:
     """Run the advisory documentation level and deliver what it confirmed.
 
@@ -4547,6 +4684,7 @@ def _run_docs_level(
             f"{pull_request.base_ref} promotes reviewed work whose documentation "
             "was already checked"
         )
+        _note_skip(history_record, "docs", "the pull request promotes reviewed work")
         return
 
     state_key = store.pull_request_key(
@@ -4574,6 +4712,13 @@ def _run_docs_level(
                 f"request ({settled}); its documentation edits are unchanged, so "
                 "not checking the documentation again"
             )
+            _note_skip(
+                history_record,
+                "docs",
+                f"already settled for this pull request ({settled}), and its "
+                "documentation edits are unchanged",
+                earlier=record,
+            )
             return
         print(
             "      -> Documentation edits in this pull request changed since the "
@@ -4588,6 +4733,7 @@ def _run_docs_level(
             "      -> Documentation level skipped: this repository carries no "
             "documentation to check"
         )
+        _note_skip(history_record, "docs", "the repository has no documentation")
         return
 
     try:
@@ -4617,6 +4763,7 @@ def _run_docs_level(
         # may be the verifier's or the fallback's, and recording it would
         # send the code review past a primary that can still answer.
         print(f"      -> Documentation level failed: {error}")
+        _note_failure(history_record, "docs", str(error))
         return
     except Exception as error:
         # A defect in this level is still this level's failure: it informs the
@@ -4625,11 +4772,14 @@ def _run_docs_level(
             "      -> Documentation level failed unexpectedly: "
             f"{type(error).__name__}: {error}"
         )
+        _note_failure(history_record, "docs", f"{type(error).__name__}: {error}")
         return
 
     # A note quotes the workspace like a finding does, so it is kept from repeating
     # a credential the change commits before anything reports or posts it.
     assessment = redact_credentials((assessment,), credentials)[0]
+    if history_record is not None:
+        history_record.advisory_result("docs", assessment)
     candidates = len(assessment.findings) + len(assessment.rejected)
     print(f"      -> Documentation judged {assessment.verdict}")
     _report_docs_assessment(assessment, candidates)
@@ -4849,6 +4999,7 @@ def _run_design_level(
     force: bool,
     fallback: Optional[FallbackReviewer] = None,
     credentials: "Sequence[CredentialMatch]" = (),
+    history_record: Optional[ReviewRecord] = None,
 ) -> None:
     """Run the advisory design level and deliver what it confirmed.
 
@@ -4865,6 +5016,7 @@ def _run_design_level(
             f"{pull_request.base_ref} promotes reviewed work rather than "
             "proposing a design"
         )
+        _note_skip(history_record, "design", "the pull request promotes reviewed work")
         return
 
     # Keyed by pull request, not by head: the design level judges the shape of the
@@ -4885,6 +5037,12 @@ def _run_design_level(
         print(
             "      -> Design level already settled for this pull request "
             f"({settled}); not reviewing the design again"
+        )
+        _note_skip(
+            history_record,
+            "design",
+            f"already settled for this pull request ({settled})",
+            earlier=record,
         )
         return
 
@@ -4915,6 +5073,7 @@ def _run_design_level(
         # may be the verifier's or the fallback's, and recording it would
         # send the code review past a primary that can still answer.
         print(f"      -> Design level failed: {error}")
+        _note_failure(history_record, "design", str(error))
         return
     except Exception as error:
         # A defect in this level is still this level's failure: it informs the
@@ -4923,11 +5082,14 @@ def _run_design_level(
             "      -> Design level failed unexpectedly: "
             f"{type(error).__name__}: {error}"
         )
+        _note_failure(history_record, "design", f"{type(error).__name__}: {error}")
         return
 
     # A note quotes the workspace like a finding does, so it is kept from repeating
     # a credential the change commits before anything reports or posts it.
     assessment = redact_credentials((assessment,), credentials)[0]
+    if history_record is not None:
+        history_record.advisory_result("design", assessment)
     candidates = len(assessment.findings) + len(assessment.rejected)
     print(f"      -> Solution design judged {assessment.verdict}")
     _report_design_assessment(assessment, candidates)
@@ -5112,14 +5274,19 @@ def run(args: argparse.Namespace) -> int:
     # The process ID distinguishes runs that start in the same second, and ties
     # a transcript to the run still holding the terminal.
     name = f"run-{started}-{os.getpid()}.log"
+    history_directory = settings.state_file.parent / HISTORY_DIRECTORY_NAME
     with progress.transcript(log_directory / name) as transcript_path:
         progress.prune_transcripts(log_directory, settings.run_log_retention_days)
+        prune_history(history_directory, settings.review_history_retention_days)
         return _run_reviews(
             args,
             settings,
             concurrency=concurrency,
             live=live,
             transcript_path=transcript_path,
+            history=ReviewHistory(
+                history_directory / f"run-{started}-{os.getpid()}.jsonl"
+            ),
         )
 
 
@@ -5130,6 +5297,7 @@ def _run_reviews(
     concurrency: int,
     live: bool,
     transcript_path: Optional[Path],
+    history: Optional[ReviewHistory] = None,
 ) -> int:
     mode = "LIVE" if live else "DRY RUN"
     print(f"=== Automated Code Review ({mode}) ===")
@@ -5189,6 +5357,7 @@ def _run_reviews(
                 incident_notice=incident_notice,
                 usage=usage,
                 metrics=metrics,
+                history=history,
             )
         )
     run_spend = usage.describe()
@@ -5234,6 +5403,10 @@ def _admin_command(name: str) -> "Callable[[Sequence[str]], int]":
         from . import doctor
 
         return doctor.main
+    if name == "history":
+        from . import history
+
+        return history.main
     if name == "setup":
         from . import setup_wizard
 

@@ -77,6 +77,8 @@ Private configuration remains outside Git:
   never stored, and a slug that is not a valid GitHub owner and name is refused
   before it can name a directory outside the checkouts directory.
 - `.state/review-state.json`: delivery idempotency records.
+- `.state/history/`: the review history, one line per pull request per run, which
+  only `prwarden history` reads (see [Review history](#review-history)).
 
 These live in the configuration and state directories resolved at startup by
 `prwarden/paths.py`, before `.env` is read. `PRWARDEN_HOME`, when set, must be
@@ -142,10 +144,10 @@ repositories.
 
 ### Installation commands
 
-`prwarden setup`, `prwarden doctor`, and `prwarden schedule` look after an
-installation and never review. A first word naming one of them is dispatched before
-the review parser, which takes no positional argument, so no review invocation can
-be mistaken for one.
+`prwarden setup`, `prwarden doctor`, `prwarden schedule`, and `prwarden history`
+look after an installation and never review. A first word naming one of them is
+dispatched before the review parser, which takes no positional argument, so no
+review invocation can be mistaken for one.
 
 - `setup` and `doctor` first check every tool with its own status command, which
   reads a stored login and calls no model, in the environment a scheduled run
@@ -195,6 +197,9 @@ be mistaken for one.
   keeps `AUTO_REVIEW_DRY_RUN` on: a dry run records nothing, so a scheduled one
   would review the same heads at every slot. On macOS it also refuses while
   another LaunchAgent runs PR Warden.
+- `history` only reads the review history on this host, beside the state file a run
+  would use, and asks neither GitHub nor a model anything; it does not resolve the
+  GitHub identity a run needs. It exits 1 when part of the history cannot be read.
 
 ## Review Scheduling
 
@@ -648,6 +653,37 @@ deliveries, and its skips.
 Measurement may never change a review. Every field is read defensively, an unusable
 payload is recorded without a verdict rather than raised, and a measurement that
 cannot be written reports the reason and leaves the run's exit code alone.
+
+### Review history
+
+Every run appends one line per pull request it looked at to its own file under
+`history/` beside the state file, `run-<date>-<time>-<pid>.jsonl`, named like its
+transcript and created mode `0600`. A line records the run, live or dry, the
+repository, number, title, author, and URL, the head read and any head it replaced
+mid-review, and for each of the code, design, and documentation levels the outcome,
+its reason or error, the delivery receipt, and the confirmed findings after
+credential redaction. A manual-review request and the model time spent are recorded
+when they happened.
+
+Outcomes come from two places. What a live review settles is written to the state
+file, so the history takes each state record this run wrote for the pull request,
+comparing the records before and after the review, and cannot miss an outcome added
+later. The state file holds no finding text, and a skip, a dry run, or a failed
+advisory level writes nothing there, so the controller notes those as they happen. A
+result the controller noted and the state file never confirmed delivering is
+recorded as not delivered, and a review that raised is recorded as failed with its
+error, never as the verdict it had reached: an error is not a result. A skip of a
+head an earlier run settled carries that run's status, time, and receipt.
+
+The history is a report, never an input: no decision reads it, deleting it changes
+nothing, and a line that cannot be written is reported once and costs no review.
+Each run appends to its own file only, so overlapping runs need no lock. Each run
+deletes history files last written more than `REVIEW_HISTORY_RETENTION_DAYS` ago,
+14 by default. `prwarden history` reads it: every pull request with what each level
+last decided, or with `--repo` and `--pr` every review of one, and `--json` for
+another program. It prints titles and findings with control characters replaced, as
+they are text the reviewed project and a model wrote, and counts a line it cannot
+read rather than dropping it.
 
 ### Replaying pinned work
 

@@ -22,6 +22,10 @@ from .paths import LocationError, Locations, resolve_locations
 MAX_REVIEW_BUNDLE_LIMIT = 8
 MAX_REVIEW_CONCURRENCY = 8
 MAX_RUN_LOG_RETENTION_DAYS = 365
+# Two weeks: long enough to cover a pull request that stays open across a sprint,
+# and one line per reviewed pull request per run costs little to keep.
+DEFAULT_REVIEW_HISTORY_RETENTION_DAYS = 14
+MAX_REVIEW_HISTORY_RETENTION_DAYS = 365
 ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 DEFAULT_ENGINE_COMMANDS = {
     "antigravity": ("agy",),
@@ -89,6 +93,7 @@ class Settings:
     review_verify_timeout_per_candidate_seconds: int = 180
     review_concurrency: int = 2
     run_log_retention_days: int = 7
+    review_history_retention_days: int = DEFAULT_REVIEW_HISTORY_RETENTION_DAYS
     verify_engine: Optional[str] = None
     verify_engine_command: tuple[str, ...] = ()
     verify_model: Optional[str] = None
@@ -614,6 +619,38 @@ def default_locations() -> Locations:
         raise ConfigError(str(error)) from error
 
 
+def resolve_state_file(state_file: Optional[Path], locations: Locations) -> Path:
+    """Return the state file a run uses: the argument, then STATE_FILE, then the
+    installation's own.
+
+    Shared with `prwarden history`, which must find what runs wrote without
+    resolving everything else a run needs, the GitHub identity included.
+    """
+
+    if state_file is not None:
+        if state_file.is_absolute():
+            return state_file
+        return (Path.cwd() / state_file).resolve()
+    configured_state = os.getenv("STATE_FILE")
+    if configured_state:
+        return resolve_path(configured_state, locations.config_directory)
+    return locations.state_file
+
+
+def review_history_retention_days() -> int:
+    """Return how many days of review history to keep, from the environment."""
+
+    return parse_integer(
+        os.getenv(
+            "REVIEW_HISTORY_RETENTION_DAYS",
+            str(DEFAULT_REVIEW_HISTORY_RETENTION_DAYS),
+        ),
+        "REVIEW_HISTORY_RETENTION_DAYS",
+        1,
+        MAX_REVIEW_HISTORY_RETENTION_DAYS,
+    )
+
+
 # Until 2.1.0 the default comment files sat in a `templates/` directory beside the
 # package, and `.env.example` named them there. They now ship inside the package so
 # an installed copy has them too; a setting that still names the old place means the
@@ -662,16 +699,7 @@ def load_settings(
     elif not selected_repositories_file.is_absolute():
         selected_repositories_file = (Path.cwd() / selected_repositories_file).resolve()
 
-    selected_state_file = state_file
-    if selected_state_file is None:
-        configured_state = os.getenv("STATE_FILE")
-        selected_state_file = (
-            resolve_path(configured_state, base_directory)
-            if configured_state
-            else locations.state_file
-        )
-    elif not selected_state_file.is_absolute():
-        selected_state_file = (Path.cwd() / selected_state_file).resolve()
+    selected_state_file = resolve_state_file(state_file, locations)
 
     comment_template_file = _comment_file(
         "GITHUB_COMMENT_TEMPLATE_FILE",
@@ -873,6 +901,7 @@ def load_settings(
             1,
             MAX_RUN_LOG_RETENTION_DAYS,
         ),
+        review_history_retention_days=review_history_retention_days(),
         verify_engine=verify_engine,
         verify_engine_command=verify_engine_command,
         verify_model=verify_model,

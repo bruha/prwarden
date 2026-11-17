@@ -543,6 +543,43 @@ class ConfigurationTests(unittest.TestCase):
                     with self.assertRaises(config.ConfigError):
                         settings_for(f"RUN_LOG_RETENTION_DAYS={invalid}\n")
 
+    def test_review_history_is_kept_two_weeks_unless_configured(self):
+        """The history outlives the transcripts, and the operator sets how long."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repositories_file = root / "repositories.json"
+            repositories_file.write_text(
+                json.dumps([{"slug": "example/example-app", "path": "."}]),
+                encoding="utf-8",
+            )
+            base = (
+                f"REPOSITORIES_FILE={repositories_file}\n"
+                f"STATE_FILE={root / 'state.json'}\n"
+            )
+            env_file = root / ".env"
+
+            def settings_for(extra: str):
+                write_private_env(env_file, base + extra)
+                with patch.dict(os.environ, {}, clear=True), patch(
+                    "prwarden.config.resolve_github_username", return_value="reviewer"
+                ):
+                    return config.load_settings(env_file)
+
+            self.assertEqual(settings_for("").review_history_retention_days, 14)
+            self.assertEqual(
+                settings_for(
+                    "REVIEW_HISTORY_RETENTION_DAYS=30\n"
+                ).review_history_retention_days,
+                30,
+            )
+            for invalid in ("0", "-1", "8.5", "fortnight", str(
+                config.MAX_REVIEW_HISTORY_RETENTION_DAYS + 1
+            )):
+                with self.subTest(invalid=invalid):
+                    with self.assertRaises(config.ConfigError):
+                        settings_for(f"REVIEW_HISTORY_RETENTION_DAYS={invalid}\n")
+
     def test_design_level_is_on_by_default_and_can_be_disabled(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -50,6 +50,8 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
 - `prwarden/public_safety.py`: keeps reviewed projects' names out of commits; the
   public-safety Git hooks and the private `[pr:xxxx]` reference map.
 - `prwarden/state.py`: atomic JSON state and the single-host process lock.
+- `prwarden/history.py`: the review history each run appends to, and
+  `prwarden history`, which reads it.
 - `prwarden/paths.py`: where configuration and state live, checkout or installed.
 - `prwarden/schedule.py`: `prwarden schedule`, the LaunchAgent or systemd timer.
 - `prwarden/doctor.py`: `prwarden doctor`, read-only checks of an installation.

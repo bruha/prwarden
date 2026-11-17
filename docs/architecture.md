@@ -30,6 +30,8 @@ Use these module responsibilities:
 - `comment_template`: load and render bounded, declarative GitHub comment
   templates without executing template code.
 - `state`: coordinate one host and record confirmed delivery outcomes.
+- `history`: record what each run did with each pull request, as a report that no
+  decision reads, and read it back for `prwarden history`.
 - `cli`: orchestrate the use cases and isolate failures per pull request.
 
 Dependencies should point toward stable domain contracts. Provider and delivery
@@ -61,6 +63,7 @@ The expected review flow is:
    deliver only if the reviewed snapshot is still valid.
 10. Record state only after a confirmed outcome.
 11. Clean the temporary worktree on success and failure.
+12. Append what the review did to the run's review history, whatever its outcome.
 
 Each level is one reviewer invocation and one verifier invocation, sequentially:
 the same engine and model review every level and the same second engine and model
