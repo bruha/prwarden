@@ -960,6 +960,12 @@ AI_DOCUMENTATION_PATTERNS = (
     # Steering only. A `.kiro/specs` plan describes work to do rather than how the
     # project behaves, so a change is meant to leave it behind.
     ".kiro/steering/**/*.md",
+    # Agent rules and workflows under `.agents/`, and under `.agent/`, the legacy
+    # name Antigravity still reads. Its MCP and hook configuration there is not text.
+    ".agents/rules/**/*.md",
+    ".agents/workflows/**/*.md",
+    ".agent/rules/**/*.md",
+    ".agent/workflows/**/*.md",
     ".github/copilot-instructions.md",
     ".github/instructions/**/*.md",
 )

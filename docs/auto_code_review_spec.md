@@ -581,7 +581,8 @@ costs no invocation at all. Human documentation is `README.md`, `CONTRIBUTING.md
 `ARCHITECTURE.md`, `docs/**`, and a `README.md` up to two directories down, which
 covers a monorepo package without collecting a dependency's own README. Agent
 documentation is `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`,
-`.cursor/rules/**`, `.kiro/steering/**`, and the Copilot instruction files. A
+`.cursor/rules/**`, `.kiro/steering/**`, the rules and workflows under `.agents/` or
+its legacy name `.agent/`, and the Copilot instruction files. A
 changelog, a licence, and a `.kiro/specs` plan are excluded: a changelog records what
 happened rather than promising how the code behaves, and a plan describes work a
 change is meant to leave behind. An empty document, one over 200 KB, and anything
@@ -960,7 +961,8 @@ nothing.
 
 A repository states what its reviews must hold the code to in a section headed
 "Code review" in its agent instruction files: the root `AGENTS.md`, `CLAUDE.md`, or
-`GEMINI.md`, `.cursorrules`, `.cursor/rules`, `.kiro/steering`,
+`GEMINI.md`, `.cursorrules`, `.cursor/rules`, `.kiro/steering`, `.agents/rules`,
+`.agents/workflows` and their legacy `.agent/` twins,
 `.github/copilot-instructions.md`, or `.github/instructions`, the same files the
 documentation level reads. The heading may be any level and may say "Code reviews"
 or add "guidelines", "rules", "instructions", "checklist", or "standards"; the

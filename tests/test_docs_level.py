@@ -628,6 +628,9 @@ class DocumentationChangeTests(unittest.TestCase):
             "AGENTS.md",
             ".kiro/steering/rules.md",
             ".cursor/rules/style.mdc",
+            ".agents/rules/deployment.md",
+            ".agents/workflows/release.md",
+            ".agent/rules/style.md",
         )
         not_documentation = (
             "app.py",
@@ -637,6 +640,7 @@ class DocumentationChangeTests(unittest.TestCase):
             "node_modules/pkg/README.md",
             "docs/dist/page.md",
             ".kiro/specs/plan.md",
+            ".agents/mcp_config.json",
             "docs/image.png",
         )
         for path in documentation:
@@ -669,6 +673,25 @@ class DocumentationChangeTests(unittest.TestCase):
                 with self.subTest(path):
                     self.assertEqual(is_documentation_path(path), path in discovered)
 
+    def test_agent_rules_under_dot_agents_are_agent_documentation(self) -> None:
+        """Documentation proposals cited a rule file under `.agents/rules` sixty
+        times in two weeks, and each was rejected as no document of the workspace,
+        which cost the level a retry: discovery never looked there."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for path in (".agents/rules/deployment.md", ".agents/workflows/ship.md"):
+                (root / path).parent.mkdir(parents=True, exist_ok=True)
+                (root / path).write_text("# Rule\n", encoding="utf-8")
+
+            discovered = {
+                item.path: item.audience for item in discover_documentation(root)
+            }
+
+        self.assertEqual(
+            discovered,
+            {".agents/rules/deployment.md": "ai", ".agents/workflows/ship.md": "ai"},
+        )
     def test_a_pull_request_with_no_documentation_edits_has_no_fingerprint(
         self,
     ) -> None:

@@ -202,12 +202,14 @@ class CollectionTests(unittest.TestCase):
             "CLAUDE.md",
             ".kiro/steering/review.md",
             ".cursor/rules/style.mdc",
+            ".agents/rules/review.md",
             ".github/copilot-instructions.md",
         ):
             self.assertTrue(is_review_rule_source(path), path)
         for path in ("README.md", "docs/review.md", "src/AGENTS.md", "notes.txt"):
             self.assertFalse(is_review_rule_source(path), path)
         self.assertIn(".kiro/steering", review_rule_pathspecs())
+        self.assertIn(".agents/rules", review_rule_pathspecs())
         self.assertIn("AGENTS.md", review_rule_pathspecs())
 
 
