@@ -24,6 +24,8 @@ Use these module responsibilities:
 - `workspace`: create and clean exact detached PR-head worktrees.
 - `engine`: define the common AI contract and adapter selection.
 - `review`: construct bounded material and validate model responses.
+- `review_plan`: decide which types of review a run does, in what order, and on
+  which engines, with the code review always last.
 - `secret_scan`: find credentials an added line commits by their shape, without a
   model, and keep their values out of everything shown.
 - `delivery`: format and send destination-specific messages.
@@ -65,14 +67,18 @@ The expected review flow is:
 11. Clean the temporary worktree on success and failure.
 12. Append what the review did to the run's review history, whatever its outcome.
 
-Each level is one reviewer invocation and one verifier invocation, sequentially:
-the same engine and model review every level and the same second engine and model
-verify every level, so a level is defined by its prompt, schema, validation, and
-delivery route rather than by its own provider configuration. The one exception is
+Each level is one reviewer invocation and one verifier invocation, sequentially, in
+the order of the run's review plan, which always ends with the code level: its
+approval is what a pull request is merged on, so the advisory notes are posted
+before it. Each level carries its own engines in that plan, so a level is defined by
+its prompt, schema, validation, and delivery route, and its provider configuration
+is the plan's to give. Today the plan gives every level the same engine and model to
+review and the same second engine and model to verify. The one exception is
 reasoning effort: the code level may take its own (`REVIEW_CODE_EFFORT`), because it
-alone can approve, and every other level runs at the role's effort. The levels share
-no data, which is what keeps the design level advisory and makes running them
-concurrently a scheduling decision rather than a redesign.
+alone can approve, and every other level runs at the role's effort. Levels configured
+alike share their engines, so a verifier that handed over for one level stays handed
+over for the pull request's other levels. The levels share no data, which is what
+keeps the design level advisory.
 
 ## Design rules
 

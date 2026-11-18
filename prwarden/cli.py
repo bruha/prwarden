@@ -47,6 +47,7 @@ from .delivery import (
 from .engine import (
     code_candidate_ref,
     is_exhausted_quota,
+    CODE_LEVEL,
     DESIGN_LEVEL,
     DOCS_LEVEL,
     create_fallback_engine,
@@ -148,6 +149,7 @@ from .review import (
     validate_findings,
     without_generated_files,
 )
+from .review_plan import ReviewPlan, review_plan
 from .reviewer_identity import (
     describe_confirmation,
     describe_severity_change,
@@ -1049,6 +1051,158 @@ def _with_verification_fallback(
     return replace(
         verification, engine=_FallbackVerifier(verification), fallback=None
     )
+
+
+@dataclass(frozen=True)
+class ReviewStages:
+    """The engines one type of review runs on, and the settings that name them.
+
+    ``settings`` is the run's settings with this type's reviewer in the role fields,
+    so the engine a level reports, the timeout it states, and the hand-overs it makes
+    are that type's own.
+    """
+
+    settings: Settings
+    engine: ReviewEngine
+    verification: Optional[VerificationPass] = None
+    fallback: Optional[FallbackReviewer] = None
+
+
+def _shared(
+    created: "list[tuple[Any, Any]]", key: Any, make: Callable[[], Any]
+) -> Any:
+    """Return what was made for an equal key already, or make and keep it."""
+
+    for known, value in created:
+        if known == key:
+            return value
+    value = make()
+    created.append((key, value))
+    return value
+
+
+def _create_review_stages(plan: ReviewPlan) -> "dict[str, ReviewStages]":
+    """Create the engines of every type in the plan, in the order the types run.
+
+    Types configured alike share one engine, verifier, and fallback rather than each
+    getting its own. A verifier that failed and handed over is down for every type of
+    that pull request, and asking it again for each type would spend a refusal to
+    learn what the first one already said.
+    """
+
+    engines: "list[tuple[Any, Any]]" = []
+    verifications: "list[tuple[Any, Any]]" = []
+    fallbacks: "list[tuple[Any, Any]]" = []
+    stages: "dict[str, ReviewStages]" = {}
+    for review_type in plan.types:
+        type_settings = review_type.settings
+        engine = _shared(
+            engines, type_settings, lambda: create_review_engine(type_settings)
+        )
+        verification = _shared(
+            verifications,
+            (
+                verification_engine_settings(type_settings),
+                verify_fallback_engine_settings(type_settings),
+            ),
+            lambda: _create_verification_pass(type_settings, engine),
+        )
+        fallback = _shared(
+            fallbacks,
+            fallback_engine_settings(type_settings),
+            lambda: _create_fallback_reviewer(type_settings),
+        )
+        stages[review_type.name] = ReviewStages(
+            settings=type_settings,
+            engine=engine,
+            verification=verification,
+            fallback=fallback,
+        )
+    return stages
+
+
+def _shared_stages(
+    settings: Settings,
+    engine: ReviewEngine,
+    verification: Optional[VerificationPass],
+    fallback: Optional[FallbackReviewer],
+) -> "dict[str, ReviewStages]":
+    """Return a plan's types all reviewing with the one set of engines given."""
+
+    return {
+        name: ReviewStages(
+            settings=settings,
+            engine=engine,
+            verification=verification,
+            fallback=fallback,
+        )
+        for name in review_plan(settings).names
+    }
+
+
+def _measured_stages(
+    stages: "Mapping[str, ReviewStages]",
+    measured: "Callable[[ReviewEngine, str], ReviewEngine]",
+) -> "dict[str, ReviewStages]":
+    """Wrap each engine one pull request uses for measuring, once however shared.
+
+    Wrapped once per engine rather than once per type, so a verification hand-over
+    made for one type holds for that pull request's other types too, as it would if
+    they shared one verifier, which they do.
+    """
+
+    engines: "dict[int, ReviewEngine]" = {}
+    verifications: "dict[int, VerificationPass]" = {}
+    fallbacks: "dict[int, FallbackReviewer]" = {}
+
+    def engine_of(engine: ReviewEngine) -> ReviewEngine:
+        if id(engine) not in engines:
+            engines[id(engine)] = measured(engine, "review")
+        return engines[id(engine)]
+
+    def verification_of(verification: VerificationPass) -> VerificationPass:
+        if id(verification) not in verifications:
+            wrapped = replace(
+                verification,
+                engine=measured(verification.engine, "verify"),
+                fallback=(
+                    replace(
+                        verification.fallback,
+                        engine=measured(
+                            verification.fallback.engine, "verify fallback"
+                        ),
+                    )
+                    if verification.fallback is not None
+                    else None
+                ),
+            )
+            # Wrapped per pull request, so a hand-over holds for this pull request's
+            # verification and never decides another's.
+            verifications[id(verification)] = _with_verification_fallback(wrapped)
+        return verifications[id(verification)]
+
+    def fallback_of(fallback: FallbackReviewer) -> FallbackReviewer:
+        if id(fallback) not in fallbacks:
+            fallbacks[id(fallback)] = replace(
+                fallback, engine=measured(fallback.engine, "fallback")
+            )
+        return fallbacks[id(fallback)]
+
+    return {
+        name: replace(
+            stage,
+            engine=engine_of(stage.engine),
+            verification=(
+                verification_of(stage.verification)
+                if stage.verification is not None
+                else None
+            ),
+            fallback=(
+                fallback_of(stage.fallback) if stage.fallback is not None else None
+            ),
+        )
+        for name, stage in stages.items()
+    }
 
 
 def _verification_identity(
@@ -2765,7 +2919,7 @@ def _process_pull_request(
     repository: Repository,
     pull_request: PullRequest,
     store: JsonStateStore,
-    engine: ReviewEngine,
+    engine: Optional[ReviewEngine] = None,
     *,
     live: bool,
     force: bool,
@@ -2773,14 +2927,26 @@ def _process_pull_request(
     verification_activity: Optional[_VerificationActivity] = None,
     fallback: Optional[FallbackReviewer] = None,
     history_record: Optional[ReviewRecord] = None,
+    stages: "Optional[Mapping[str, ReviewStages]]" = None,
 ) -> None:
+    """Review one pull request at one head with every type of review it gets.
+
+    ``stages`` names each type's engines, in the order the types run. Without it
+    every type reviews with ``engine``, ``verification``, and ``fallback``.
+    """
+
+    if stages is None:
+        if engine is None:
+            raise TypeError("a review needs stages or an engine")
+        stages = _shared_stages(settings, engine, verification, fallback)
+    code = stages[CODE_LEVEL]
     destination = _destination(repository, pull_request, settings.reviewer_username)
     if history_record is not None:
         history_record.attempt(pull_request.head_sha, destination)
     account = reviewer_account(repository, settings.reviewer_username)
     verifier: tuple[Optional[str], Optional[str]] = (None, None)
-    reviewer_engine = settings.review_engine
-    reviewer_model = settings.review_model
+    reviewer_engine = code.settings.review_engine
+    reviewer_model = code.settings.review_model
     state_key = store.key(
         repository.slug,
         pull_request.number,
@@ -3043,7 +3209,7 @@ def _process_pull_request(
             None
             if force
             else _carried_review(
-                settings,
+                code.settings,
                 repository,
                 pull_request,
                 store,
@@ -3144,43 +3310,46 @@ def _process_pull_request(
             # The advisory levels read every comment, another installation's notes
             # included, so as not to repeat them; the code level never sees those.
             advisory_material = replace(material, prior_comments=feedback)
-            if settings.design_level:
-                _run_design_level(
-                    settings,
-                    repository,
-                    exact_repository,
-                    pull_request,
-                    advisory_material,
-                    engine,
-                    verification,
-                    store,
-                    destination,
-                    verification_activity,
-                    live=live,
-                    force=force,
-                    fallback=fallback,
-                    credentials=credentials,
-                    history_record=history_record,
-                )
-            if settings.docs_level:
-                _run_docs_level(
-                    settings,
-                    repository,
-                    exact_repository,
-                    pull_request,
-                    advisory_material,
-                    engine,
-                    verification,
-                    store,
-                    destination,
-                    verification_activity,
-                    live=live,
-                    force=force,
-                    docs_fingerprint=documentation_change_fingerprint(files),
-                    fallback=fallback,
-                    credentials=credentials,
-                    history_record=history_record,
-                )
+            # In the plan's order, which always ends with the code review: the
+            # advisory notes are posted before the approval a merge waits on.
+            for name, stage in stages.items():
+                if name == DESIGN_LEVEL:
+                    _run_design_level(
+                        stage.settings,
+                        repository,
+                        exact_repository,
+                        pull_request,
+                        advisory_material,
+                        stage.engine,
+                        stage.verification,
+                        store,
+                        destination,
+                        verification_activity,
+                        live=live,
+                        force=force,
+                        fallback=stage.fallback,
+                        credentials=credentials,
+                        history_record=history_record,
+                    )
+                elif name == DOCS_LEVEL:
+                    _run_docs_level(
+                        stage.settings,
+                        repository,
+                        exact_repository,
+                        pull_request,
+                        advisory_material,
+                        stage.engine,
+                        stage.verification,
+                        store,
+                        destination,
+                        verification_activity,
+                        live=live,
+                        force=force,
+                        docs_fingerprint=documentation_change_fingerprint(files),
+                        fallback=stage.fallback,
+                        credentials=credentials,
+                        history_record=history_record,
+                    )
             # Read here, after the advisory levels: the rules bind the code level
             # alone, so failing to read them must not cost the other levels.
             review_rules = read_review_rules(repository, pull_request)
@@ -3219,9 +3388,9 @@ def _process_pull_request(
                 review_settings,
                 review_engine,
             ) = _review_with_engine_fallback(
-                settings,
-                engine,
-                fallback,
+                code.settings,
+                code.engine,
+                code.fallback,
                 exact_repository,
                 pull_request,
                 review_material,
@@ -3235,8 +3404,8 @@ def _process_pull_request(
                     approval_reason,
                     blocking_comment_ids,
                 ) = _verify_code_candidates(
-                    settings,
-                    verification,
+                    code.settings,
+                    code.verification,
                     review_settings,
                     review_engine,
                     exact_repository,
@@ -3248,7 +3417,9 @@ def _process_pull_request(
                 # Attribution for delivery: name the verifier only when it was a
                 # different engine or model than the one that reviewed, and name the
                 # verifier's fallback when that is the engine that judged.
-                verifier = _delivered_verifier(verification, settings, review_settings)
+                verifier = _delivered_verifier(
+                    code.verification, code.settings, review_settings
+                )
             for index, bundle in enumerate(extra_bundles, start=2):
                 bundle_material = _bundle_material_from(material, bundle)
                 print(
@@ -3266,9 +3437,9 @@ def _process_pull_request(
                     bundle_settings,
                     bundle_engine,
                 ) = _review_with_engine_fallback(
-                    settings,
-                    engine,
-                    fallback,
+                    code.settings,
+                    code.engine,
+                    code.fallback,
                     exact_repository,
                     pull_request,
                     bundle_material,
@@ -3282,8 +3453,8 @@ def _process_pull_request(
                         _,
                         _,
                     ) = _verify_code_candidates(
-                        settings,
-                        verification,
+                        code.settings,
+                        code.verification,
                         bundle_settings,
                         bundle_engine,
                         exact_repository,
@@ -3294,7 +3465,7 @@ def _process_pull_request(
                     )
                     # A later bundle may be the one that met a failed verifier.
                     verifier = _delivered_verifier(
-                        verification, settings, review_settings
+                        code.verification, code.settings, review_settings
                     )
                 if bundle_findings:
                     # A bundle speaks for its own files only. It may add findings and
@@ -3353,7 +3524,9 @@ def _process_pull_request(
         # One limit across every bundle and every committed key, the most severe
         # first. What it leaves over is still confirmed, so its files are read
         # again at the next head rather than carried over as clean.
-        findings, withheld_findings = select_findings(findings, settings.max_findings)
+        findings, withheld_findings = select_findings(
+            findings, code.settings.max_findings
+        )
         if withheld_findings:
             print(
                 f"      -> Posting the {len(findings)} most severe of "
@@ -3593,7 +3766,7 @@ def _process_pull_request(
         if not findings and destination == "github":
             receipt_id = submit_approval(repository, pull_request)
         elif not findings and destination == OWN_GITHUB_DESTINATION:
-            idle_verifier = _verifier_identity(settings)
+            idle_verifier = _verifier_identity(code.settings)
             if idle_verifier == (reviewer_engine, reviewer_model):
                 idle_verifier = (None, None)
             receipt_id = submit_lgtm_comment(
@@ -3722,7 +3895,7 @@ def _process_pull_request_with_head_restarts(
     repository: Repository,
     pull_request: PullRequest,
     store: JsonStateStore,
-    engine: ReviewEngine,
+    engine: Optional[ReviewEngine] = None,
     *,
     live: bool,
     force: bool,
@@ -3732,7 +3905,18 @@ def _process_pull_request_with_head_restarts(
     usage: Optional[_ModelUsage] = None,
     metrics: Optional[ReviewMetrics] = None,
     history: Optional[ReviewHistory] = None,
+    stages: "Optional[Mapping[str, ReviewStages]]" = None,
 ) -> None:
+    """Review one pull request, restarting at a newer head, and measure its spend.
+
+    ``stages`` names each type's engines; without it every type reviews with
+    ``engine``, ``verification``, and ``fallback``.
+    """
+
+    if stages is None:
+        if engine is None:
+            raise TypeError("a review needs stages or an engine")
+        stages = _shared_stages(settings, engine, verification, fallback)
     current_pull_request = pull_request
     # Measured per pull request, restarts included: a head that moved mid-review
     # spends a second full review, and that is exactly the cost worth seeing.
@@ -3747,31 +3931,7 @@ def _process_pull_request_with_head_restarts(
             repository,
         )
 
-    measured_engine = measured(engine, "review")
-    measured_verification = (
-        replace(
-            verification,
-            engine=measured(verification.engine, "verify"),
-            fallback=(
-                replace(
-                    verification.fallback,
-                    engine=measured(verification.fallback.engine, "verify fallback"),
-                )
-                if verification.fallback is not None
-                else None
-            ),
-        )
-        if verification is not None
-        else None
-    )
-    # Wrapped per pull request, so a hand-over holds for this pull request's
-    # verification and never decides another's.
-    measured_verification = _with_verification_fallback(measured_verification)
-    measured_fallback = (
-        replace(fallback, engine=measured(fallback.engine, "fallback"))
-        if fallback is not None
-        else None
-    )
+    measured_stages = _measured_stages(stages, measured)
     history_record = (
         ReviewRecord(
             repository,
@@ -3798,12 +3958,10 @@ def _process_pull_request_with_head_restarts(
             repository,
             current_pull_request,
             store,
-            measured_engine,
             live=live,
             force=force,
-            verification=measured_verification,
+            stages=measured_stages,
             verification_activity=verification_activity,
-            fallback=measured_fallback,
             history_record=history_record,
         )
     except KeyboardInterrupt:
@@ -3892,13 +4050,11 @@ def _review_with_head_restarts(
     repository: Repository,
     pull_request: PullRequest,
     store: JsonStateStore,
-    engine: ReviewEngine,
     *,
     live: bool,
     force: bool,
-    verification: Optional[VerificationPass] = None,
+    stages: "Mapping[str, ReviewStages]",
     verification_activity: Optional[_VerificationActivity] = None,
-    fallback: Optional[FallbackReviewer] = None,
     history_record: Optional[ReviewRecord] = None,
 ) -> None:
     current_pull_request = pull_request
@@ -3909,13 +4065,11 @@ def _review_with_head_restarts(
                 repository,
                 current_pull_request,
                 store,
-                engine,
                 live=live,
                 force=force,
-                verification=verification,
                 verification_activity=verification_activity,
-                fallback=fallback,
                 history_record=history_record,
+                stages=stages,
             )
             return
         except PullRequestHeadChangedError as error:
@@ -4030,14 +4184,12 @@ def _execute_review_tasks(
     tasks: "Sequence[_ReviewTask]",
     settings: Settings,
     store: JsonStateStore,
-    engine: ReviewEngine,
+    stages: "Mapping[str, ReviewStages]",
     *,
     concurrency: int,
     live: bool,
     force: bool,
-    verification: Optional["_VerificationPass"],
     verification_activity: "_VerificationActivity",
-    fallback: Optional["_FallbackReviewer"],
     incident_notice: "_GithubIncidentNotice",
     usage: Optional["_ModelUsage"] = None,
     metrics: Optional[ReviewMetrics] = None,
@@ -4057,12 +4209,10 @@ def _execute_review_tasks(
             tasks,
             settings,
             store,
-            engine,
+            stages,
             live=live,
             force=force,
-            verification=verification,
             verification_activity=verification_activity,
-            fallback=fallback,
             incident_notice=incident_notice,
             usage=usage,
             metrics=metrics,
@@ -4098,15 +4248,13 @@ def _execute_review_tasks(
                             task.repository,
                             task.pull_request,
                             store,
-                            engine,
                             live=live,
                             force=force,
-                            verification=verification,
                             verification_activity=verification_activity,
-                            fallback=fallback,
                             usage=usage,
                             metrics=metrics,
                             history=history,
+                            stages=stages,
                         )
                     except REVIEW_FAILURES as error:
                         key = (
@@ -4154,13 +4302,11 @@ def _review_tasks_in_sequence(
     tasks: "Sequence[_ReviewTask]",
     settings: Settings,
     store: JsonStateStore,
-    engine: ReviewEngine,
+    stages: "Mapping[str, ReviewStages]",
     *,
     live: bool,
     force: bool,
-    verification: Optional["_VerificationPass"],
     verification_activity: "_VerificationActivity",
-    fallback: Optional["_FallbackReviewer"],
     incident_notice: "_GithubIncidentNotice",
     usage: Optional["_ModelUsage"] = None,
     metrics: Optional[ReviewMetrics] = None,
@@ -4178,15 +4324,13 @@ def _review_tasks_in_sequence(
                 task.repository,
                 task.pull_request,
                 store,
-                engine,
                 live=live,
                 force=force,
-                verification=verification,
                 verification_activity=verification_activity,
-                fallback=fallback,
                 usage=usage,
                 metrics=metrics,
                 history=history,
+                stages=stages,
             )
         except REVIEW_FAILURES as error:
             errors.append(
@@ -5393,9 +5537,7 @@ def _run_reviews(
         print(f"Run log: {transcript_path}")
 
     repositories = _selected_repositories(settings.repositories, args.repo)
-    engine = create_review_engine(settings)
-    verification = _create_verification_pass(settings, engine)
-    fallback = _create_fallback_reviewer(settings)
+    stages = _create_review_stages(review_plan(settings))
     errors: list[str] = []
     incident_notice = _GithubIncidentNotice()
     verification_activity = _VerificationActivity()
@@ -5416,13 +5558,11 @@ def _run_reviews(
                 tasks,
                 settings,
                 store,
-                engine,
+                stages,
                 concurrency=concurrency,
                 live=live,
                 force=args.force,
-                verification=verification,
                 verification_activity=verification_activity,
-                fallback=fallback,
                 incident_notice=incident_notice,
                 usage=usage,
                 metrics=metrics,

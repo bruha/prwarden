@@ -291,7 +291,7 @@ class VerificationFallbackUsageTests(unittest.TestCase):
             with patch(
                 "prwarden.cli._review_with_head_restarts",
                 side_effect=lambda *args, **kwargs: received.append(
-                    kwargs["verification"]
+                    kwargs["stages"]["code"].verification
                 ),
             ):
                 for _ in range(2):
