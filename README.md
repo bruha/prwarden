@@ -499,10 +499,11 @@ the level off, which removes its cost entirely.
 
 The **documentation level** then asks whether the change leaves this repository's own
 documentation saying something untrue, for the people reading the README and `docs`
-and for the coding agents reading `AGENTS.md`, `CLAUDE.md`, `.cursor/rules`, or
-`.kiro/steering`. It finds those documents in the reviewed head rather than being
-told where they are, so a repository with no documentation costs nothing, and it
-lists them for the reviewer to open rather than pasting them into the prompt.
+and for the coding agents reading `AGENTS.md`, `CLAUDE.md`, `.cursor/rules`,
+`.kiro/steering`, or `.agents/rules`. It finds those documents in the reviewed head
+rather than being told where they are, so a repository with no documentation costs
+nothing, and it lists them for the reviewer to open rather than pasting them into the
+prompt.
 
 Each proposal names the documentation line that is now wrong, the changed lines that
 made it wrong, and the replacement text to paste, written in that document's voice.
