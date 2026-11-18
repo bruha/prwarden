@@ -56,8 +56,8 @@ from prwarden.engine_command import CommandEngine
 from prwarden.engine_kiro import (
     KIRO_WORKSPACE_FILES,
     KiroEngine,
-    parse_kiro_credits,
     parse_kiro_output,
+    read_kiro_run,
 )
 from prwarden.models import (
     DocumentationFile,
@@ -93,6 +93,64 @@ def as_streams(runner):
         return output, ""
 
     return run
+
+
+def kiro_stream(*messages, credits=None, status="success"):
+    """Return what `kiro-cli chat --output-format stream-json` prints, as two streams.
+
+    Each message but the last ends in a tool call, as a review's narration does, and
+    the last is the answer, streamed in two chunks. `credits` adds the session's
+    usage report, and `status` is how the run ended.
+    """
+
+    def update(payload):
+        return {"type": "sessionUpdate", "data": {"update": payload}}
+
+    events = [{"type": "runStarted", "data": {"payloadSchema": "acp"}}]
+    for index, message in enumerate(messages):
+        middle = len(message) // 2
+        for text in (message[:middle], message[middle:]):
+            events.append(
+                update(
+                    {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {"type": "text", "text": text},
+                    }
+                )
+            )
+        if index < len(messages) - 1:
+            call = {"toolCallId": f"tool-{index}", "kind": "read"}
+            events.append(update({"sessionUpdate": "tool_call", **call}))
+            events.append(
+                update(
+                    {"sessionUpdate": "tool_call_update", "status": "completed", **call}
+                )
+            )
+    if credits is not None:
+        usage = [{"usage": credits, "unit": "credit", "unitPlural": "credits"}]
+        events.append(
+            update(
+                {
+                    "sessionUpdate": "session_info_update",
+                    "_meta": {"kiro": {"kind": "session_usage", "credits": usage}},
+                }
+            )
+        )
+    events.append(
+        {
+            "type": "runFinished",
+            "data": {
+                "status": status,
+                "finalText": messages[-1] if messages else "",
+                "finalTextTruncated": False,
+            },
+        }
+    )
+    return "\n".join(json.dumps(event) for event in events), "[INFO] Kiro log line"
+
+
+# A fenced approval, the answer most Kiro tests here need and none of them inspect.
+KIRO_FENCED_APPROVAL = kiro_stream('```json\n{"verdict":"approve","findings":[]}\n```')
 
 
 # What `codex exec --json` prints when Codex reads a file: the command, as an event.
@@ -2211,7 +2269,7 @@ class ReviewEngineTests(unittest.TestCase):
             )
             with patch(
                 "prwarden.engine_kiro.run_cmd_streams",
-                return_value=('```json\n{"verdict":"approve","findings":[]}\n```', ""),
+                return_value=KIRO_FENCED_APPROVAL,
             ) as run:
                 output = KiroEngine(settings).review(*self.input(repository))
 
@@ -2236,7 +2294,7 @@ class ReviewEngineTests(unittest.TestCase):
             )
             with patch(
                 "prwarden.engine_kiro.run_cmd_streams",
-                return_value=('{"verdict":"approve","findings":[]}', ""),
+                return_value=kiro_stream('{"verdict":"approve","findings":[]}'),
             ) as run:
                 KiroEngine(settings).review(*self.input(repository))
                 # What Kiro reads is the file in the workspace it starts in.
@@ -2276,7 +2334,7 @@ class ReviewEngineTests(unittest.TestCase):
         the head for configuration the controller had not written: every replayed
         verification failed. Whatever Kiro wrote there is put back."""
 
-        answer = ('{"verdict":"approve","findings":[]}', "")
+        answer = kiro_stream('{"verdict":"approve","findings":[]}')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repository = Repository("app", "owner/app", root)
@@ -2342,7 +2400,7 @@ class ReviewEngineTests(unittest.TestCase):
             for _ in range(2):
                 with patch(
                     "prwarden.engine_kiro.run_cmd_streams",
-                    return_value=('{"verdict":"approve","findings":[]}', ""),
+                    return_value=kiro_stream('{"verdict":"approve","findings":[]}'),
                 ) as run:
                     KiroEngine(settings).review(*self.input(repository))
                 run.assert_called_once()
@@ -2371,7 +2429,7 @@ class ReviewEngineTests(unittest.TestCase):
         levels to the fallback. The directory now holds the controller's own agent,
         so whatever Kiro does to it, the next call finds only what it expects."""
 
-        answer = ('{"verdict":"approve","findings":[]}', "")
+        answer = kiro_stream('{"verdict":"approve","findings":[]}')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repository = Repository("app", "owner/app", root)
@@ -2402,7 +2460,7 @@ class ReviewEngineTests(unittest.TestCase):
         agent Kiro would load, so it stays where it is and the next call refuses
         the head by naming it."""
 
-        answer = ('{"verdict":"approve","findings":[]}', "")
+        answer = kiro_stream('{"verdict":"approve","findings":[]}')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "head"
             root.mkdir()
@@ -2486,7 +2544,7 @@ class ReviewEngineTests(unittest.TestCase):
         controller removes the file after every call, whatever the call returned,
         so the next one finds only its own settings."""
 
-        answer = ('{"verdict":"approve","findings":[]}', "")
+        answer = kiro_stream('{"verdict":"approve","findings":[]}')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "head"
             root.mkdir()
@@ -2605,7 +2663,7 @@ class ReviewEngineTests(unittest.TestCase):
             for _ in range(2):
                 with patch(
                     "prwarden.engine_kiro.run_cmd_streams",
-                    return_value=('{"verdict":"approve","findings":[]}', ""),
+                    return_value=kiro_stream('{"verdict":"approve","findings":[]}'),
                 ) as run:
                     KiroEngine(settings).review(*self.input(repository))
                 run.assert_called_once()
@@ -2672,7 +2730,7 @@ class ReviewEngineTests(unittest.TestCase):
             )
             with patch(
                 "prwarden.engine_kiro.run_cmd_streams",
-                return_value=('```json\n{"verdict":"approve","findings":[]}\n```', ""),
+                return_value=KIRO_FENCED_APPROVAL,
             ) as run:
                 KiroEngine(settings).review(
                     *self.input(repository), timeout_seconds=1440
@@ -2681,7 +2739,7 @@ class ReviewEngineTests(unittest.TestCase):
 
             with patch(
                 "prwarden.engine_kiro.run_cmd_streams",
-                return_value=('```json\n{"verdict":"approve","findings":[]}\n```', ""),
+                return_value=KIRO_FENCED_APPROVAL,
             ) as run:
                 KiroEngine(settings).review(*self.input(repository))
             self.assertEqual(
@@ -3525,7 +3583,7 @@ class HostLoadedInstructionTests(unittest.TestCase):
         )
         with patch(
             "prwarden.engine_kiro.run_cmd_streams",
-            return_value=('```json\n{"verdict":"approve","findings":[]}\n```', ""),
+            return_value=KIRO_FENCED_APPROVAL,
         ) as run:
             KiroEngine(settings).review(*ReviewEngineTests.input(repository))
         return run.call_args.args[0][-1]
@@ -3713,7 +3771,7 @@ class EffortTests(unittest.TestCase):
             settings = self.settings(directory, repository)
             with patch(
                 "prwarden.engine_kiro.run_cmd_streams",
-                return_value=('```json\n{"verdict":"approve","findings":[]}\n```', ""),
+                return_value=KIRO_FENCED_APPROVAL,
             ) as run:
                 KiroEngine(settings).review(*ReviewEngineTests.input(repository))
 
@@ -3731,46 +3789,130 @@ class EffortTests(unittest.TestCase):
             )
             with patch(
                 "prwarden.engine_kiro.run_cmd_streams",
-                return_value=('```json\n{"verdict":"approve","findings":[]}\n```', ""),
+                return_value=KIRO_FENCED_APPROVAL,
             ) as run:
                 KiroEngine(settings).review(*ReviewEngineTests.input(repository))
 
             self.assertNotIn("--effort", run.call_args.args[0])
 
     def test_kiro_reports_what_the_call_cost(self):
-        stderr = "\x1b[?25l\n \x1b[38;5;8m▸ Credits: 2.37 • Time: 41s\x1b[0m\n\x1b[?25h"
+        """Kiro CLI 3.1 stopped printing "▸ Credits: …" on standard error, and no
+        run recorded a credit for twelve days. The cost is read from the usage
+        report in the event stream instead."""
+
         with tempfile.TemporaryDirectory() as directory:
             repository = Repository("app", "owner/app", Path(directory))
             settings = self.settings(directory, repository)
             take_invocation_credits()
             with patch(
                 "prwarden.engine_kiro.run_cmd_streams",
-                return_value=(
-                    '```json\n{"verdict":"approve","findings":[]}\n```',
-                    stderr,
+                return_value=kiro_stream(
+                    '{"verdict":"approve","findings":[]}', credits=2.37
                 ),
-            ):
+            ) as run:
                 KiroEngine(settings).review(*ReviewEngineTests.input(repository))
 
             self.assertEqual(take_invocation_credits(), 2.37)
+            args = run.call_args.args[0]
+            self.assertEqual(args[args.index("--output-format") + 1], "stream-json")
 
-    def test_kiro_reports_what_a_refused_call_cost(self):
-        """A failed call can still spend credits, and they are part of the bill."""
+    def test_kiro_reports_what_a_refused_call_cost_and_why_it_failed(self):
+        """A failed call can still spend credits, and they are part of the bill.
+        Its reason is in the stream too: standard error holds only Kiro's log
+        lines, and a spent quota is recognised by its words."""
 
-        refusal = CommandError("kiro-cli exited with 1: no\n▸ Credits: 0.8 • Time: 3s")
+        stream, _ = kiro_stream(credits=0.8, status="error")
+        events = stream.splitlines()
+        events.insert(
+            -1,
+            json.dumps(
+                {
+                    "type": "runError",
+                    "data": {
+                        "stage": "prompt",
+                        "message": "You have reached your\nmonthly usage limit.",
+                    },
+                }
+            ),
+        )
+        refusal = CommandError(
+            "kiro-cli exited with 1: [INFO] Kiro log line",
+            command="kiro-cli",
+            output="\n".join(events),
+            returncode=1,
+            error_output="[INFO] Kiro log line",
+        )
         with tempfile.TemporaryDirectory() as directory:
             repository = Repository("app", "owner/app", Path(directory))
             settings = self.settings(directory, repository)
             take_invocation_credits()
             with patch("prwarden.engine_kiro.run_cmd_streams", side_effect=refusal):
-                with self.assertRaises(EngineError):
+                with self.assertRaises(EngineError) as raised:
                     KiroEngine(settings).review(*ReviewEngineTests.input(repository))
 
             self.assertEqual(take_invocation_credits(), 0.8)
+        self.assertEqual(
+            str(raised.exception),
+            "kiro-cli exited with 1: You have reached your monthly usage limit.",
+        )
+        self.assertTrue(is_exhausted_quota(str(raised.exception)))
 
-    def test_kiro_without_a_cost_line_reports_no_cost(self):
-        self.assertIsNone(parse_kiro_credits("warning: something unrelated"))
-        self.assertEqual(parse_kiro_credits("Credits: 12 • Time: 1m2s"), 12.0)
+    def test_kiro_run_that_did_not_finish_is_an_engine_failure(self):
+        """An exit status of zero is not a review: a run Kiro did not finish, or
+        output that is not its event stream at all, fails rather than approving."""
+
+        answer = '{"verdict":"approve","findings":[]}'
+        for label, output, message in (
+            ("failed", kiro_stream(answer, status="error"), "status 'error'"),
+            ("plain text", (answer, ""), "without reporting a finished run"),
+        ):
+            with self.subTest(label), tempfile.TemporaryDirectory() as directory:
+                repository = Repository("app", "owner/app", Path(directory))
+                settings = self.settings(directory, repository)
+                with patch(
+                    "prwarden.engine_kiro.run_cmd_streams", return_value=output
+                ):
+                    with self.assertRaisesRegex(EngineError, message):
+                        KiroEngine(settings).review(
+                            *ReviewEngineTests.input(repository)
+                        )
+
+    def test_kiro_answer_is_the_message_after_the_last_tool_call(self):
+        """Narration before a tool call is not the answer, even when it holds an
+        object shaped like one."""
+
+        run = read_kiro_run(
+            kiro_stream(
+                'Draft: {"verdict":"approve","findings":[]}',
+                '{"verdict":"do_not_approve","findings":[]}',
+            )[0]
+        )
+
+        self.assertTrue(run.finished)
+        self.assertEqual(
+            parse_kiro_output(run.answer),
+            {"verdict": "do_not_approve", "findings": []},
+        )
+
+    def test_kiro_without_a_usage_report_reports_no_cost(self):
+        answer = '{"verdict":"approve","findings":[]}'
+        self.assertIsNone(read_kiro_run(kiro_stream(answer)[0]).credits)
+        self.assertIsNone(read_kiro_run("warning: something unrelated").credits)
+        empty = json.dumps(
+            {
+                "type": "sessionUpdate",
+                "data": {
+                    "update": {
+                        "sessionUpdate": "session_info_update",
+                        "_meta": {"kiro": {"kind": "session_usage", "credits": []}},
+                    }
+                },
+            }
+        )
+        self.assertIsNone(read_kiro_run(empty).credits)
+        self.assertEqual(
+            read_kiro_run(kiro_stream(answer, credits=12)[0]).credits, 12.0
+        )
 
     def test_antigravity_passes_the_effort_on_every_attempt(self):
         with tempfile.TemporaryDirectory() as directory:

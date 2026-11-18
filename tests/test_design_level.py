@@ -37,6 +37,7 @@ from prwarden.review import (
     validate_design_judgments,
 )
 from prwarden.state import JsonStateStore
+from tests.test_engine import kiro_stream
 from tests.test_review_rules import without_review_rules
 
 
@@ -510,7 +511,8 @@ class DesignAdapterContractTests(unittest.TestCase):
             )
 
             with patch(
-                "prwarden.engine_kiro.run_cmd_streams", return_value=(transcript, "")
+                "prwarden.engine_kiro.run_cmd_streams",
+                return_value=kiro_stream(transcript),
             ):
                 parsed = KiroEngine(settings).review(
                     repository,

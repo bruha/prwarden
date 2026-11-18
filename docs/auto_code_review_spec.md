@@ -674,8 +674,8 @@ minutes still spent them, and it labels each one by the material it was handed:
 `design fallback`, with `verification` appended when the fallback also judged what it
 found. Tokens are
 deliberately absent: the engines are coding-agent CLIs that do not report them. Credits
-are present for an engine that reports them: Kiro ends every headless call with its
-cost on standard error, the adapter reads it, and the spend line adds the total of the
+are present for an engine that reports them: Kiro reports every headless call's cost
+in its event stream, the adapter reads it, and the spend line adds the total of the
 calls that reported one. The cost travels on the calling thread rather than on the
 engine object, because one engine serves every parallel review at once.
 

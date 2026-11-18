@@ -1,6 +1,8 @@
 import json
+import math
 import re
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -23,9 +25,15 @@ from .models import PullRequest, Repository, ReviewMaterial
 ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 JSON_FENCE = re.compile(r"\A```(?:json)?\s*\n(?P<payload>.*?)\n```\s*\Z", re.DOTALL)
 DEFAULT_RESPONSE_KEYS = frozenset({"verdict", "findings"})
-# Kiro closes every headless call with "▸ Credits: 0.45 • Time: 1s" on standard
-# error. It is the only report of what a call cost, so it is read rather than dropped.
-KIRO_CREDITS = re.compile(r"Credits:\s*(?P<credits>[0-9]+(?:\.[0-9]+)?)")
+# Kiro CLI 3.1 reports what a headless call cost only in its event stream: the
+# "▸ Credits: 0.45" line earlier versions printed on standard error is gone, and with
+# it every credit figure a run recorded. So every call asks for the stream, one JSON
+# event per line on standard output, and reads three things from it: the answer, the
+# cost, and how the run ended. A failed run reports why there too, rather than on
+# standard error, which then holds only Kiro's own log lines.
+KIRO_STREAM_ARGS = ("--output-format", "stream-json")
+# A failure message is read in notifications and the run log, so a long one is cut.
+MAX_FAILURE_DETAIL_CHARACTERS = 500
 
 # Kiro reads workspace configuration from the directory it runs in, and a review runs
 # in the reviewed head. A `.kiro/settings/mcp.json` there, or a legacy
@@ -41,11 +49,12 @@ KIRO_DOCUMENT_DIRECTORIES = {
     KIRO_WORKSPACE_DIRECTORY: ("steering", "specs"),
     LEGACY_WORKSPACE_DIRECTORY: ("rules",),
 }
-# Kiro otherwise renders the answer as Markdown before printing it, which drops the
-# backticks, asterisks, and underscores of an unfenced JSON answer, so an excerpt
-# copied exactly from the file arrives changed and is rejected. Code intelligence is
-# off so Kiro starts no language server, since a language server loads the project's
-# own configuration.
+# Kiro renders its text output as Markdown, which dropped the backticks, asterisks,
+# and underscores of an unfenced JSON answer, so an excerpt copied exactly from the
+# file arrived changed and was rejected. The event stream the adapter reads carries
+# the model's text as written; rendering stays off so no output Kiro renders can
+# change an excerpt. Code intelligence is off so Kiro starts no language server,
+# since a language server loads the project's own configuration.
 KIRO_WORKSPACE_FILES = {
     "settings/cli.json": (
         '{"chat.disableMarkdownRendering": true, '
@@ -179,13 +188,146 @@ def remove_kiro_generated_files(root: Path) -> None:
                 ) from error
 
 
-def parse_kiro_credits(text: str) -> Optional[float]:
-    """Return the credits Kiro reported spending, or None when it reported none."""
+@dataclass(frozen=True)
+class KiroRun:
+    """What one `kiro-cli chat --output-format stream-json` call reported."""
 
-    matches = list(KIRO_CREDITS.finditer(ANSI_ESCAPE.sub("", text)))
-    if not matches:
+    # The model's last message: the text after its last tool call, as Kiro's own
+    # `finalText` is. Narration before a tool call is not the answer.
+    answer: str
+    # None when Kiro reported no cost, which says nothing rather than "free".
+    credits: Optional[float]
+    # Kiro said the run finished successfully. Anything else is an engine failure,
+    # never an empty review.
+    finished: bool
+    status: Optional[str]
+    errors: "tuple[str, ...]"
+
+
+def _kiro_events(output: str) -> "list[dict[str, Any]]":
+    """Return the JSON events Kiro printed, one per line, skipping anything else."""
+
+    events = []
+    for line in output.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def _mapping(value: Any, key: str) -> "dict[str, Any]":
+    inner = value.get(key) if isinstance(value, dict) else None
+    return inner if isinstance(inner, dict) else {}
+
+
+def _reported_credits(entries: Any) -> Optional[float]:
+    """Return the total of the credit entries Kiro's usage report lists."""
+
+    if not isinstance(entries, list):
         return None
-    return float(matches[-1].group("credits"))
+    total: Optional[float] = None
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("unit") != "credit":
+            continue
+        usage = entry.get("usage")
+        if isinstance(usage, bool) or not isinstance(usage, (int, float)):
+            continue
+        if not math.isfinite(usage) or usage < 0:
+            continue
+        total = (total or 0.0) + float(usage)
+    return total
+
+
+def _add_message(messages: "list[str]", message: Any) -> None:
+    if isinstance(message, str):
+        message = " ".join(message.split())
+        if message and message not in messages:
+            messages.append(message)
+
+
+def read_kiro_run(output: str) -> KiroRun:
+    """Read the answer, the cost, and the outcome from Kiro's event stream.
+
+    The cost is the session's usage report, the last one Kiro sent. The answer is
+    the text of the agent's message chunks since its last tool call, and Kiro's
+    `finalText` only when it streamed none, since that copy can be truncated.
+    """
+
+    chunks: "list[str]" = []
+    final_text = ""
+    credits: Optional[float] = None
+    status: Optional[str] = None
+    run_errors: "list[str]" = []
+    displayed: "list[str]" = []
+    for event in _kiro_events(output):
+        kind = event.get("type")
+        data = _mapping(event, "data")
+        if kind == "runFinished":
+            status = data.get("status") if isinstance(data.get("status"), str) else ""
+            if isinstance(data.get("finalText"), str):
+                final_text = data["finalText"]
+            continue
+        if kind == "runError":
+            _add_message(run_errors, data.get("message"))
+            continue
+        if kind != "sessionUpdate":
+            continue
+        update = _mapping(data, "update")
+        update_kind = update.get("sessionUpdate")
+        if update_kind == "agent_message_chunk":
+            content = _mapping(update, "content")
+            if content.get("type") == "text" and isinstance(content.get("text"), str):
+                chunks.append(content["text"])
+        elif update_kind in ("tool_call", "tool_call_update"):
+            chunks = []
+        elif update_kind == "session_info_update":
+            meta = _mapping(_mapping(update, "_meta"), "kiro")
+            if meta.get("kind") == "session_usage":
+                credits = _reported_credits(meta.get("credits"))
+            elif meta.get("kind") == "display_error":
+                _add_message(displayed, meta.get("message"))
+    answer = "".join(chunks)
+    if not answer.strip():
+        answer = final_text
+    return KiroRun(
+        answer=answer,
+        credits=credits,
+        finished=status == "success" and not run_errors,
+        status=status,
+        errors=tuple(run_errors or displayed),
+    )
+
+
+def _capped(detail: str) -> str:
+    if len(detail) > MAX_FAILURE_DETAIL_CHARACTERS:
+        return detail[: MAX_FAILURE_DETAIL_CHARACTERS - 1].rstrip() + "…"
+    return detail
+
+
+def _failure_detail(error: CommandError, run: KiroRun) -> str:
+    """Explain a failed Kiro call in the words of the run's own error report."""
+
+    if error.returncode is None or not run.errors:
+        return str(error)
+    command = error.command or "kiro-cli"
+    detail = _capped(" ".join(run.errors))
+    return f"{command} exited with {error.returncode}: {detail}"
+
+
+def _unfinished_detail(run: KiroRun) -> str:
+    """Explain a call that exited zero without a successfully finished run."""
+
+    if run.errors:
+        return f"Kiro reported an error: {_capped(' '.join(run.errors))}"
+    if run.status is None:
+        return "Kiro ended without reporting a finished run"
+    return f"Kiro ended the run with status {run.status or 'unknown'!r}"
 
 
 def parse_kiro_output(
@@ -272,6 +414,7 @@ class KiroEngine:
             *self.settings.review_engine_command,
             "chat",
             "--no-interactive",
+            *KIRO_STREAM_ARGS,
             "--agent",
             KIRO_REVIEW_AGENT,
             "--trust-tools=read,grep,glob",
@@ -287,7 +430,7 @@ class KiroEngine:
 
         prepare_kiro_workspace(repository.path)
         try:
-            output, error_output = run_cmd_streams(
+            output, _ = run_cmd_streams(
                 args,
                 cwd=repository.path,
                 timeout_seconds=timeout,
@@ -295,15 +438,17 @@ class KiroEngine:
                 inherit_environment=False,
             )
         except CommandError as error:
-            # A refused call can still have spent credits, and its standard error is
-            # the detail of the error.
-            credits = parse_kiro_credits(str(error))
-            if credits is not None:
-                report_invocation_credits(credits)
-            raise EngineError(str(error)) from error
+            # A refused call can still have spent credits, and the stream it printed
+            # says both what it cost and why it failed.
+            run = read_kiro_run(error.output or "")
+            if run.credits is not None:
+                report_invocation_credits(run.credits)
+            raise EngineError(_failure_detail(error, run)) from error
         finally:
             remove_kiro_generated_files(repository.path)
-        credits = parse_kiro_credits(error_output)
-        if credits is not None:
-            report_invocation_credits(credits)
-        return parse_kiro_output(output, response_discriminator_keys(material))
+        run = read_kiro_run(output)
+        if run.credits is not None:
+            report_invocation_credits(run.credits)
+        if not run.finished:
+            raise EngineError(_unfinished_detail(run))
+        return parse_kiro_output(run.answer, response_discriminator_keys(material))

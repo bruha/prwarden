@@ -174,10 +174,12 @@ the reviewed head, and starts any MCP server that configuration names. Before
 every call the adapter therefore refuses a head whose `.kiro/` or `.amazonq/`
 holds anything other than documents (`.kiro/steering`, `.kiro/specs`,
 `.amazonq/rules`), and writes its own `.kiro/settings/cli.json` and agent into the
-review worktree. The settings file turns off Kiro's Markdown rendering: rendered, an
-answer that is not inside a code fence loses its backticks, asterisks, and underscores
-on the way to standard output, so an excerpt copied exactly from the file
-arrives changed and the controller rejects it.
+review worktree. The settings file turns off Kiro's Markdown rendering: rendered, as
+Kiro's text output was, an answer that is not inside a code fence lost its backticks,
+asterisks, and underscores on the way to standard output, so an excerpt copied
+exactly from the file arrived changed and the controller rejected it. The event
+stream the adapter now reads carries the model's text as written, and rendering stays
+off so nothing Kiro renders can change an excerpt.
 
 The same file turns off code intelligence, so Kiro starts no language server; a
 language server loads the project's own configuration. Kiro's `code` tool still
@@ -203,9 +205,16 @@ never to be followed. Both halves were checked: with a code word in each file Ki
 reported all three, and with an `AGENTS.md` telling it to end every answer with a
 word, it did so without the notice and did not with it.
 
-Kiro's `--output-format stream-json`, which would return the answer unrendered,
-needs the v2 agent engine, and Kiro CLI 2.22.1 cannot select a model on that
-engine. A resumed session (`--resume-id`) reloads every installed skill file into
+The adapter reads Kiro's event stream, `--output-format stream-json`, one JSON event
+per line on standard output, which needs Kiro CLI 3.1 or later. Kiro CLI 3.1 reports
+a headless call's cost only there: the `▸ Credits:` line earlier versions printed on
+standard error is gone, and with it every credit figure until the adapter moved to
+the stream. Three things are read from it. The answer is the agent's last message,
+the text after its last tool call, so narration before a tool call is never taken
+for it. The cost is the session's usage report. And the run must have finished
+successfully: anything else is an engine failure, never an empty review, explained
+by the error the stream reports, since standard error then holds only Kiro's log
+lines. A resumed session (`--resume-id`) reloads every installed skill file into
 context, which made a one-line follow-up cost more than a full review, so a
 correction retry starts a new session rather than continuing the rejected one.
 
