@@ -9,8 +9,19 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.5.1 eace16b37eb6f6a5fdafc185b4cb24fbd57a6301 -->
+<!-- release-baseline: 3.5.2 cd34cb6ee3dc8776520efb033df38ea301695572 -->
 ## [Unreleased]
+
+## [3.5.2] - 2026-11-18
+
+### Fixed
+
+- read Kiro's answer and credits from its event stream (`3c2b86b`).
+- read agent rules under .agents as documentation (`ab360d4`).
+
+### Maintenance
+
+- title Dependabot's pull requests ci(deps) (`234f89e`).
 
 ## [3.5.1] - 2026-11-17
 

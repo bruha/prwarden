@@ -2,7 +2,7 @@
 
 import sys
 
-__version__ = "3.5.1"
+__version__ = "3.5.2"
 
 # The oldest Python PR Warden runs on. Checked here, when the package is first
 # imported, so every way in is covered: `python3 -m prwarden` from a clone, the
