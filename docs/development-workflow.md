@@ -17,6 +17,10 @@ Allowed types are `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`,
 `ci`, `chore`, `style`, and `revert`. Do not commit feature work directly to
 `main`.
 
+Dependabot is the one exception: it names its own `dependabot/…` branches, and no
+setting changes that. `.github/dependabot.yml` still makes its commits and pull
+request titles Conventional Commits, `ci(deps): bump …`.
+
 ## Branch cleanup
 
 Delete a branch as soon as its work is merged, so only active work remains
