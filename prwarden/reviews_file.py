@@ -463,6 +463,19 @@ def apply_overrides(
     not, since the checks reading has a model of its own.
     """
 
+    for flag, named in (
+        ("--engine", engine),
+        ("--verify-engine", verify_engine),
+        ("--fallback-engine", fallback_engine),
+    ):
+        selected = (named or "").strip().lower()
+        if selected and selected not in ENGINES:
+            raise ConfigError(
+                f"{flag} {selected}: {reviews.source} names only the built-in "
+                f"engines, {', '.join(ENGINES)}; a custom command engine is set in "
+                ".env without a reviews file"
+            )
+
     def chosen(
         first: EngineChoice, new_engine: Optional[str], new_model: Optional[str]
     ) -> EngineChoice:

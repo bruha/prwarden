@@ -390,7 +390,10 @@ built-in adapter, and `REVIEW_VERIFY_MODEL` selects its model. Only the named
 adapters are accepted; `command` is not, because the wrapper contract already
 allows a custom primary engine. Setting the same engine and model as the primary
 is treated as unconfigured, since a second pass with identical priors adds cost
-without independent judgment.
+without independent judgment. With a reviews file these keys are not read: each
+type's `verify` stage lists one to four engines, tried in order, each with its own
+model and effort, and a type with no `verify` stage verifies with its reviewer in a
+separate pass.
 
 The point is decorrelation: a candidate finding produced from one model's
 training priors should be judged by a different model, ideally from a different
@@ -427,7 +430,10 @@ the engine level, and `REVIEW_FALLBACK_MODEL` selects its model. It covers every
 level the primary reviews, the advisory design and documentation levels as well as
 the code level, and with no separate verifier it also judges what it found. The same
 rules as the verification engine apply: built-in adapters only, and a fallback equal
-to the primary engine and model counts as unconfigured.
+to the primary engine and model counts as unconfigured. With a reviews file these
+keys are not read: each type's `review` stage lists up to four engines, and each one
+after the first takes over, in order, when the one before it fails at the engine
+level.
 
 The fallback exists for provider outages, not for disagreement. A provider that
 is unavailable, unauthenticated, refusing requests, timing out, or exhausting its
@@ -540,7 +546,9 @@ Startup states each role's effort beside its model.
 Built-in adapters use each CLI's saved authenticated session through the
 preserved home directory. Provider API keys are not configured or passed
 automatically. `REVIEW_ENGINE_ENV_ALLOWLIST` remains available for a custom
-wrapper that requires additional non-default variables. The Slack webhook is
+wrapper that requires additional non-default variables, but only without a reviews
+file: with one it is not read, and `engines.<engine>.env` lists the variables each
+built-in engine's CLI is given. The Slack webhook is
 never inherited unless it is explicitly allowlisted.
 
 For an unsupported provider, select `command` and configure a wrapper:

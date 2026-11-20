@@ -394,6 +394,13 @@ class OverrideTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "--verify-model needs"):
             apply_overrides(parse_reviews(payload, SOURCE), verify_model="m")
 
+    def test_a_custom_engine_on_the_command_line_is_refused(self) -> None:
+        reviews = parse_reviews(example(), SOURCE)
+        for flag in ("engine", "verify_engine", "fallback_engine"):
+            with self.subTest(flag=flag):
+                with self.assertRaisesRegex(ConfigError, "built-in engines"):
+                    apply_overrides(reviews, **{flag: "command"})
+
 
 class LoaderTests(unittest.TestCase):
     """With a reviews file, `.env`'s engine keys are not read at all."""
