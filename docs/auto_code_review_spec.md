@@ -1379,9 +1379,11 @@ routing, state, and delivery rules apply identically regardless of which engine
 verified.
 
 `REVIEW_EFFORT`, `REVIEW_CODE_EFFORT`, `REVIEW_VERIFY_EFFORT`,
-`REVIEW_FALLBACK_EFFORT`, and `REVIEW_VERIFY_FALLBACK_EFFORT` optionally set a
-reasoning effort of `low`, `medium`, `high`, `xhigh`, or `max` for the reviewer, the
-reviewer's code level, the verifier, the fallback, and the verifier's fallback.
+`REVIEW_FALLBACK_EFFORT`, `REVIEW_VERIFY_FALLBACK_EFFORT`, and
+`REVIEW_CHECKS_EFFORT` optionally set a reasoning effort of `low`, `medium`, `high`,
+`xhigh`, or `max` for the reviewer, the reviewer's code level, the verifier, the
+fallback, the verifier's fallback, and the checks level, which runs on the review
+engine at `REVIEW_CHECKS_MODEL` when set.
 Startup refuses an unknown level, an effort without its engine, and an effort for
 an adapter that cannot pass one, because each would otherwise run at a level nobody
 chose without saying so. An engine replaced on the command line does not keep the
