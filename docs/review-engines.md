@@ -520,7 +520,8 @@ REVIEW_CHECKS_EFFORT=medium
 ```
 
 `REVIEW_EFFORT` applies to every level the reviewer runs, and `REVIEW_CODE_EFFORT`
-overrides it for the code level alone, the one level that can approve. The
+overrides it for the code level alone, the one level that can approve. With a
+reviews file neither is read: each engine a stage lists takes its own `effort`. The
 verifier and the fallback each run at their own effort on every level; neither
 inherits the code override, which was chosen for the reviewer's model. The checks
 level, which reads why a waiting review's checks failed, runs on the review engine

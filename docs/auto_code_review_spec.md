@@ -1471,7 +1471,9 @@ verified.
 `REVIEW_CHECKS_EFFORT` optionally set a reasoning effort of `low`, `medium`, `high`,
 `xhigh`, or `max` for the reviewer, the reviewer's code level, the verifier, the
 fallback, the verifier's fallback, and the checks level, which runs on the review
-engine at `REVIEW_CHECKS_MODEL` when set.
+engine at `REVIEW_CHECKS_MODEL` when set. With a reviews file, those keys are not
+read: each engine entry's own `effort` sets it, and the code level has no override
+of its own.
 Startup refuses an unknown level, an effort without its engine, and an effort for
 an adapter that cannot pass one, because each would otherwise run at a level nobody
 chose without saying so. An engine replaced on the command line does not keep the

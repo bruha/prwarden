@@ -385,7 +385,9 @@ engine beside it: `--engine kiro` alone drops the configured `REVIEW_MODEL` rath
 sending one provider's model to another, and `--model` alone applies to the engine
 already configured. The same holds for `--verify-model` and `--fallback-model`, and
 for the configured effort, which a replaced engine does not keep. Effort has no flag;
-set `REVIEW_EFFORT` and its siblings in the environment for one run.
+without a reviews file, set `REVIEW_EFFORT` and its siblings in the environment for
+one run. With one, those keys are not read: change the engine's `effort` in
+`reviews.json`.
 `--no-fallback` reviews with the primary alone, which is how a primary failure gets
 reported instead of covered by a second engine, and it refuses to be combined with
 `--fallback-engine` rather than guessing which was meant.
