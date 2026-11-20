@@ -3127,7 +3127,9 @@ def _process_pull_request(
             waits_for_person = bool(recorded_policy) and record.get(
                 "reason"
             ) == _policy_change_reason(recorded_policy)
-            if waits_for_person:
+            if recorded_policy:
+                # Read whatever else the head was withheld for: a signed-off head
+                # still has to pass the checks below to be reviewed again.
                 policy_signoff_by = _read_policy_signoff(
                     repository, pull_request, record.get("updated_at")
                 )
@@ -3156,12 +3158,7 @@ def _process_pull_request(
                     )
                 return
             recorded_unread = _recorded_unread_paths(record)
-            if policy_signoff_by is not None:
-                print(
-                    f"      -> @{policy_signoff_by} signed off the review-policy "
-                    "change; reconsidering withheld approval"
-                )
-            elif (
+            if (
                 recorded_unread
                 and record.get("unread_settings_fingerprint")
                 == _unread_settings_fingerprint(settings)
@@ -3219,6 +3216,11 @@ def _process_pull_request(
                 print(
                     "      -> No check fails at this head any more; reconsidering "
                     "withheld approval"
+                )
+            elif policy_signoff_by is not None:
+                print(
+                    f"      -> @{policy_signoff_by} signed off the review-policy "
+                    "change; reconsidering withheld approval"
                 )
             elif not valid_recorded_blockers:
                 print(

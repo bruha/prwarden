@@ -571,6 +571,43 @@ class OrchestrationTests(unittest.TestCase):
         result["submit_approval"].assert_called_once()
         result["submit_waiting_review"].assert_not_called()
 
+    def test_a_signed_off_head_withheld_for_more_reopens_once_that_clears(
+        self,
+    ) -> None:
+        """A head withheld over the policy and an unresolved comment still has the
+        comment to answer; once it is resolved the sign-off lets it through."""
+
+        engine = Mock()
+        engine.review.side_effect = [
+            {
+                "verdict": "do_not_approve",
+                "approval_reason": "The unresolved comment on app.py still applies.",
+                "blocking_comment_ids": ["C1"],
+                "findings": [],
+            },
+            {
+                "verdict": "approve",
+                "approval_reason": "No qualifying defects remain.",
+                "findings": [],
+            },
+        ]
+        comment = PriorReviewComment(
+            "inline:5", "inline", "colleague", "This still fails.", "app.py", 1, False
+        )
+
+        first = self.run_review(engine, self.WORKFLOW_CHANGE, prior=(comment,))
+        resolved = replace(comment, resolved=True)
+        signed = self.run_review(
+            engine, self.WORKFLOW_CHANGE, prior=(resolved,), signoff="maintainer"
+        )
+
+        self.assertEqual(
+            first["record"]["policy_changes"], [".github/workflows/test.yml"]
+        )
+        first["submit_waiting_review"].assert_not_called()
+        self.assertEqual(engine.review.call_count, 2)
+        signed["submit_approval"].assert_called_once()
+
     def test_a_sign_off_never_outweighs_a_finding(self) -> None:
         engine = Mock()
         engine.review.side_effect = [finding_response("app.py", 1), CONFIRMED_JUDGMENT]

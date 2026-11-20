@@ -350,7 +350,8 @@ A pull-request head is skipped when either condition is true:
    `approval_withheld` record is skipped while at least one controller-validated
    blocking comment remains unresolved and its feedback fingerprint remains
    unchanged, and, whatever the feedback, while it names review policy the head
-   changes; that one reopens only for a later head or `--force`. A `delivered`
+   changes; that one reopens when a person signs the head off, for a later head, or
+   for `--force`. A `delivered`
    comment review is skipped only while at least one exact inline finding from its
    review receipt remains unresolved.
 

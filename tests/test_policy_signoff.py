@@ -153,6 +153,42 @@ class PolicySignoffTests(unittest.TestCase):
                 found, _ = self.signoff(comments=[comment], permissions=permissions)
                 self.assertIsNone(found)
 
+    def test_a_later_request_for_changes_takes_a_sign_off_back(self):
+        """A person's latest verdict stands, however they gave the earlier one."""
+
+        approved = {
+            "user": user("maintainer"),
+            "state": "APPROVED",
+            "commit_id": "head",
+            "submitted_at": "2026-11-20T11:00:00Z",
+        }
+        changes = {
+            "user": user("maintainer"),
+            "state": "CHANGES_REQUESTED",
+            "commit_id": "head",
+            "submitted_at": "2026-11-20T12:00:00Z",
+        }
+        lgtm = {
+            "user": user("maintainer"),
+            "body": "LGTM",
+            "created_at": "2026-11-20T11:30:00Z",
+        }
+        later_lgtm = dict(lgtm, created_at="2026-11-20T13:00:00Z")
+        writer = {"maintainer": "write"}
+
+        self.assertIsNone(
+            self.signoff(reviews=[approved, changes], permissions=writer)[0]
+        )
+        self.assertIsNone(
+            self.signoff(reviews=[changes], comments=[lgtm], permissions=writer)[0]
+        )
+        self.assertEqual(
+            self.signoff(
+                reviews=[changes], comments=[later_lgtm], permissions=writer
+            )[0],
+            "maintainer",
+        )
+
     def test_an_lgtm_counts_only_with_a_time_to_compare(self):
         found, asked = self.signoff(
             comments=[

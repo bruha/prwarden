@@ -1914,15 +1914,13 @@ def _carries_any_marker(body: str) -> bool:
 def _created_after(record: "dict[str, Any]", since: Optional[str]) -> bool:
     """Return whether GitHub created ``record`` after ``since``, an ISO time."""
 
-    if since is None:
-        return False
-    created = record.get("submitted_at") or record.get("created_at")
-    if not isinstance(created, str):
+    created = _created(record)
+    if since is None or created is None:
         return False
     try:
-        return datetime.fromisoformat(
-            created.replace("Z", "+00:00")
-        ) > datetime.fromisoformat(since)
+        return datetime.fromisoformat(created) > datetime.fromisoformat(
+            since.replace("Z", "+00:00")
+        )
     except ValueError:
         return False
 
@@ -1939,35 +1937,53 @@ def policy_signoff(
     written after ``since``: the time this head's review was withheld, which is
     the controller's own clock, never a date the change carries. It counts only from
     a person with write access who is not the pull request's author and not a bot,
-    and never from a comment this tool wrote. A permission that cannot be read
-    counts as none, so a sign-off is never assumed.
+    and never from a comment this tool wrote. A person's latest verdict stands: an
+    approval or an LGTM that a later request for changes or a dismissal took back
+    does not count. A permission that cannot be read counts as none, so a sign-off
+    is never assumed.
     """
 
-    candidates: "list[str]" = []
-    for review in list_reviews(repository, pull_request):
-        login = str((review.get("user") or {}).get("login") or "")
-        body = review.get("body") if isinstance(review.get("body"), str) else ""
-        if review.get("state") == "APPROVED" and (
-            review.get("commit_id") == pull_request.head_sha
-        ):
-            candidates.append(login)
-        elif is_signoff(body) and _created_after(review, since):
-            if not _carries_any_marker(body):
-                candidates.append(login)
+    reviews = list_reviews(repository, pull_request)
+    # Each person's latest verdict, in the order GitHub lists reviews, which is the
+    # order they were submitted.
+    verdicts: "dict[str, dict[str, Any]]" = {}
+    for review in reviews:
+        if review.get("state") in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            verdicts[_login(review).casefold()] = review
+
+    def taken_back(login: str, record: "dict[str, Any]") -> bool:
+        verdict = verdicts.get(login.casefold())
+        return (
+            verdict is not None
+            and verdict.get("state") != "APPROVED"
+            and _created_after(verdict, _created(record))
+        )
+
+    candidates: "list[str]" = [
+        _login(review)
+        for review in verdicts.values()
+        if review.get("state") == "APPROVED"
+        and review.get("commit_id") == pull_request.head_sha
+    ]
+    records = [
+        review for review in reviews if review.get("state") == "COMMENTED"
+    ]
     for endpoint, what in (
         (f"issues/{pull_request.number}/comments", "pull-request comments"),
         (f"pulls/{pull_request.number}/comments", "review comments"),
     ):
-        for comment in _list_pull_request_records(
-            repository, pull_request, endpoint, what
+        records.extend(
+            _list_pull_request_records(repository, pull_request, endpoint, what)
+        )
+    for record in records:
+        body = record.get("body") if isinstance(record.get("body"), str) else ""
+        if (
+            is_signoff(body)
+            and not _carries_any_marker(body)
+            and _created_after(record, since)
+            and not taken_back(_login(record), record)
         ):
-            body = comment.get("body") if isinstance(comment.get("body"), str) else ""
-            if (
-                is_signoff(body)
-                and not _carries_any_marker(body)
-                and _created_after(comment, since)
-            ):
-                candidates.append(str((comment.get("user") or {}).get("login") or ""))
+            candidates.append(_login(record))
     checked: "set[str]" = set()
     for login in candidates:
         folded = login.casefold()
@@ -1982,6 +1998,17 @@ def policy_signoff(
         if _write_access(repository, login):
             return login
     return None
+
+
+def _login(record: "dict[str, Any]") -> str:
+    return str((record.get("user") or {}).get("login") or "")
+
+
+def _created(record: "dict[str, Any]") -> Optional[str]:
+    created = record.get("submitted_at") or record.get("created_at")
+    if not isinstance(created, str):
+        return None
+    return created.replace("Z", "+00:00")
 
 
 def _write_access(repository: Repository, login: str) -> bool:
