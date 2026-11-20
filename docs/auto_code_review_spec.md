@@ -412,7 +412,9 @@ A pull-request head is skipped when either condition is true:
 
 1. The configured GitHub reviewer already submitted a review for the current
    head commit, unless it is a delivered comment review whose inline findings
-   have all been resolved.
+   have all been resolved. A reply in an existing thread is not such a review,
+   though GitHub files it as a "commented" review with no body: one whose inline
+   comments are all replies does not count.
 2. JSON state contains a terminal record for the code level's tuple
    `(repository, PR number, head SHA, destination)`. The advisory design level is
    keyed by pull request instead, as described under its own heading below. An
