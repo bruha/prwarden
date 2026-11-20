@@ -76,7 +76,8 @@ the order of the run's review plan, which always ends with the code level: its
 approval is what a pull request is merged on, so the advisory notes are posted
 before it. The checks level is the exception on both counts: one invocation with no
 verifier, outside that order, made only after a code review that found nothing and
-would approve but for a failed check. Each level carries its own engines in that plan, so a level is defined by
+would approve, either but for a failed check or beside failed checks GitHub does not
+require. Each level carries its own engines in that plan, so a level is defined by
 its prompt, schema, validation, and delivery route, and its provider configuration
 is the plan's to give. Today the plan gives every level the same engine and model to
 review and the same second engine and model to verify, with two exceptions. The
