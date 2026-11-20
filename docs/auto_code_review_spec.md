@@ -29,7 +29,9 @@ review-engine adapter, and route confirmed correctness or security findings:
   is delivered and then followed, once per head, by a `## Checks to fix` reminder
   naming those checks, kept under its own `github:reminder`-style destination and
   carrying the waiting-note marker, so a later result minimizes it like a waiting
-  note. When the branch requires no check, when GitHub's answer cannot be read
+  note. A reminder that definitely was not posted is tried again by the run that
+  skips the approved head, while those checks still fail, without a reading. When
+  the branch requires no check, when GitHub's answer cannot be read
   whole, or when a failed check is missing from it, every failed check withholds,
   as before GitHub was asked. Findings are delivered as usual. The record names the
   failed checks that withheld it, and while any of them still fails a later run

@@ -3084,6 +3084,10 @@ def _process_pull_request(
                 f"state is {record.get('status')}",
                 earlier=record,
             )
+            if live and status == "delivered":
+                _retry_failed_reminder(
+                    settings, repository, pull_request, store, destination
+                )
             return
         else:
             feedback = list_prior_review_comments(
@@ -4260,6 +4264,50 @@ def _check_requirements(
             f"check holds the approval: {error}"
         )
         return None
+
+
+def _retry_failed_reminder(
+    settings: Settings,
+    repository: Repository,
+    pull_request: PullRequest,
+    store: JsonStateStore,
+    destination: str,
+) -> None:
+    """Try again a reminder that definitely was not posted beside an approval.
+
+    The approval is delivered, so every later run skips the head, and the reminder
+    would otherwise never be tried again. It is said only while checks GitHub does
+    not require still fail, and without a reading, which needs the review's
+    workspace. A reminder that may have been posted is never tried again.
+    """
+
+    record = store.get(
+        _waiting_note_key(
+            store, repository, pull_request, destination, REMINDER_NOTE_SUFFIX
+        )
+    )
+    if record is None or record.get("status") != "failed":
+        return
+    try:
+        failing = failed_checks(list_pull_request_checks(repository, pull_request))
+    except CommandError as error:
+        print(f"      -> Not reminding the author again: {error}")
+        return
+    holding = (
+        blocking_checks(failing, _check_requirements(repository, pull_request))
+        if failing
+        else ()
+    )
+    optional = tuple(name for name in failing if name not in holding)
+    if optional:
+        _deliver_waiting_note(
+            settings,
+            repository,
+            pull_request,
+            store,
+            destination,
+            WaitingReason(FAILING_OPTIONAL_CHECKS, optional),
+        )
 
 
 def _checks_after_review(

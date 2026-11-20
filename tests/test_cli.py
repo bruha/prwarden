@@ -3329,6 +3329,7 @@ class OrchestrationTests(unittest.TestCase):
         checks_level: bool = False,
         check_log: str = "",
         required: "Optional[dict]" = None,
+        waiting_error: "Optional[Exception]" = None,
     ) -> dict:
         repository = Repository("app", "owner/app", Path(directory))
         pull_request = PullRequest(
@@ -3385,7 +3386,12 @@ class OrchestrationTests(unittest.TestCase):
         ) as submit_approval, patch(
             "prwarden.cli.send_slack_message", return_value="http-200"
         ) as send_slack, patch(
-            "prwarden.cli.submit_waiting_comment", return_value="comment-1"
+            "prwarden.cli.submit_waiting_comment",
+            **(
+                {"side_effect": waiting_error}
+                if waiting_error is not None
+                else {"return_value": "comment-1"}
+            ),
         ) as submit_waiting, patch(
             "prwarden.cli.hide_earlier_comments", return_value=1
         ) as hide_comments, patch(
@@ -4422,6 +4428,41 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual(engine.review.call_count, 2)
         approved["submit_approval"].assert_called_once()
         self.assertEqual(approved["reminder"]["status"], "delivered")
+
+    def test_a_reminder_that_failed_to_post_is_tried_on_the_next_run(self) -> None:
+        """The approval is delivered, so the next run skips the head; a reminder
+        that definitely was not posted is still owed, while its checks fail."""
+
+        from prwarden.delivery import DeliveryError
+
+        engine = self.approving_engine()
+        with tempfile.TemporaryDirectory() as directory:
+            failed = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.E2E_FAILED,
+                required=self.E2E_OPTIONAL,
+                waiting_error=DeliveryError("GitHub refused the comment"),
+            )
+            retried = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.E2E_FAILED,
+                required=self.E2E_OPTIONAL,
+            )
+
+        failed["submit_approval"].assert_called_once()
+        self.assertEqual(failed["reminder"]["status"], "failed")
+        self.assertEqual(engine.review.call_count, 1)
+        retried["submit_approval"].assert_not_called()
+        self.assertEqual(retried["reminder"]["status"], "delivered")
+        body = retried["submit_waiting"].call_args.args[2]
+        self.assertIn("## Checks to fix", body)
+        self.assertIn("- `e2e`", body)
 
     def test_the_reminder_says_why_the_optional_check_failed(self) -> None:
         optional = (
