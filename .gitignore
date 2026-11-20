@@ -8,6 +8,10 @@ __pycache__/
 repositories.json
 repositories.*.json
 !repositories.example.json
+reviews.json
+reviews.*.json
+!reviews.example.json
+/prompts/
 .state/
 .venv/
 venv/

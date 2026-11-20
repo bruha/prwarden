@@ -181,7 +181,9 @@ from .reviewer_identity import (
     format_review_plan,
     format_checks_reader,
     format_reviewer_identity,
+    format_type_engines,
 )
+from .reviews_file import TYPE_NOUNS
 from .secret_scan import (
     CredentialMatch,
     find_credentials,
@@ -6342,6 +6344,28 @@ def run(args: argparse.Namespace) -> int:
         )
 
 
+def _describe_plan(plan: ReviewPlan) -> "tuple[str, ...]":
+    """Say, before any review, which engines each type of review runs on, in order."""
+
+    def chain(
+        settings: "Sequence[Settings]",
+    ) -> "tuple[tuple[str, Optional[str], Optional[str]], ...]":
+        return tuple(
+            (item.review_engine, item.review_model, item.review_effort)
+            for item in settings
+        )
+
+    return tuple(
+        format_type_engines(
+            TYPE_NOUNS.get(review_type.name, review_type.name),
+            chain((review_type.settings, *review_type.fallbacks)),
+            chain(review_type.verifiers),
+            verified=review_type.name != CHECKS_LEVEL,
+        )
+        for review_type in plan.types
+    )
+
+
 def _run_reviews(
     args: argparse.Namespace,
     settings: Settings,
@@ -6353,31 +6377,38 @@ def _run_reviews(
 ) -> int:
     mode = "LIVE" if live else "DRY RUN"
     print(f"=== Automated Code Review ({mode}) ===")
-    standby_engine, standby_model, standby_effort = _verify_fallback_identity(settings)
-    for line in format_review_plan(
-        settings.review_engine,
-        settings.review_model,
-        *_verifier_identity(settings),
-        *_fallback_identity(settings),
-        review_effort=settings.review_effort,
-        code_effort=settings.review_code_effort,
-        verify_effort=settings.verify_effort,
-        fallback_effort=settings.fallback_effort,
-        verify_fallback_engine=standby_engine,
-        verify_fallback_model=standby_model,
-        verify_fallback_effort=standby_effort,
-    ):
-        print(line)
     plan = review_plan(settings)
-    checks = plan.get(CHECKS_LEVEL)
-    if checks is not None:
-        print(
-            format_checks_reader(
-                checks.settings.review_engine,
-                checks.settings.review_model,
-                checks.settings.review_effort,
-            )
+    if settings.reviews is not None:
+        print(f"Review types from {settings.reviews.source}:")
+        for line in _describe_plan(plan):
+            print(f"  {line}")
+    else:
+        standby_engine, standby_model, standby_effort = _verify_fallback_identity(
+            settings
         )
+        for line in format_review_plan(
+            settings.review_engine,
+            settings.review_model,
+            *_verifier_identity(settings),
+            *_fallback_identity(settings),
+            review_effort=settings.review_effort,
+            code_effort=settings.review_code_effort,
+            verify_effort=settings.verify_effort,
+            fallback_effort=settings.fallback_effort,
+            verify_fallback_engine=standby_engine,
+            verify_fallback_model=standby_model,
+            verify_fallback_effort=standby_effort,
+        ):
+            print(line)
+        checks = plan.get(CHECKS_LEVEL)
+        if checks is not None:
+            print(
+                format_checks_reader(
+                    checks.settings.review_engine,
+                    checks.settings.review_model,
+                    checks.settings.review_effort,
+                )
+            )
     if not live and not settings.dry_run:
         print(
             "Note: AUTO_REVIEW_DRY_RUN=0, but --live was not supplied; delivery is disabled."

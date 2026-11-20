@@ -154,6 +154,11 @@ class ReplayArm:
     overrides: "dict[str, Any]" = None  # type: ignore[assignment]
 
     def applied_to(self, settings: Settings) -> Settings:
+        # An arm overrides the settings' own fields, which name one set of engines
+        # for every type; a reviews file's per-type engines are not an arm's to
+        # change yet, so a replay runs every type on the code review's engines.
+        if isinstance(settings, Settings) and settings.reviews is not None:
+            settings = replace(settings, reviews=None)
         overrides = dict(self.overrides or {})
         for name, engine_field, engine_name in _ARM_EFFORT_ENGINES:
             if name not in overrides:

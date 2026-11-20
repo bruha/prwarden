@@ -55,6 +55,10 @@ class Locations:
         return self.config_directory / "repositories.json"
 
     @property
+    def reviews_file(self) -> Path:
+        return self.config_directory / "reviews.json"
+
+    @property
     def state_file(self) -> Path:
         return self.state_directory / "review-state.json"
 

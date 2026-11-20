@@ -5,7 +5,7 @@ import shutil
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from .comment_template import (
     DEFAULT_GITHUB_COMMENT_TAGS_FILE,
@@ -17,6 +17,9 @@ from .comment_template import (
 from .commands import CommandError, run_cmd
 from .models import Repository
 from .paths import LocationError, Locations, resolve_locations
+
+if TYPE_CHECKING:
+    from .reviews_file import ReviewsFile
 
 
 MAX_REVIEW_BUNDLE_LIMIT = 8
@@ -133,6 +136,9 @@ class Settings:
         "develop",
         "release/*",
     )
+    # What the reviews file says, when there is one: each type's engines are then the
+    # file's, and the role fields above are the code review's.
+    reviews: "Optional[ReviewsFile]" = None
 
 
 def load_env_file(path: Path) -> "dict[str, str]":
@@ -677,54 +683,20 @@ def _comment_file(variable: str, default: Path, base_directory: Path) -> Path:
     return resolved
 
 
-def load_settings(
-    env_file: Optional[Path] = None,
-    repositories_file: Optional[Path] = None,
-    state_file: Optional[Path] = None,
-    review_engine_override: Optional[str] = None,
-    review_model_override: Optional[str] = None,
-    verify_engine_override: Optional[str] = None,
-    verify_model_override: Optional[str] = None,
-    fallback_engine_override: Optional[str] = None,
-    fallback_model_override: Optional[str] = None,
-    fallback_disabled: bool = False,
-) -> Settings:
-    locations = default_locations()
-    # Relative settings resolve against the configuration directory, which in a
-    # source checkout is the checkout root they always resolved against.
-    base_directory = locations.config_directory
-    declared = load_env_file(env_file if env_file is not None else locations.env_file)
+def _engines_from_env(
+    declared: "dict[str, str]",
+    review_engine_override: Optional[str],
+    review_model_override: Optional[str],
+    verify_engine_override: Optional[str],
+    verify_model_override: Optional[str],
+    fallback_engine_override: Optional[str],
+    fallback_model_override: Optional[str],
+    fallback_disabled: bool,
+) -> "dict[str, Any]":
+    """Return the engines `.env` names for every role, with the command line's.
 
-    selected_repositories_file = repositories_file
-    if selected_repositories_file is None:
-        configured_value = os.getenv("REPOSITORIES_FILE")
-        selected_repositories_file = (
-            resolve_path(configured_value, base_directory)
-            if configured_value
-            else locations.repositories_file
-        )
-    elif not selected_repositories_file.is_absolute():
-        selected_repositories_file = (Path.cwd() / selected_repositories_file).resolve()
-
-    selected_state_file = resolve_state_file(state_file, locations)
-
-    comment_template_file = _comment_file(
-        "GITHUB_COMMENT_TEMPLATE_FILE",
-        DEFAULT_GITHUB_COMMENT_TEMPLATE_FILE,
-        base_directory,
-    )
-    comment_tags_file = _comment_file(
-        "GITHUB_COMMENT_TAGS_FILE",
-        DEFAULT_GITHUB_COMMENT_TAGS_FILE,
-        base_directory,
-    )
-    try:
-        github_comment_template = load_comment_template(
-            comment_template_file,
-            comment_tags_file,
-        )
-    except CommentTemplateError as error:
-        raise ConfigError(str(error)) from error
+    Used only without a reviews file, which names every type's engines itself.
+    """
 
     environment_engine = os.getenv("REVIEW_ENGINE", "antigravity").strip().lower()
     review_engine = (review_engine_override or environment_engine).strip().lower()
@@ -835,8 +807,116 @@ def load_settings(
         raise ConfigError(
             "REVIEW_VERIFY_FALLBACK_ENGINE requires REVIEW_VERIFY_ENGINE"
         )
+    return {
+        "review_engine": review_engine,
+        "review_engine_command": review_engine_command,
+        "review_model": configured_model,
+        "review_effort": review_effort,
+        "review_code_effort": review_code_effort,
+        "checks_model": configured_checks_model,
+        "checks_effort": checks_effort,
+        "verify_engine": verify_engine,
+        "verify_engine_command": verify_engine_command,
+        "verify_model": verify_model,
+        "verify_effort": verify_effort,
+        "fallback_engine": fallback_engine,
+        "fallback_engine_command": fallback_engine_command,
+        "fallback_model": fallback_model,
+        "fallback_effort": fallback_effort,
+        "verify_fallback_engine": verify_fallback_engine,
+        "verify_fallback_engine_command": verify_fallback_engine_command,
+        "verify_fallback_model": verify_fallback_model,
+        "verify_fallback_effort": verify_fallback_effort,
+    }
 
-    return Settings(
+
+def load_settings(
+    env_file: Optional[Path] = None,
+    repositories_file: Optional[Path] = None,
+    state_file: Optional[Path] = None,
+    review_engine_override: Optional[str] = None,
+    review_model_override: Optional[str] = None,
+    verify_engine_override: Optional[str] = None,
+    verify_model_override: Optional[str] = None,
+    fallback_engine_override: Optional[str] = None,
+    fallback_model_override: Optional[str] = None,
+    fallback_disabled: bool = False,
+) -> Settings:
+    locations = default_locations()
+    # Relative settings resolve against the configuration directory, which in a
+    # source checkout is the checkout root they always resolved against.
+    base_directory = locations.config_directory
+    declared = load_env_file(env_file if env_file is not None else locations.env_file)
+
+    selected_repositories_file = repositories_file
+    if selected_repositories_file is None:
+        configured_value = os.getenv("REPOSITORIES_FILE")
+        selected_repositories_file = (
+            resolve_path(configured_value, base_directory)
+            if configured_value
+            else locations.repositories_file
+        )
+    elif not selected_repositories_file.is_absolute():
+        selected_repositories_file = (Path.cwd() / selected_repositories_file).resolve()
+
+    selected_state_file = resolve_state_file(state_file, locations)
+
+    comment_template_file = _comment_file(
+        "GITHUB_COMMENT_TEMPLATE_FILE",
+        DEFAULT_GITHUB_COMMENT_TEMPLATE_FILE,
+        base_directory,
+    )
+    comment_tags_file = _comment_file(
+        "GITHUB_COMMENT_TAGS_FILE",
+        DEFAULT_GITHUB_COMMENT_TAGS_FILE,
+        base_directory,
+    )
+    try:
+        github_comment_template = load_comment_template(
+            comment_template_file,
+            comment_tags_file,
+        )
+    except CommentTemplateError as error:
+        raise ConfigError(str(error)) from error
+
+    # Imported here: the reviews file builds on these settings.
+    from .reviews_file import (
+        apply_overrides,
+        engines_placeholder,
+        load_reviews_file,
+        settings_from_reviews,
+    )
+
+    reviews_path = _reviews_file(locations, base_directory)
+    reviews = load_reviews_file(reviews_path)
+    if reviews is None:
+        engines = _engines_from_env(
+            declared,
+            review_engine_override,
+            review_model_override,
+            verify_engine_override,
+            verify_model_override,
+            fallback_engine_override,
+            fallback_model_override,
+            fallback_disabled,
+        )
+    else:
+        # The file names every type's engines, so `.env`'s are not read at all, and
+        # the command line changes the file's.
+        reviews = apply_overrides(
+            reviews,
+            engine=review_engine_override,
+            model=review_model_override,
+            verify_engine=verify_engine_override,
+            verify_model=verify_model_override,
+            fallback_engine=fallback_engine_override,
+            fallback_model=fallback_model_override,
+            no_fallback=fallback_disabled,
+        )
+        engines = engines_placeholder(reviews)
+
+    settings = Settings(
+        **engines,
         reviewer_username=resolve_github_username(),
         repositories=load_repositories(
             selected_repositories_file, locations.checkouts_directory
@@ -844,12 +924,9 @@ def load_settings(
         dry_run=parse_bool(os.getenv("AUTO_REVIEW_DRY_RUN", "1"), "AUTO_REVIEW_DRY_RUN"),
         slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL", "").strip() or None,
         state_file=selected_state_file,
-        review_engine=review_engine,
-        review_engine_command=review_engine_command,
         review_engine_env_allowlist=parse_env_allowlist(
             os.getenv("REVIEW_ENGINE_ENV_ALLOWLIST", "[]")
         ),
-        review_model=configured_model,
         review_timeout_seconds=parse_integer(
             os.getenv("REVIEW_TIMEOUT_SECONDS", "300"),
             "REVIEW_TIMEOUT_SECONDS",
@@ -877,8 +954,6 @@ def load_settings(
         checks_level=parse_bool(
             os.getenv("REVIEW_CHECKS_LEVEL", "1"), "REVIEW_CHECKS_LEVEL"
         ),
-        checks_model=configured_checks_model,
-        checks_effort=checks_effort,
         review_verify_timeout_seconds=parse_integer(
             os.getenv("REVIEW_VERIFY_TIMEOUT_SECONDS", "900"),
             "REVIEW_VERIFY_TIMEOUT_SECONDS",
@@ -929,20 +1004,6 @@ def load_settings(
             MAX_RUN_LOG_RETENTION_DAYS,
         ),
         review_history_retention_days=review_history_retention_days(),
-        verify_engine=verify_engine,
-        verify_engine_command=verify_engine_command,
-        verify_model=verify_model,
-        fallback_engine=fallback_engine,
-        fallback_engine_command=fallback_engine_command,
-        fallback_model=fallback_model,
-        review_effort=review_effort,
-        review_code_effort=review_code_effort,
-        verify_effort=verify_effort,
-        fallback_effort=fallback_effort,
-        verify_fallback_engine=verify_fallback_engine,
-        verify_fallback_engine_command=verify_fallback_engine_command,
-        verify_fallback_model=verify_fallback_model,
-        verify_fallback_effort=verify_fallback_effort,
         github_comment_template=github_comment_template,
         excluded_pr_labels=parse_excluded_pr_labels(
             os.getenv("EXCLUDED_PR_LABELS", "[]")
@@ -957,3 +1018,15 @@ def load_settings(
             )
         ),
     )
+    if reviews is None:
+        return settings
+    return settings_from_reviews(settings, reviews)
+
+
+def _reviews_file(locations: Locations, base_directory: Path) -> Path:
+    """Return where the reviews file is: REVIEWS_FILE, or the configuration's own."""
+
+    configured = os.getenv("REVIEWS_FILE", "").strip()
+    if configured:
+        return resolve_path(configured, base_directory)
+    return locations.reviews_file

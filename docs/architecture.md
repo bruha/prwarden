@@ -17,6 +17,9 @@ about losing work biases a verifier away from the judgment it was asked to make.
 Use these module responsibilities:
 
 - `config`: parse and validate untrusted local configuration.
+- `reviews_file`: read `reviews.json`, which names each type of review's engines,
+  their order, and the limits every review shares, and write `.env`'s settings out
+  as one.
 - `paths`: decide where configuration and state live, for a checkout or an
   installed copy, before any of it is read.
 - `commands`: execute subprocesses and preserve failure output.
@@ -79,8 +82,11 @@ verifier, outside that order, made only after a code review that found nothing a
 would approve, either but for a failed check or beside failed checks GitHub does not
 require. Each level carries its own engines in that plan, so a level is defined by
 its prompt, schema, validation, and delivery route, and its provider configuration
-is the plan's to give. Today the plan gives every level the same engine and model to
-review and the same second engine and model to verify, with two exceptions. The
+is the plan's to give. With a `reviews.json`, each type names its own engines: a
+review stage and a verify stage, each a chain of up to four engines tried in order,
+the first reviewing and each after it taking over when the one before fails at the
+engine level. Without the file the plan gives every level the same engine and model
+to review and the same second engine and model to verify, with two exceptions. The
 code level may take its own reasoning effort (`REVIEW_CODE_EFFORT`), because it
 alone can approve, and every other level runs at the role's effort. The checks
 level reads failed checks rather than the change, at a model and effort of its own

@@ -1,5 +1,5 @@
 import re
-from typing import Optional
+from typing import Optional, Sequence
 
 from .models import Finding, severity_rank
 
@@ -93,6 +93,40 @@ def format_checks_reader(
         f"Failed checks of a review that waits for them are read by {reader}"
         f"{_effort_phrase(effort)}."
     )
+
+
+def format_engine_chain(
+    chain: "Sequence[tuple[str, Optional[str], Optional[str]]]",
+) -> str:
+    """Name engines in the order they are tried, each with its effort."""
+
+    named = [
+        f"{format_reviewer_identity(engine, model)}{_effort_phrase(effort)}"
+        for engine, model, effort in chain
+    ]
+    if len(named) == 1:
+        return named[0]
+    return f"{named[0]}, falling back to " + ", then ".join(named[1:])
+
+
+def format_type_engines(
+    noun: str,
+    review: "Sequence[tuple[str, Optional[str], Optional[str]]]",
+    verify: "Sequence[tuple[str, Optional[str], Optional[str]]]" = (),
+    *,
+    verified: bool = True,
+) -> str:
+    """Say, before any review, which engines one type of review runs on.
+
+    ``verified`` is False for a type whose answer the controller checks itself.
+    """
+
+    line = f"{noun[0].upper()}{noun[1:]}: {format_engine_chain(review)}"
+    if verify:
+        line += f"; verified by {format_engine_chain(verify)}"
+    elif verified:
+        line += "; verified by the reviewer in a separate pass"
+    return line + "."
 
 
 def format_review_plan(

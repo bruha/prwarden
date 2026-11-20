@@ -136,6 +136,9 @@ review-engine adapter, and route confirmed correctness or security findings:
 Private configuration remains outside Git:
 
 - `.env`: delivery gates, engine selection, Slack secret, and limits.
+- `reviews.json`, optional: which types of review run, in what order, and on which
+  engines (see [The reviews file](#the-reviews-file)). When present it takes the
+  place of `.env`'s engine selection and limits, which are then not read.
 - `repositories.json`: GitHub slugs and, optionally, matching local Git checkout
   paths used to fetch immutable PR head commits. An entry with no path is cloned
   by PR Warden into the managed checkouts directory on first use, objects only
@@ -210,6 +213,47 @@ Issues read, Checks read, Commit statuses read, and Actions read covers every ca
 review makes as the reviewer, and the same token logged in for a `github_account`
 covers its repositories. Actions read is only for the checks level's job logs: a
 token without it costs the level the log, and it reads the check's summary instead.
+
+### The reviews file
+
+`reviews.json` sits in the configuration directory, or where `REVIEWS_FILE` in
+`.env` points (`prwarden/reviews_file.py`). It is private configuration like
+`repositories.json` and is never committed; `reviews.example.json` is, and a test
+loads it with the real loader. Without the file a run takes every setting below from
+`.env`, as it always has, and `reviews_payload` writes those settings out as the file
+that plans the same reviews.
+
+- `types` holds `design`, `docs`, `code`, and `checks`. `code` is required and
+  cannot be disabled, since it alone approves; another type left out or set
+  `"enabled": false` does not run.
+- Each type has a `review` stage and, except `checks`, an optional `verify` stage.
+  A stage lists one to four engines, each a built-in engine with an optional model
+  and effort, and no engine and model twice. The first reviews or verifies, and each
+  after it takes over when the one before fails at the engine level, as the single
+  fallback always did; the error that ends the chain names every failure. A type
+  with no `verify` stage verifies with its reviewer in a separate pass, within the
+  default verification budget. The checks reading lists exactly one engine.
+- A stage's `timeout_seconds` is the budget of every engine in it, 30 to 1800 for a
+  review and 30 to 3600 for a verification, and a verification adds
+  `timeout_per_candidate_seconds`, 0 to 600, for each candidate. `max_findings` is
+  1 to 10 per type.
+- `order` lists the enabled ordered types, `design`, `docs`, and `code`, once each,
+  and must end with `code`.
+- `concurrency`, `diff.max_bytes`, `diff.max_bundles`, `diff.ignored_missing_patch`,
+  and `engines.<engine>.env` apply to the whole run; each engine's CLI is given the
+  variables its own `env` names, beyond the few every engine gets.
+
+An unknown key, a value out of range, or a custom `command` engine is refused with
+the setting's path in the file. The run's own settings, which name its reviewer in
+the run's reports, are the code review's. The command-line engine and model options
+change the file's first engine of every type's matching stage for one run, a
+different engine taking none of the model or effort written for the one it
+replaces; `--engine` moves the checks reading too, and `--model` alone does not.
+`--fallback-engine` replaces each review's second engine, `--no-fallback` leaves
+each review only its first, and a `--verify-engine` gives a type without a verify
+stage one. `prwarden doctor` checks every engine the file names and reports any
+`.env` key it replaces as not read. An evaluation arm still overrides the run's own
+settings, so a replay reviews every type on the code review's engines.
 
 ### Installation commands
 

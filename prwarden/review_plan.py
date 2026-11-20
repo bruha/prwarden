@@ -32,6 +32,7 @@ from .engine import (
     verification_engine_settings,
     verify_fallback_engine_settings,
 )
+from .reviews_file import engine_commands, type_engines
 
 # Every type there is, in the order a run does them unless told otherwise.
 REVIEW_TYPES = (DESIGN_LEVEL, DOCS_LEVEL, CODE_LEVEL, CHECKS_LEVEL)
@@ -124,13 +125,30 @@ class ReviewPlan:
 def review_plan(settings: Settings) -> ReviewPlan:
     """Return the plan a run's settings describe.
 
-    The design and documentation reviews run when enabled, then the code review. All
-    three share the run's engines; only the code review's reasoning effort may
+    With a reviews file, the file's types run in its order on its engines. Without
+    one, the design and documentation reviews run when enabled, then the code review.
+    All three share the run's engines; only the code review's reasoning effort may
     differ, so its settings carry that effort as the reviewer's own, which is the
     effort every code-level call, its verification on the same engine included, has
     always run at.
     """
 
+    if settings.reviews is not None:
+        commands = engine_commands()
+        return ReviewPlan(
+            tuple(
+                ReviewType(
+                    configured.name,
+                    engines.settings,
+                    engines.fallbacks,
+                    engines.verifiers,
+                )
+                for configured in settings.reviews.types
+                for engines in (
+                    type_engines(settings, settings.reviews, configured, commands),
+                )
+            )
+        )
     advisory = replace(settings, review_code_effort=None)
     types = []
     if settings.design_level:

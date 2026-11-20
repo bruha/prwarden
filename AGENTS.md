@@ -11,8 +11,8 @@ worktrees, and atomic local JSON state. The controller, not an AI provider,
 owns eligibility, prompt construction, response validation, duplicate handling,
 delivery, and idempotency.
 
-The repository is public. Never commit `.env`, `repositories.json`, Slack
-webhooks, tokens, company-only repository names or paths, generated state,
+The repository is public. Never commit `.env`, `repositories.json`, `reviews.json`,
+Slack webhooks, tokens, company-only repository names or paths, generated state,
 logs, review output, or temporary worktrees. Use public-safe placeholders in
 tracked examples and documentation.
 
@@ -30,6 +30,8 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
 - `prwarden/__main__.py`: application entry point.
 - `prwarden/cli.py`: orchestration, retry boundaries, and terminal behavior.
 - `prwarden/config.py`: dotenv and repository configuration validation.
+- `prwarden/reviews_file.py`: `reviews.json`, each review type's engines, order, and
+  limits.
 - `prwarden/engine.py`: provider-neutral prompt, schemas, and adapter registry.
 - `prwarden/engine_*.py`: authenticated review-engine adapters.
 - `prwarden/github.py`: GitHub discovery, feedback, checks, and delivery.

@@ -19,6 +19,7 @@ from .commands import CommandError, run_cmd
 from .config import ConfigError, Settings, default_locations, load_settings
 from .paths import LAYOUT_CHECKOUT, LAYOUT_HOME, Locations
 from .models import Repository
+from .reviews_file import FILE_KEYS, engine_commands
 from .workspace import remote_matches_slug
 
 
@@ -68,16 +69,32 @@ def check_engines(
     signed_in = {
         state.tool.engine: state for state in states if state.tool.engine
     }
-    roles = (
-        ("review", settings.review_engine, settings.review_engine_command),
-        ("verify", settings.verify_engine, settings.verify_engine_command),
-        ("fallback", settings.fallback_engine, settings.fallback_engine_command),
-        (
-            "verify fallback",
-            settings.verify_fallback_engine,
-            settings.verify_fallback_engine_command,
-        ),
-    )
+    if settings.reviews is not None:
+        # Every engine the file names, once, whichever stages name it.
+        commands = engine_commands()
+        named = sorted(
+            {
+                choice.engine
+                for review_type in settings.reviews.types
+                for stage in (review_type.review, review_type.verify)
+                if stage is not None
+                for choice in stage.engines
+            }
+        )
+        roles: "tuple[tuple[str, Optional[str], tuple[str, ...]], ...]" = tuple(
+            ("reviews file", engine, commands[engine]) for engine in named
+        )
+    else:
+        roles = (
+            ("review", settings.review_engine, settings.review_engine_command),
+            ("verify", settings.verify_engine, settings.verify_engine_command),
+            ("fallback", settings.fallback_engine, settings.fallback_engine_command),
+            (
+                "verify fallback",
+                settings.verify_fallback_engine,
+                settings.verify_fallback_engine_command,
+            ),
+        )
     checks = []
     for role, engine, command in roles:
         if not engine or not command:
@@ -391,6 +408,30 @@ def check_schedule_python(
     ]
 
 
+def check_reviews_file(settings: Settings) -> List[Check]:
+    """Say where each type's engines come from, and which `.env` keys go unread."""
+
+    if settings.reviews is None:
+        return [Check(OK, "reviews: engines from .env; no reviews file")]
+    checks = [
+        Check(
+            OK,
+            f"reviews: {_home_relative(settings.reviews.source)} names "
+            + ", ".join(review_type.name for review_type in settings.reviews.types),
+        )
+    ]
+    unread = [key for key in FILE_KEYS if os.environ.get(key, "").strip()]
+    if unread:
+        checks.append(
+            Check(
+                NOTE,
+                "reviews: the reviews file replaces these .env keys, which are not "
+                "read: " + ", ".join(unread),
+            )
+        )
+    return checks
+
+
 def diagnose(env_file: Optional[Path]) -> "tuple[List[str], List[Check]]":
     """Return the header lines and the checks for this installation."""
 
@@ -414,6 +455,7 @@ def diagnose(env_file: Optional[Path]) -> "tuple[List[str], List[Check]]":
         settings = load_settings(env_file)
     except (ConfigError, CommandError) as error:
         return header, checks + [Check(PROBLEM, str(error))]
+    checks += check_reviews_file(settings)
     checks += check_engines(settings, states)
     github_checks = check_github(settings)
     checks += github_checks

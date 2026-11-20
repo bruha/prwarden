@@ -295,9 +295,44 @@ See [.env.example](.env.example) for every setting and
 [Review engine setup](docs/review-engines.md) for provider authentication and
 adapter-specific commands.
 
+### Review types in `reviews.json`
+
+A `reviews.json` beside `.env` takes the place of every review-engine setting in the
+table above, from `REVIEW_ENGINE` to `IGNORED_MISSING_PATCH_PATTERNS`, and `.env`'s
+are then not read; `prwarden doctor` names any it skips. Without the file a run reads
+`.env` as before. `REVIEWS_FILE` in `.env` points elsewhere. Start from
+[reviews.example.json](reviews.example.json); in a clone, `reviews.json` is ignored by
+Git.
+
+- `types` holds `design`, `docs`, `code`, and `checks`. Only `code` is required, and
+  a type left out, or set `"enabled": false`, does not run. `code` cannot be turned
+  off: it is the review that approves.
+- Each type has a `review` stage and, except `checks`, an optional `verify` stage.
+  A stage lists one to four `engines`, each `{"engine", "model", "effort"}` with a
+  built-in engine: `antigravity`, `claude`, `codex`, or `kiro`. The first reviews,
+  and each after it takes over, in order, when the one before fails at the engine
+  level. A type with no `verify` stage verifies with its reviewer in a separate
+  pass. The checks reading has exactly one engine: a reading that fails costs only
+  itself.
+- A stage's `timeout_seconds` is every one of its engines' budget; a `verify` stage
+  adds `timeout_per_candidate_seconds` for each candidate it judges. Each type but
+  `checks` sets `max_findings`.
+- `order` lists the enabled types among `design`, `docs`, and `code`, ending with
+  `code`: the advisory notes reach the pull request before the approval an agent
+  merges on.
+- `concurrency`, `diff` (`max_bytes`, `max_bundles`, `ignored_missing_patch`), and
+  `engines.<engine>.env`, the variables that engine's CLI is given beyond the few
+  every one gets, are shared by every type.
+
+A custom `command` engine cannot be named in the file; keep it in `.env` without a
+`reviews.json`. `--engine`, `--model`, `--verify-engine`, `--verify-model`,
+`--fallback-engine`, `--fallback-model`, `--no-fallback`, and `--concurrency` change
+the file's settings for one run, for every type: a different engine does not take the
+model or effort written for the one it replaces.
+
 ### Where configuration and state live
 
-| Layout | Configuration (`.env`, `repositories.json`) | State, run logs, review history, worktrees |
+| Layout | Configuration (`.env`, `repositories.json`, `reviews.json`) | State, run logs, review history, worktrees |
 | --- | --- | --- |
 | Source checkout | The checkout root | `.state/` in the checkout |
 | Installed copy | `~/.config/prwarden` | `~/.local/state/prwarden` |
