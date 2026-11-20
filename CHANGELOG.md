@@ -9,8 +9,31 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.5.3 9d59026587ed8c9ef6a449ae8dde40861dde8cf3 -->
+<!-- release-baseline: 3.6.0 61f73aab9d27f8f11dc24785eaaee979d8617085 -->
 ## [Unreleased]
+
+## [3.6.0] - 2026-11-20
+
+### Added
+
+- tell the author what a clean review waits for (`b4b059c`).
+- say why a waiting review's checks failed (`284f88e`).
+- approve a review-policy change once a person signs it off (`209c1b3`).
+
+### Fixed
+
+- read coloured job logs and keep a fix's code block closed (`028200c`).
+- read a waiting head's checks only while its note is unposted (`65df0d5`).
+- read a sign-off whatever else held a policy change back (`a7dd217`).
+
+### Documentation
+
+- list waiting notes among the notes the code level ignores (`0e8a012`).
+- name the checks level's own effort in the engine guide (`2b359e3`).
+- describe the checks level beside the other levels (`3226e3f`).
+- list the checks level's effort with the other efforts (`f78a9c3`).
+- ask a narrow token for Actions read, for the job logs (`554d6d1`).
+- say which waiting notes stay and which the code level skips (`61f73aa`).
 
 ## [3.5.3] - 2026-11-20
 
