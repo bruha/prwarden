@@ -22,6 +22,7 @@ from prwarden.github import (
 from prwarden.models import (
     WAITING_FOR_A_PERSON,
     WAITING_FOR_CHECKS,
+    CheckDiagnosis,
     PriorReviewComment,
     PullRequest,
     Repository,
@@ -91,6 +92,24 @@ class WaitingCommentTests(unittest.TestCase):
             PULL_REQUEST, WaitingReason(WAITING_FOR_CHECKS, ("x" * 500,))
         )
         self.assertNotIn("x" * 200, long_name)
+
+    def test_a_fix_cannot_leave_the_rest_of_the_note_in_code(self):
+        """A code block the model left open would swallow the citations and the
+        attribution that says who read the logs."""
+
+        diagnosis = CheckDiagnosis(
+            "Lint",
+            "type_error",
+            "The call returns a promise now.",
+            "Await it:\n```ts\nawait copy(text)",
+            "error TS2345",
+        )
+        body = format_waiting_comment(
+            PULL_REQUEST, CHECKS, diagnoses=(diagnosis,), reader="Claude"
+        )
+
+        self.assertIn("**Possible fix:** Await it:\n```ts\nawait copy(text)\n```", body)
+        self.assertIn("\n_Read from the checks' output by Claude.", body)
 
     def test_a_pull_request_without_a_web_address_gets_no_link(self):
         body = format_waiting_comment(replace(PULL_REQUEST, url="url"), CHECKS)

@@ -1134,7 +1134,8 @@ never on what checks like it usually fail on.
   exactly as it appears above; the controller rejects a line it cannot find there.
 - `cause`: one or two sentences on why it failed.
 - `fix`: the concrete change that would make it pass, a code edit, a command, or a
-  re-run, ready to act on. Never propose skipping, disabling, or loosening the check.
+  re-run, ready to act on. Put code in a fenced Markdown code block. Never propose
+  skipping, disabling, or loosening the check.
 - `citations`: up to three lines of this workspace the fix concerns, or none when
   the fix is not in this workspace, such as a re-run.
 

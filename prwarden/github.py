@@ -858,9 +858,18 @@ def read_check_log(repository: Repository, check: PullRequestCheck) -> str:
 
     if check.app != GITHUB_ACTIONS_APP or check.check_id is None:
         raise CommandError(f"Check {check.name!r} has no GitHub Actions log")
+    # A job's log is coloured, and GitHub CLI refuses to print escape sequences
+    # unless told to. They are taken out before the text goes anywhere
+    # (`check_logs.actions_log_excerpt`), so nothing a job printed reaches a
+    # terminal, a prompt, or a comment as a control sequence.
     return _run_for(
         repository,
-        ["gh", "api", f"repos/{repository.slug}/actions/jobs/{check.check_id}/logs"],
+        [
+            "gh",
+            "api",
+            "--allow-escape-sequences",
+            f"repos/{repository.slug}/actions/jobs/{check.check_id}/logs",
+        ],
         timeout_seconds=120,
         retry_transient=True,
     )
@@ -1745,6 +1754,13 @@ def _diagnosis_lines(diagnosis: CheckDiagnosis) -> "list[str]":
     def unmentioned(text: str) -> str:
         return MENTION.sub("@\u2060", text)
 
+    def closed(text: str) -> str:
+        # A fence the model left open would turn the rest of the comment into code.
+        fences = sum(
+            1 for line in text.splitlines() if line.lstrip().startswith("```")
+        )
+        return text + "\n```" if fences % 2 else text
+
     name = " ".join(diagnosis.check.split())[:MAX_WAITING_ITEM_CHARACTERS]
     lines = [
         f"**{_inline_code(name)}** · {diagnosis.category.replace('_', ' ')}",
@@ -1753,7 +1769,8 @@ def _diagnosis_lines(diagnosis: CheckDiagnosis) -> "list[str]":
         "",
         f"> {_inline_code(diagnosis.log_excerpt)}",
         "",
-        f"**Possible fix:** {unmentioned(diagnosis.fix)}",
+        f"**Possible fix:** {closed(unmentioned(diagnosis.fix))}",
+        "",
     ]
     for citation in diagnosis.citations:
         lines.append(

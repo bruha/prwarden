@@ -31,7 +31,15 @@ ACTIONS_ERROR = re.compile(r"^##\[error\]")
 ACTIONS_STEP = re.compile(r"^##\[group\](?P<name>.*)$")
 ACTIONS_MARKER = re.compile(r"^##\[(?:endgroup|group|command|debug|notice|warning)\]")
 ACTIONS_TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ?")
-ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+# Every escape sequence a terminal acts on, colour and title alike, and any other
+# control character but a tab: a job prints them, and none may reach a terminal, a
+# prompt, or a comment.
+ESCAPE_SEQUENCE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]"
+    r"|[\]PX^_][^\x07\x1b]*(?:\x07|\x1b\\)?"
+    r"|[ -/]*[0-~])"
+)
+CONTROL_CHARACTER = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 REDACTED = "[credential removed]"
 MAX_DIAGNOSIS_CITATIONS = 3
 
@@ -51,6 +59,13 @@ def redact_credentials_in_text(text: str) -> str:
     return "\n".join(lines)
 
 
+def plain_text(text: str) -> str:
+    """Return ``text`` without escape sequences or control characters but tabs and
+    line breaks."""
+
+    return CONTROL_CHARACTER.sub("", ESCAPE_SEQUENCE.sub("", text))
+
+
 def actions_log_excerpt(raw: str) -> str:
     """Return the part of a GitHub Actions job log that says why it failed.
 
@@ -58,11 +73,11 @@ def actions_log_excerpt(raw: str) -> str:
     of the step that printed it, at most ``MAX_LOG_LINES`` of them: a tool reports
     what failed just before the step's "Process completed with exit code 1". The
     step's name is kept as the first line. A log with no marked error gives its last
-    lines instead. Timestamps, colour codes, and GitHub's own markers are dropped.
+    lines instead. Timestamps, escape sequences, and GitHub's own markers are dropped.
     """
 
     lines = [
-        ANSI_ESCAPE.sub("", ACTIONS_TIMESTAMP.sub("", line)).rstrip()
+        plain_text(ACTIONS_TIMESTAMP.sub("", line)).rstrip()
         for line in raw.replace("\r\n", "\n").split("\n")
     ]
     errors = [index for index, line in enumerate(lines) if ACTIONS_ERROR.match(line)]
@@ -107,7 +122,7 @@ def read_check_logs(
             except CommandError as error:
                 report(f"      -> Could not read the log of {check.name}: {error}")
         if not text.strip():
-            text = check.summary[:MAX_LOG_CHARACTERS]
+            text = plain_text(check.summary)[:MAX_LOG_CHARACTERS]
             source = "summary"
         if text.strip():
             logs.append(
