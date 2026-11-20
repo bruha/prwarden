@@ -3328,6 +3328,7 @@ class OrchestrationTests(unittest.TestCase):
         max_findings: "Optional[int]" = None,
         checks_level: bool = False,
         check_log: str = "",
+        required: "Optional[dict]" = None,
     ) -> dict:
         repository = Repository("app", "owner/app", Path(directory))
         pull_request = PullRequest(
@@ -3390,6 +3391,8 @@ class OrchestrationTests(unittest.TestCase):
         ) as hide_comments, patch(
             "prwarden.cli.read_check_log", return_value=check_log
         ) as read_log, patch(
+            "prwarden.cli.check_requirements", return_value=required
+        ) as read_required, patch(
             "sys.stdout", new_callable=StringIO
         ) as output:
             workspace.return_value.__enter__.return_value = repository
@@ -3409,9 +3412,13 @@ class OrchestrationTests(unittest.TestCase):
                 waiting = store.get(
                     store.key(repository.slug, 1, head, "github:waiting")
                 )
+                reminder = store.get(
+                    store.key(repository.slug, 1, head, "github:reminder")
+                )
         return {
             "record": record or {},
             "waiting": waiting or {},
+            "reminder": reminder or {},
             "terminal": output.getvalue(),
             "submit_review": submit_review,
             "submit_approval": submit_approval,
@@ -3419,6 +3426,7 @@ class OrchestrationTests(unittest.TestCase):
             "submit_waiting": submit_waiting,
             "hide_comments": hide_comments,
             "read_log": read_log,
+            "read_required": read_required,
             "read_marks": read_marks,
             "read_issues": read_issues,
             "list_checks": list_checks,
@@ -4294,6 +4302,151 @@ class OrchestrationTests(unittest.TestCase):
         self.assertIn("Told the author the review waits for checks", result["terminal"])
         # The approval record is the one it always was.
         self.assertEqual(result["record"]["status"], "approval_withheld")
+
+    E2E_FAILED = (
+        PullRequestCheck("build", "completed", "success"),
+        PullRequestCheck("e2e", "completed", "failure"),
+    )
+    E2E_OPTIONAL = {"build": True, "e2e": False}
+
+    def test_a_check_github_does_not_require_is_approved_with_a_reminder(
+        self,
+    ) -> None:
+        """The team chose not to require it, so it does not hold the approval; the
+        author is reminded of it once the approval is on the pull request."""
+
+        from prwarden.github import WAITING_COMMENT_MARKER
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                self.approving_engine(),
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.E2E_FAILED,
+                required=self.E2E_OPTIONAL,
+            )
+
+        terminal = result["terminal"]
+        self.assertLess(
+            terminal.index("Approved successfully"),
+            terminal.index("Told the author which checks to fix"),
+        )
+        self.assertEqual(result["record"]["status"], "delivered")
+        body = result["submit_waiting"].call_args.args[2]
+        self.assertIn("## Checks to fix", body)
+        self.assertIn("found nothing to report, and approved it", body)
+        self.assertIn("- `e2e`", body)
+        self.assertIn("GitHub does not require them to merge into `main`", body)
+        self.assertTrue(body.rstrip().endswith(WAITING_COMMENT_MARKER))
+        self.assertEqual(result["reminder"]["status"], "delivered")
+        self.assertEqual(result["reminder"]["items"], ["e2e"])
+        self.assertEqual(result["waiting"], {})
+        self.assertIn("GitHub does not require check e2e", result["terminal"])
+
+    def test_a_failed_required_check_still_holds_and_the_note_names_the_rest(
+        self,
+    ) -> None:
+        checks = (
+            PullRequestCheck("build", "completed", "failure"),
+            PullRequestCheck("e2e", "completed", "failure"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                self.approving_engine(),
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=checks,
+                required=self.E2E_OPTIONAL,
+            )
+
+        result["submit_approval"].assert_not_called()
+        self.assertEqual(result["record"]["failed_checks"], ["build"])
+        self.assertIn("GitHub check build failed at this head", result["terminal"])
+        body = result["submit_waiting"].call_args.args[2]
+        self.assertIn("## Waiting for checks", body)
+        self.assertIn("- `build`", body)
+        self.assertIn("These fail too, but GitHub does not require them", body)
+        self.assertIn("- `e2e`", body)
+        self.assertEqual(result["waiting"]["optional"], ["e2e"])
+
+    def test_every_failed_check_holds_when_github_has_not_said_which_matter(
+        self,
+    ) -> None:
+        """A branch that requires no check, an answer GitHub could not give, and a
+        check missing from its answer all leave the approval withheld."""
+
+        for required in ({"build": False, "e2e": False}, None, {"build": True}):
+            with self.subTest(required=required), tempfile.TemporaryDirectory() as (
+                directory
+            ):
+                result = self.run_partial_review(
+                    directory,
+                    self.approving_engine(),
+                    max_diff_bytes=100000,
+                    changed_files=self.CLEAN_CHANGE,
+                    checks=self.E2E_FAILED,
+                    required=required,
+                )
+
+                result["submit_approval"].assert_not_called()
+                self.assertEqual(result["record"]["failed_checks"], ["e2e"])
+
+    def test_a_head_withheld_over_a_check_found_optional_is_approved(self) -> None:
+        """Withheld before PR Warden asked GitHub which checks it requires, the head
+        is reviewed again once it is known that none of its failures is required."""
+
+        engine = self.approving_engine()
+        with tempfile.TemporaryDirectory() as directory:
+            withheld = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.E2E_FAILED,
+            )
+            approved = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.E2E_FAILED,
+                required=self.E2E_OPTIONAL,
+            )
+
+        self.assertEqual(withheld["record"]["status"], "approval_withheld")
+        self.assertIn(
+            "No check GitHub requires fails at this head any more", approved["terminal"]
+        )
+        self.assertEqual(engine.review.call_count, 2)
+        approved["submit_approval"].assert_called_once()
+        self.assertEqual(approved["reminder"]["status"], "delivered")
+
+    def test_the_reminder_says_why_the_optional_check_failed(self) -> None:
+        optional = (
+            PullRequestCheck("build", "completed", "success"),
+            *self.ACTIONS_FAILED,
+        )
+        engine = Mock()
+        engine.review.side_effect = [self.APPROVAL, self.DIAGNOSIS]
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=optional,
+                checks_level=True,
+                check_log=self.ACTIONS_LOG,
+                required={"build": True, "compile-code": False},
+            )
+
+        result["submit_approval"].assert_called_once()
+        body = result["submit_waiting"].call_args.args[2]
+        self.assertIn("## Checks to fix", body)
+        self.assertIn("### Why they failed", body)
+        self.assertEqual(result["reminder"]["diagnosed"], 1)
 
     ACTIONS_FAILED = (
         PullRequestCheck(

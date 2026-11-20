@@ -11,6 +11,7 @@ from .comment_template import CommentTemplate
 from .commands import CommandError
 from .config import GITHUB_USERNAME_PATTERN
 from .models import (
+    FAILING_OPTIONAL_CHECKS,
     WAITING_FOR_CHECKS,
     CheckDiagnosis,
     DesignFinding,
@@ -944,6 +945,83 @@ def _list_commit_statuses(
     return tuple(checks)
 
 
+# Whether the base branch's protection or rulesets require each of the head's checks
+# before this pull request may merge. GitHub answers it per check and per pull
+# request, to any reader, where the protection settings themselves need admin.
+MAX_CHECK_REQUIREMENTS = 100
+CHECK_REQUIREMENTS_QUERY = (
+    "query($owner: String!, $name: String!, $head: GitObjectID!, $number: Int!) {"
+    " repository(owner: $owner, name: $name) {"
+    " object(oid: $head) { ... on Commit {"
+    f" statusCheckRollup {{ contexts(first: {MAX_CHECK_REQUIREMENTS}) {{"
+    " pageInfo { hasNextPage }"
+    " nodes { __typename"
+    " ... on CheckRun { name isRequired(pullRequestNumber: $number) }"
+    " ... on StatusContext { context isRequired(pullRequestNumber: $number) }"
+    " } } } } } } }"
+)
+
+
+def check_requirements(
+    repository: Repository, pull_request: PullRequest
+) -> "Optional[dict[str, bool]]":
+    """Return whether GitHub requires each of the head's checks to merge, by name.
+
+    None is GitHub not saying, from an answer this cannot read whole, such as more
+    checks than one page holds; the caller then treats every failed check as
+    required. A name reported more than once is required when any one of them is.
+    """
+
+    owner, name = repository.slug.split("/", 1)
+    output = _run_for(
+        repository,
+        [
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            f"query={CHECK_REQUIREMENTS_QUERY}",
+            "-f",
+            f"owner={owner}",
+            "-f",
+            f"name={name}",
+            "-f",
+            f"head={pull_request.head_sha}",
+            "-F",
+            f"number={pull_request.number}",
+        ],
+        timeout_seconds=120,
+        retry_transient=True,
+    )
+    payload = _parse_json(
+        output,
+        f"reading the required checks of {repository.slug}#{pull_request.number}",
+    )
+    try:
+        rollup = payload["data"]["repository"]["object"]["statusCheckRollup"]
+    except (KeyError, TypeError):
+        return None
+    if rollup is None:
+        # No check has reported on this head, so none is known to be required.
+        return {}
+    contexts = rollup.get("contexts") if isinstance(rollup, dict) else None
+    if not isinstance(contexts, dict) or not isinstance(contexts.get("nodes"), list):
+        return None
+    page = contexts.get("pageInfo")
+    if not isinstance(page, dict) or page.get("hasNextPage") is not False:
+        return None
+    required: "dict[str, bool]" = {}
+    for node in contexts["nodes"]:
+        if not isinstance(node, dict):
+            return None
+        label = node.get("name", node.get("context"))
+        flag = node.get("isRequired")
+        if not isinstance(label, str) or not isinstance(flag, bool):
+            return None
+        required[label] = required.get(label, False) or flag
+    return required
+
+
 def delivered_review_findings_resolved(
     repository: Repository,
     pull_request: PullRequest,
@@ -1687,6 +1765,16 @@ def waiting_items(items: "Sequence[str]") -> "tuple[list[str], int]":
     return shown, max(len(items) - MAX_WAITING_ITEMS, 0)
 
 
+def _listed_items(items: "Sequence[str]") -> str:
+    """Return the items a note names as a Markdown list, bounded."""
+
+    shown, more = waiting_items(items)
+    listed = "\n".join(f"- {_inline_code(item)}" for item in shown)
+    if more:
+        listed += f"\n- and {more} more"
+    return listed
+
+
 def format_waiting_comment(
     pull_request: PullRequest,
     reason: WaitingReason,
@@ -1705,33 +1793,67 @@ def format_waiting_comment(
     speaks for, because a comment, unlike an approval, is not tied to a commit.
     ``diagnoses`` are the checks level's readings of why checks failed, written by
     ``reader``. ``anchored`` is the policy change an inline note sits on, which the
-    note then lists apart from the others.
+    note then lists apart from the others. A ``FAILING_OPTIONAL_CHECKS`` reason is
+    said beside an approval instead: the checks it names failed, but GitHub does
+    not require them, so the note reminds the author to fix them.
     """
 
-    shown, more = waiting_items(reason.items)
-    listed = "\n".join(f"- {_inline_code(item)}" for item in shown)
-    if more:
-        listed += f"\n- and {more} more"
+    listed = _listed_items(reason.items)
     head = _inline_code(pull_request.head_sha[:12])
     result = "its LGTM" if own else "an approval"
-    if reason.kind == WAITING_FOR_CHECKS:
+    if reason.kind in (WAITING_FOR_CHECKS, FAILING_OPTIONAL_CHECKS):
         checks = (
             f" See the [checks]({pull_request.url}/checks)."
             if pull_request.url.startswith("https://")
             else ""
         )
-        lines = [
-            "## Waiting for checks",
-            "",
-            f"PR Warden reviewed {head} and found nothing to report, but it holds "
-            f"{result} while these checks fail at this commit:",
-            "",
-            listed,
-            "",
-            "Fix them and push, or re-run them if they failed for a reason outside "
-            "this change. PR Warden reviews this pull request again once they pass."
-            + checks,
-        ]
+        base = (
+            _inline_code(pull_request.base_ref)
+            if pull_request.base_ref
+            else "the base branch"
+        )
+        if reason.kind == WAITING_FOR_CHECKS:
+            lines = [
+                "## Waiting for checks",
+                "",
+                f"PR Warden reviewed {head} and found nothing to report, but it holds "
+                f"{result} while these checks fail at this commit:",
+                "",
+                listed,
+            ]
+            if reason.optional:
+                lines.extend(
+                    [
+                        "",
+                        "These fail too, but GitHub does not require them to merge "
+                        f"into {base}, so they do not hold it back:",
+                        "",
+                        _listed_items(reason.optional),
+                    ]
+                )
+            lines.extend(
+                [
+                    "",
+                    "Fix them and push, or re-run them if they failed for a reason "
+                    "outside this change. PR Warden reviews this pull request again "
+                    "once they pass." + checks,
+                ]
+            )
+        else:
+            done = "posted its LGTM" if own else "approved it"
+            held = "its LGTM" if own else "the approval"
+            lines = [
+                "## Checks to fix",
+                "",
+                f"PR Warden reviewed {head}, found nothing to report, and {done}, "
+                "but these checks fail at this commit:",
+                "",
+                listed,
+                "",
+                f"GitHub does not require them to merge into {base}, so they do not "
+                f"hold {held} back. Fix them, or re-run them if they failed for a "
+                "reason outside this change." + checks,
+            ]
         if diagnoses:
             lines.extend(["", "### Why they failed", ""])
             for diagnosis in diagnoses:

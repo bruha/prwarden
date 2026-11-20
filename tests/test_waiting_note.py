@@ -20,6 +20,7 @@ from prwarden.github import (
     format_waiting_comment,
 )
 from prwarden.models import (
+    FAILING_OPTIONAL_CHECKS,
     WAITING_FOR_A_PERSON,
     WAITING_FOR_CHECKS,
     CheckDiagnosis,
@@ -63,6 +64,38 @@ class WaitingCommentTests(unittest.TestCase):
         self.assertIn("holds its LGTM while", checks)
         self.assertIn("holds its LGTM on a change to review policy", policy)
         self.assertIn("reviews it again and posts its LGTM", policy)
+
+    def test_a_reminder_names_the_checks_github_does_not_require(self):
+        reminder = WaitingReason(FAILING_OPTIONAL_CHECKS, ("e2e",))
+        pull_request = replace(PULL_REQUEST, base_ref="develop")
+
+        body = format_waiting_comment(pull_request, reminder)
+        own = format_waiting_comment(pull_request, reminder, own=True)
+
+        self.assertTrue(body.startswith("## Checks to fix\n"))
+        self.assertIn("found nothing to report, and approved it", body)
+        self.assertIn("- `e2e`", body)
+        self.assertIn(
+            "GitHub does not require them to merge into `develop`, so they do not "
+            "hold the approval back.",
+            body,
+        )
+        self.assertIn("[checks](https://github.com/owner/app/pull/7/checks)", body)
+        self.assertTrue(body.rstrip().endswith(WAITING_COMMENT_MARKER))
+        self.assertIn("and posted its LGTM", own)
+        self.assertIn("do not hold its LGTM back", own)
+
+    def test_a_checks_note_lists_apart_the_failures_that_do_not_hold_it(self):
+        reason = WaitingReason(WAITING_FOR_CHECKS, ("Build",), optional=("e2e",))
+
+        body = format_waiting_comment(PULL_REQUEST, reason)
+
+        self.assertIn("these checks fail at this commit:\n\n- `Build`\n", body)
+        self.assertIn(
+            "These fail too, but GitHub does not require them to merge into the "
+            "base branch, so they do not hold it back:\n\n- `e2e`",
+            body,
+        )
 
     def test_a_policy_note_asks_for_a_person(self):
         body = format_waiting_comment(PULL_REQUEST, POLICY)
@@ -131,6 +164,26 @@ class WaitingCommentTests(unittest.TestCase):
         self.assertIn("*PR #7 Waiting for checks (app)*", message)
         self.assertIn("`Lint`, `Build` and 2 more", message)
         self.assertIn("holds its LGTM", message)
+
+    def test_a_slack_reminder_names_the_checks_beside_the_lgtm(self):
+        repository = Repository("app", "owner/app", None)
+        reminder = format_waiting_slack_message(
+            repository,
+            PULL_REQUEST,
+            WaitingReason(FAILING_OPTIONAL_CHECKS, ("e2e",)),
+            ["e2e"],
+        )
+        waiting = format_waiting_slack_message(
+            repository,
+            PULL_REQUEST,
+            WaitingReason(WAITING_FOR_CHECKS, ("Build",), optional=("e`2e\nx",)),
+            ["Build"],
+        )
+
+        self.assertIn("*PR #7 Checks to fix (app)*", reminder)
+        self.assertIn("sent its LGTM, but these checks fail: `e2e`", reminder)
+        self.assertIn("do not hold the LGTM back", reminder)
+        self.assertIn("they do not hold it back: `e2e x`.", waiting)
 
     def test_another_installations_note_is_no_feedback_for_the_code_level(self):
         """Another developer's PR Warden posts it under their name; like an LGTM,

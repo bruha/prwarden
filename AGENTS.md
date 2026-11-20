@@ -91,6 +91,10 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
   after its review was withheld.
   "Self" is the repository's `github_account` when its entry names one, compared
   case-insensitively, and the configured reviewer otherwise.
+  A failed exact-head check holds the approval unless GitHub says the base branch
+  requires some checks and not that one; the approval of such a head is followed by
+  a reminder naming it. A branch that requires no check, an answer GitHub cannot
+  give, and a check missing from its answer leave every failed check holding it.
 - A repository configured with `"slack": false` is never named in a Slack message,
   error notifications included.
 - A pull request that closed or merged during review still receives its confirmed

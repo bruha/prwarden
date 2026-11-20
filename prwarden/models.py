@@ -431,6 +431,9 @@ class CheckDiagnosis:
 # Why a code review that found nothing still gave no approval, as told to the author.
 WAITING_FOR_CHECKS = "checks"
 WAITING_FOR_A_PERSON = "policy"
+# Failed checks GitHub does not require to merge: they never hold an approval back,
+# and the author is reminded of them beside it.
+FAILING_OPTIONAL_CHECKS = "optional_checks"
 
 
 @dataclass(frozen=True)
@@ -438,11 +441,15 @@ class WaitingReason:
     """What a clean review waits for before it approves: checks, or a person.
 
     ``items`` names the failing checks, or the review-policy changes a person must
-    approve, as the controller found them.
+    approve, as the controller found them. ``optional`` names the failed checks a
+    note waiting for checks also lists, though GitHub does not require them and so
+    they do not hold the approval. A ``FAILING_OPTIONAL_CHECKS`` reason waits for
+    nothing: its items are those checks, named beside an approval as a reminder.
     """
 
     kind: str
     items: "tuple[str, ...]"
+    optional: "tuple[str, ...]" = ()
 
 
 @dataclass(frozen=True)

@@ -67,6 +67,7 @@ from .github import (
     DOCS_COMMENT_MARKER,
     MAX_PRIOR_REVIEW_BYTES,
     WAITING_COMMENT_MARKER,
+    check_requirements,
     code_level_feedback,
     delivered_review_findings_resolved,
     format_design_comment,
@@ -107,6 +108,7 @@ from .history import (
     prune as prune_history,
 )
 from .models import (
+    FAILING_OPTIONAL_CHECKS,
     WAITING_FOR_A_PERSON,
     WAITING_FOR_CHECKS,
     CheckDiagnosis,
@@ -143,6 +145,7 @@ from .review import (
     documentation_change_fingerprint,
     dominant_directories,
     background_text,
+    blocking_checks,
     collect_review_rules,
     format_byte_size,
     history_paths,
@@ -3195,12 +3198,19 @@ def _process_pull_request(
                         f"read: {error}",
                     )
                     return
-                if failing:
+                holding = (
+                    blocking_checks(
+                        failing, _check_requirements(repository, pull_request)
+                    )
+                    if failing
+                    else ()
+                )
+                if holding:
                     _report_skip(
                         history_record,
                         "code",
                         "approval stays withheld while "
-                        f"{_describe_failed_checks(failing)} failed at this head; a "
+                        f"{_describe_failed_checks(holding)} failed at this head; a "
                         "re-run that passes, a later head, or --force reopens it",
                     )
                     if live:
@@ -3210,12 +3220,21 @@ def _process_pull_request(
                             pull_request,
                             store,
                             destination,
-                            WaitingReason(WAITING_FOR_CHECKS, tuple(failing)),
+                            WaitingReason(
+                                WAITING_FOR_CHECKS,
+                                tuple(holding),
+                                optional=tuple(
+                                    name for name in failing if name not in holding
+                                ),
+                            ),
                         )
                     return
                 print(
-                    "      -> No check fails at this head any more; reconsidering "
-                    "withheld approval"
+                    "      -> No check GitHub requires fails at this head any more; "
+                    "reconsidering withheld approval"
+                    if failing
+                    else "      -> No check fails at this head any more; "
+                    "reconsidering withheld approval"
                 )
             elif policy_signoff_by is not None:
                 print(
@@ -3277,6 +3296,8 @@ def _process_pull_request(
     # Whether this head's sign-off was already read for this review, so it is read
     # once even when nobody has signed it off.
     policy_signoff_read = False
+    # Failed checks GitHub does not require, which the approval is delivered beside.
+    optional_failing: "tuple[str, ...]" = ()
     # Confirmed findings over the one limit a review posts, kept for its record.
     withheld_findings: "list[Finding]" = []
 
@@ -3617,8 +3638,11 @@ def _process_pull_request(
                 and approve
                 and not credentials
                 and not partial
-                and not _waiting_note_settled(
-                    store, repository, pull_request, destination
+                and not all(
+                    _waiting_note_settled(
+                        store, repository, pull_request, destination, suffix
+                    )
+                    for suffix in NOTE_SUFFIXES
                 )
             ):
                 if policy_changes and policy_signoff_by is None:
@@ -3641,12 +3665,28 @@ def _process_pull_request(
                     )
                 )
                 if failing:
-                    # Only a review that would approve but for its checks waits for
-                    # them, and only then is the reading of why they failed worth a
-                    # call: it goes into the note that tells the author so. Read
-                    # here, while the workspace is open, so a check that passes on
-                    # the final read costs this reading; a head whose note is
-                    # already posted costs none.
+                    # A failed check GitHub requires holds the approval, and the note
+                    # waits for it; one it does not require is named beside the
+                    # approval. Only the note still to be posted needs a reading.
+                    holding = blocking_checks(
+                        failed_checks(failing),
+                        _check_requirements(repository, pull_request),
+                    )
+                    if _waiting_note_settled(
+                        store,
+                        repository,
+                        pull_request,
+                        destination,
+                        WAITING_NOTE_SUFFIX if holding else REMINDER_NOTE_SUFFIX,
+                    ):
+                        failing = ()
+                if failing:
+                    # Only a review that would approve, but for its checks or beside
+                    # checks GitHub does not require, says anything about them, and
+                    # only then is the reading of why they failed worth a call: it
+                    # goes into that note. Read here, while the workspace is open, so
+                    # a check that passes on the final read costs this reading; a
+                    # head whose note is already posted costs none.
                     check_diagnoses = _run_checks_level(
                         checks_stage,
                         repository,
@@ -3940,16 +3980,25 @@ def _process_pull_request(
             return
         # Read again rather than reusing the checks the review started with: CI
         # often finishes while a review runs, and an approval speaks for the head
-        # as it is now. A failed check is the head failing a test the team chose,
-        # which no review verdict outweighs.
+        # as it is now. A failed check GitHub requires is the head failing a test
+        # the team chose to require, which no review verdict outweighs. One it does
+        # not require is a test the team chose not to, so the approval goes ahead
+        # and the author is reminded of it. Its requirement is read after the checks,
+        # so a check that reported in between is never taken for an optional one.
         try:
             failing = failed_checks(list_pull_request_checks(repository, pull_request))
         except CommandError as error:
             store.set_status(state_key, "failed", error=str(error))
             raise
-        if failing:
+        holding = (
+            blocking_checks(failing, _check_requirements(repository, pull_request))
+            if failing
+            else ()
+        )
+        optional_failing = tuple(name for name in failing if name not in holding)
+        if holding:
             _print_findings(findings, False)
-            reason = f"GitHub {_describe_failed_checks(failing)} failed at this head"
+            reason = f"GitHub {_describe_failed_checks(holding)} failed at this head"
             print(f"      -> Approval withheld: {reason}")
             store.set_status(
                 state_key,
@@ -3957,7 +4006,7 @@ def _process_pull_request(
                 reason=reason,
                 blocking_comment_ids=[],
                 feedback_fingerprint=_feedback_fingerprint(latest_prior_comments),
-                failed_checks=list(failing),
+                failed_checks=list(holding),
                 **_reviewed_patch_record(
                     files,
                     code_files,
@@ -3978,7 +4027,9 @@ def _process_pull_request(
                 pull_request,
                 store,
                 destination,
-                WaitingReason(WAITING_FOR_CHECKS, tuple(failing)),
+                WaitingReason(
+                    WAITING_FOR_CHECKS, tuple(holding), optional=optional_failing
+                ),
                 diagnoses=tuple(
                     diagnosis
                     for diagnosis in check_diagnoses
@@ -3987,6 +4038,13 @@ def _process_pull_request(
                 diagnosed_by=stages.get(CHECKS_LEVEL),
             )
             return
+        if optional_failing:
+            verb = "fails" if len(optional_failing) == 1 else "fail"
+            print(
+                "      -> GitHub does not require "
+                f"{_describe_failed_checks(optional_failing)}, which {verb}, so "
+                "the approval goes ahead with a reminder"
+            )
 
     if clean_candidate:
         _print_findings(findings, approve)
@@ -4085,8 +4143,28 @@ def _process_pull_request(
     )
     print(f"      -> {action} successfully (receipt: {receipt_id})")
     if destination != "slack":
-        # This result answers what any earlier waiting note said it waited for.
-        _hide_waiting_notes(settings, repository, pull_request, store, destination)
+        # This result answers what any earlier waiting note said it waited for. A
+        # reminder already posted for this head stays, while its checks still fail.
+        reminder = store.get(
+            _waiting_note_key(
+                store, repository, pull_request, destination, REMINDER_NOTE_SUFFIX
+            )
+        )
+        _hide_waiting_notes(
+            settings,
+            repository,
+            pull_request,
+            store,
+            destination,
+            (
+                str(reminder.get("receipt_id"))
+                if not findings
+                and optional_failing
+                and reminder is not None
+                and reminder.get("receipt_id")
+                else None
+            ),
+        )
     if destination == OWN_GITHUB_DESTINATION:
         _hide_earlier_lgtm_comments(
             repository,
@@ -4094,12 +4172,45 @@ def _process_pull_request(
             account,
             receipt_id if not findings else None,
         )
+    if not findings and optional_failing:
+        # After the approval, never before: a reminder must not say it was approved
+        # when the approval was not delivered. Contained like a waiting note.
+        _deliver_waiting_note(
+            settings,
+            repository,
+            pull_request,
+            store,
+            destination,
+            WaitingReason(FAILING_OPTIONAL_CHECKS, optional_failing),
+            diagnoses=tuple(
+                diagnosis
+                for diagnosis in check_diagnoses
+                if diagnosis.check in optional_failing
+            ),
+            diagnosed_by=stages.get(CHECKS_LEVEL),
+        )
 
 
 # A waiting note is kept beside the head's own record, under its own destination, so
-# the code level's record and every reading of it stay exactly as they were.
+# the code level's record and every reading of it stay exactly as they were. The
+# reminder beside an approval about failed checks GitHub does not require is kept
+# apart from it: a head that waited for a required check can still be approved and
+# reminded once that check passes.
 WAITING_NOTE_SUFFIX = ":waiting"
-_WAITING_NOUNS = {WAITING_FOR_CHECKS: "checks", WAITING_FOR_A_PERSON: "a person"}
+REMINDER_NOTE_SUFFIX = ":reminder"
+NOTE_SUFFIXES = (WAITING_NOTE_SUFFIX, REMINDER_NOTE_SUFFIX)
+# What each note tells the author, as the run reports it.
+_NOTE_SUBJECTS = {
+    WAITING_FOR_CHECKS: "the review waits for checks",
+    WAITING_FOR_A_PERSON: "the review waits for a person",
+    FAILING_OPTIONAL_CHECKS: "which checks to fix though GitHub does not require them",
+}
+
+
+def _note_suffix(kind: str) -> str:
+    return REMINDER_NOTE_SUFFIX if kind == FAILING_OPTIONAL_CHECKS else (
+        WAITING_NOTE_SUFFIX
+    )
 
 
 def _waiting_note_key(
@@ -4107,12 +4218,13 @@ def _waiting_note_key(
     repository: Repository,
     pull_request: PullRequest,
     destination: str,
+    suffix: str = WAITING_NOTE_SUFFIX,
 ) -> str:
     return store.key(
         repository.slug,
         pull_request.number,
         pull_request.head_sha,
-        destination + WAITING_NOTE_SUFFIX,
+        destination + suffix,
     )
 
 
@@ -4121,13 +4233,33 @@ def _waiting_note_settled(
     repository: Repository,
     pull_request: PullRequest,
     destination: str,
+    suffix: str = WAITING_NOTE_SUFFIX,
 ) -> bool:
-    """Return whether this head's waiting note is posted, or may have been."""
+    """Return whether this head's note of that kind is posted, or may have been."""
 
     record = store.get(
-        _waiting_note_key(store, repository, pull_request, destination)
+        _waiting_note_key(store, repository, pull_request, destination, suffix)
     )
     return record is not None and record.get("status") != "failed"
+
+
+def _check_requirements(
+    repository: Repository, pull_request: PullRequest
+) -> "Optional[dict[str, bool]]":
+    """Return whether GitHub requires each of the head's checks, or None.
+
+    An answer that cannot be read is no answer, so every failed check then holds
+    the approval, as it did before GitHub was asked.
+    """
+
+    try:
+        return check_requirements(repository, pull_request)
+    except CommandError as error:
+        print(
+            "      -> Could not read which checks GitHub requires, so every failed "
+            f"check holds the approval: {error}"
+        )
+        return None
 
 
 def _checks_after_review(
@@ -4256,21 +4388,24 @@ def _deliver_waiting_note(
 
     A review that found nothing but could not approve, because a check failed or the
     change is to review policy, used to say nothing at all, and its author could not
-    tell that from PR Warden never having looked. The note is informational: the
+    tell that from PR Warden never having looked. Beside an approval, the same note
+    reminds the author of failed checks GitHub does not require, once per head too.
+    The note is informational: the
     head's own record already holds the outcome, so a note that cannot be posted is
     reported and contained, and one that may have been posted is never posted again.
     Only a note that definitely was not delivered is tried again, on a later run.
     """
 
-    key = _waiting_note_key(store, repository, pull_request, destination)
-    if _waiting_note_settled(store, repository, pull_request, destination):
+    key = _waiting_note_key(
+        store, repository, pull_request, destination, _note_suffix(reason.kind)
+    )
+    if _waiting_note_settled(
+        store, repository, pull_request, destination, _note_suffix(reason.kind)
+    ):
         return
-    noun = _WAITING_NOUNS.get(reason.kind, reason.kind)
+    subject = _NOTE_SUBJECTS.get(reason.kind, reason.kind)
     if destination == "slack" and not settings.slack_webhook_url:
-        print(
-            f"      -> Not saying the review waits for {noun}: SLACK_WEBHOOK_URL is "
-            "not set"
-        )
+        print(f"      -> Not saying {subject}: SLACK_WEBHOOK_URL is not set")
         return
     try:
         # Mutable state is read again first, as before any delivery: a closed, moved,
@@ -4281,13 +4416,18 @@ def _deliver_waiting_note(
             settings.excluded_pr_labels,
         )
     except (ReviewError, CommandError) as error:
-        print(f"      -> Not saying the review waits for {noun}: {error}")
+        print(f"      -> Not saying {subject}: {error}")
         return
     shown, more = waiting_items(reason.items)
     inline = anchor is not None and destination != "slack"
     details = {
         "waiting_for": reason.kind,
         "items": list(shown),
+        **(
+            {"optional": list(waiting_items(reason.optional)[0])}
+            if reason.optional
+            else {}
+        ),
         **({"diagnosed": len(diagnoses)} if diagnoses else {}),
         # A note on a line stays: it sits beside the change a person signed off.
         **({"inline": True} if inline else {}),
@@ -4347,20 +4487,17 @@ def _deliver_waiting_note(
             )
     except DeliveryError as error:
         store.set_status(key, "failed", error=str(error), **details)
-        print(f"      -> Could not say the review waits for {noun}: {error}")
+        print(f"      -> Could not say {subject}: {error}")
         return
     except (DeliveryUncertainError, CommandError) as error:
         store.set_status(key, "delivery_uncertain", error=str(error), **details)
         print(
-            f"      -> Saying the review waits for {noun} may not have been "
-            f"delivered, so it is not tried again: {error}"
+            f"      -> Saying {subject} may not have been delivered, so it is not "
+            f"tried again: {error}"
         )
         return
     store.set_status(key, "delivered", receipt_id=receipt_id, **details)
-    print(
-        f"      -> Told the author the review waits for {noun} "
-        f"(receipt: {receipt_id})"
-    )
+    print(f"      -> Told the author {subject} (receipt: {receipt_id})")
     if destination != "slack":
         _hide_waiting_notes(
             settings, repository, pull_request, store, destination, receipt_id
@@ -4383,14 +4520,14 @@ def _hide_waiting_notes(
     """
 
     prefix = f"{repository.slug}#{pull_request.number}#"
-    suffix = f"#{destination}{WAITING_NOTE_SUFFIX}"
+    suffixes = tuple(f"#{destination}{suffix}" for suffix in NOTE_SUFFIXES)
     visible = {
         key: record
         for key, record in store.pull_request_records(
             repository.slug, pull_request.number
         ).items()
         if key.startswith(prefix)
-        and key.endswith(suffix)
+        and key.endswith(suffixes)
         and record.get("status") in ("delivered", "delivery_uncertain")
         and not record.get("hidden")
         and not record.get("inline")

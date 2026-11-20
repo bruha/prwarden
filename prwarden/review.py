@@ -250,6 +250,24 @@ def failed_checks(checks: "Sequence[PullRequestCheck]") -> "tuple[str, ...]":
     )
 
 
+def blocking_checks(
+    failed: "Sequence[str]", required: "Optional[Mapping[str, bool]]"
+) -> "tuple[str, ...]":
+    """Return the failed checks that hold an approval back.
+
+    ``required`` is whether GitHub requires each check to merge, by name. When the
+    base branch requires some check, only a failed check GitHub says it does not
+    require is left out: the team chose not to require it, so the approval goes
+    ahead and the author is reminded instead. When it requires none, or GitHub could
+    not say, or a check is missing from its answer, every failed check holds the
+    approval, since nothing has said which checks matter.
+    """
+
+    if not required or not any(required.values()):
+        return tuple(failed)
+    return tuple(name for name in failed if required.get(name) is not False)
+
+
 # A few files and a few commits each: history is context for the code under review,
 # and a long log would compete with the diff for the reviewer's attention.
 MAX_HISTORY_FILES = 8

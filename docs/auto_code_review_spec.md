@@ -15,16 +15,27 @@ review-engine adapter, and route confirmed correctness or security findings:
   merged once required checks and branch protections pass. Never approve it on
   GitHub because authors cannot approve their own pull requests.
 - No clean result, approval or `LGTM`, is delivered while a check on the exact
-  head has failed. Just before delivering one, the controller reads the head's
-  check runs and commit statuses again, because CI often finishes while a review
-  runs, and a conclusion of `failure`, `timed_out`, `startup_failure`, or
+  head that holds it has failed. Just before delivering one, the controller reads
+  the head's check runs and commit statuses again, because CI often finishes while
+  a review runs, and a conclusion of `failure`, `timed_out`, `startup_failure`, or
   `action_required`, or a status of `failure` or `error`, withholds it: the head
   failed a test the team chose, and no review verdict outweighs that. A cancelled,
   skipped, neutral, or still-running check does not withhold, since it says nothing
-  about the code. Findings are delivered as usual. The record names the failed
-  checks, and while any check on that head still fails a later run skips it without
-  reviewing; a re-run that passes, a later head, or `--force` reopens it. Checks
-  that cannot be read keep it skipped.
+  about the code. Which failed checks hold it is GitHub's answer, read after the
+  checks so a check that reports in between is never missed: each check's
+  `isRequired` for this pull request, from the base branch's protection and
+  rulesets (`github.check_requirements`). When the branch requires some check, a
+  failed check GitHub says it does not require does not withhold; the clean result
+  is delivered and then followed, once per head, by a `## Checks to fix` reminder
+  naming those checks, kept under its own `github:reminder`-style destination and
+  carrying the waiting-note marker, so a later result minimizes it like a waiting
+  note. When the branch requires no check, when GitHub's answer cannot be read
+  whole, or when a failed check is missing from it, every failed check withholds,
+  as before GitHub was asked. Findings are delivered as usual. The record names the
+  failed checks that withheld it, and while any of them still fails a later run
+  skips it without reviewing; a re-run that passes, a later head, `--force`, or
+  GitHub no longer requiring any of them reopens it. Checks that cannot be read
+  keep it skipped.
 - No clean result is delivered for a pull request that changes review policy until
   a person signs it off, because a reviewer that approved it alone would be signing
   off its own reconfiguration.
@@ -57,7 +68,8 @@ review-engine adapter, and route confirmed correctness or security findings:
 - A review that found nothing and was withheld only over a failed check, or only
   because the change is to review policy, tells its author what it waits for, once
   per head: one pull-request conversation comment, `## Waiting for checks` naming
-  the failed checks or `## Waiting for a person` naming the policy changes, with the
+  the failed checks that hold it, and apart from them any GitHub does not require,
+  or `## Waiting for a person` naming the policy changes, with the
   head it speaks for and a `<!-- prwarden:waiting -->` marker. A note waiting for a
   person sits on the first line the first changed policy file adds, as one `COMMENT`
   review with that inline comment, lists the other policy changes, and says how to
@@ -78,13 +90,14 @@ review-engine adapter, and route confirmed correctness or security findings:
   sign off. Another installation's waiting notes, on the pull request or on a line,
   never reach the code level, like its advisory notes. A review withheld for any other reason, such as an unresolved
   comment, already has that feedback on the pull request and gets no note.
-- The **checks level** adds to a note waiting for checks why each one failed and a
+- The **checks level** adds to a note waiting for checks, or to the reminder beside
+  an approval, why each one failed and a
   possible fix, when `REVIEW_CHECKS_LEVEL` is on. It runs only for a review that
-  found nothing and would approve but for the checks that had failed by the time it
-  finished, read again then when any was still running or none had started, with no
-  committed credential, no policy change a person has not signed off, and nothing
-  left unread, so it never spends a call on a pull request that has a defect to fix
-  first. It
+  found nothing and would approve, but for the checks that had failed by the time
+  it finished or beside them, read again then when any was still running or none
+  had started, with no committed credential, no policy change a person has not
+  signed off, and nothing left unread, so it never spends a call on a pull request
+  that has a defect to fix first, nor on a head whose note is already posted. It
   reads at most five failed checks: a GitHub Actions job from its own log, the
   failing step up to its last error and at most 120 lines, and any other check from
   its reported summary. The text has credential-shaped values replaced and reaches

@@ -406,6 +406,8 @@ class OrchestrationTests(unittest.TestCase):
         ), patch(
             "prwarden.cli.read_check_log", return_value=check_log
         ) as read_log, patch(
+            "prwarden.cli.check_requirements", return_value=None
+        ), patch(
             "prwarden.cli._read_file_history", return_value=()
         ), patch(
             "prwarden.cli._read_linked_issues", return_value=()

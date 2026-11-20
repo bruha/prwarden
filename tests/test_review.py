@@ -1704,6 +1704,22 @@ class FailedCheckTests(unittest.TestCase):
         )
         self.assertEqual(failed_checks(()), ())
 
+    def test_only_a_check_github_says_is_optional_lets_an_approval_through(
+        self,
+    ) -> None:
+        from prwarden.review import blocking_checks
+
+        failed = ("e2e", "lint", "unknown")
+        required = {"lint": True, "e2e": False}
+
+        self.assertEqual(blocking_checks(failed, required), ("lint", "unknown"))
+        self.assertEqual(blocking_checks(("e2e",), required), ())
+        # A branch that requires nothing has not said which checks matter, and an
+        # answer GitHub could not give says nothing at all.
+        self.assertEqual(blocking_checks(failed, {"e2e": False}), failed)
+        self.assertEqual(blocking_checks(failed, {}), failed)
+        self.assertEqual(blocking_checks(failed, None), failed)
+
 
 if __name__ == "__main__":
     unittest.main()

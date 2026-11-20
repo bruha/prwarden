@@ -5,6 +5,7 @@ import urllib.request
 from typing import Optional, Sequence
 
 from .models import (
+    FAILING_OPTIONAL_CHECKS,
     WAITING_FOR_CHECKS,
     CheckDiagnosis,
     DesignFinding,
@@ -345,6 +346,24 @@ def _format_pr_link(repository: Repository, pull_request: PullRequest) -> str:
     return f"<{pull_request.url}|{repository.slug} PR #{pull_request.number}>"
 
 
+# Check names come from the reviewed head, so a list of them is bounded like the
+# note's own list.
+MAX_SLACK_CHECK_NAMES = 10
+MAX_SLACK_CHECK_NAME_CHARACTERS = 120
+
+
+def _slack_check_names(names: "Sequence[str]") -> str:
+    """Return check names as inline code, each on one line and cut, the first few."""
+
+    shown = ", ".join(
+        "`" + " ".join(name.split()).replace("`", "")[:MAX_SLACK_CHECK_NAME_CHARACTERS]
+        + "`"
+        for name in names[:MAX_SLACK_CHECK_NAMES]
+    )
+    more = len(names) - MAX_SLACK_CHECK_NAMES
+    return shown + (f" and {more} more" if more > 0 else "")
+
+
 def format_waiting_slack_message(
     repository: Repository,
     pull_request: PullRequest,
@@ -370,6 +389,18 @@ def format_waiting_slack_message(
         text = (
             f"PR Warden found nothing to report at `{head}`, but holds its LGTM "
             f"while these checks fail: {names}. It reviews again once they pass."
+        )
+        if reason.optional:
+            text += (
+                " These fail too, but GitHub does not require them to merge, so "
+                f"they do not hold it back: {_slack_check_names(reason.optional)}."
+            )
+    elif reason.kind == FAILING_OPTIONAL_CHECKS:
+        heading = "Checks to fix"
+        text = (
+            f"PR Warden found nothing to report at `{head}` and sent its LGTM, but "
+            f"these checks fail: {names}. GitHub does not require them to merge, so "
+            "they do not hold the LGTM back; fix them, or re-run them."
         )
     else:
         heading = "Waiting for a person"

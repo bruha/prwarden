@@ -570,7 +570,12 @@ rather than advisory notes nobody checked.
   checks failed at that head. The checks are read again just before approving,
   since CI often finishes during a review; the approval, or the `LGTM` for your own
   PR, waits until a re-run passes or a new head arrives, and findings are still
-  delivered. A cancelled, skipped, or unfinished check does not hold it back.
+  delivered. A cancelled, skipped, or unfinished check does not hold it back. When
+  the base branch requires some checks, a failed check GitHub says it does not
+  require, such as an end-to-end suite the team left optional, does not hold it
+  back either: the approval goes ahead and is followed by a `Checks to fix`
+  reminder naming that check. A branch that requires no check keeps every failed
+  check holding it.
 - A review that found nothing but holds its approval over a failed check, or
   because the PR changes review policy, says so on the PR once per head, naming the
   failed checks or the policy files, so the author, or an agent waiting on the
@@ -578,7 +583,8 @@ rather than advisory notes nobody checked.
   note sits on the change's first line, and the PR is approved once a person with
   write access other than the author approves it or replies `LGTM`. Your own PR gets the same
   in Slack. For a failed check it also says why it failed and a possible fix, read
-  from the check's log by a model you choose, such as a cheap one.
+  from the check's log by a model you choose, such as a cheap one, and so does the
+  reminder beside an approval.
 - The authenticated reviewer's own PR is never self-approved; findings or a
   clean mergeable `LGTM` result go to Slack. An `LGTM` reached by rejecting
   candidates also reports how many verification threw out, which distinguishes

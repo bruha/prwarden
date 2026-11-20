@@ -1140,6 +1140,77 @@ class GitHubFeedbackTests(unittest.TestCase):
         with self.assertRaises(CommandError):
             read_check_log(repository, deploy)
 
+    @staticmethod
+    def requirements_answer(nodes, *, more: bool = False) -> str:
+        return json.dumps(
+            {
+                "data": {
+                    "repository": {
+                        "object": {
+                            "statusCheckRollup": {
+                                "contexts": {
+                                    "pageInfo": {"hasNextPage": more},
+                                    "nodes": nodes,
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+    def test_github_says_which_checks_the_base_branch_requires(self):
+        """Asked of the exact head and this pull request, for check runs and commit
+        statuses alike; a name reported twice is required when either one is."""
+
+        repository = Repository("app", "owner/app")
+        pull_request = PullRequest(7, "Title", "", "author", "sha", "url")
+        answer = self.requirements_answer(
+            [
+                {"__typename": "CheckRun", "name": "Lint", "isRequired": True},
+                {"__typename": "CheckRun", "name": "e2e", "isRequired": False},
+                {"__typename": "StatusContext", "context": "ci/x", "isRequired": False},
+                {"__typename": "CheckRun", "name": "e2e", "isRequired": True},
+            ]
+        )
+        with patch("prwarden.github.run_cmd", return_value=answer) as run:
+            required = github.check_requirements(repository, pull_request)
+
+        self.assertEqual(required, {"Lint": True, "e2e": True, "ci/x": False})
+        command = run.call_args.args[0]
+        self.assertEqual(command[:3], ["gh", "api", "graphql"])
+        self.assertIn("head=sha", command)
+        self.assertIn("number=7", command)
+        self.assertTrue(run.call_args.kwargs["retry_transient"])
+
+    def test_an_answer_that_cannot_be_read_whole_is_no_answer(self):
+        """None makes every failed check hold the approval, so nothing GitHub left
+        out of its answer can turn a required check into an optional one."""
+
+        repository = Repository("app", "owner/app")
+        pull_request = PullRequest(7, "Title", "", "author", "sha", "url")
+        node = {"__typename": "CheckRun", "name": "Lint", "isRequired": True}
+        answers = (
+            self.requirements_answer([node], more=True),
+            self.requirements_answer([{"__typename": "CheckRun", "name": "Lint"}]),
+            json.dumps({"data": {"repository": {"object": None}}}),
+            json.dumps({"data": None}),
+        )
+        for answer in answers:
+            with self.subTest(answer=answer), patch(
+                "prwarden.github.run_cmd", return_value=answer
+            ):
+                self.assertIsNone(github.check_requirements(repository, pull_request))
+
+    def test_a_head_no_check_reported_on_requires_none_yet(self):
+        repository = Repository("app", "owner/app")
+        pull_request = PullRequest(7, "Title", "", "author", "sha", "url")
+        answer = json.dumps(
+            {"data": {"repository": {"object": {"statusCheckRollup": None}}}}
+        )
+        with patch("prwarden.github.run_cmd", return_value=answer):
+            self.assertEqual(github.check_requirements(repository, pull_request), {})
+
 
 class GitHubAccountPinningTests(unittest.TestCase):
     """A run must read and post as the reviewer, whichever account is active."""
