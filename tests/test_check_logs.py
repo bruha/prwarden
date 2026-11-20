@@ -251,6 +251,31 @@ class ChecksPromptTests(unittest.TestCase):
         self.assertEqual(schema["properties"]["diagnoses"]["maxItems"], 1)
         self.assertEqual(response_discriminator_keys(material), {"diagnoses"})
 
+    def test_a_checks_name_has_its_header_line_to_itself(self):
+        """A source label written beside the name was copied into the diagnosis as
+        part of it, and the controller rejected the reading for naming no check."""
+
+        root = Path("/nonexistent")
+        logs = (
+            CheckLog("Test coverage baseline", "log", "FAIL tests/a.test.ts"),
+            CheckLog("deploy", "summary", "Build failed"),
+        )
+        repository = Repository("app", "owner/app", root)
+        pull_request = PullRequest(1, "Title", "", "author", "head", "url")
+
+        prompt = build_prompt(
+            repository, pull_request, checks_material(root, logs), 10
+        )
+
+        self.assertIn(
+            "=== check: Test coverage baseline ===\n"
+            "--- what follows is the job's log, around its first reported error ---\n"
+            "FAIL tests/a.test.ts",
+            prompt,
+        )
+        self.assertIn("=== check: deploy ===\n--- what follows is the check's", prompt)
+        self.assertIn("exactly as it follows `=== check:` above", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

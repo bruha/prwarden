@@ -1065,7 +1065,11 @@ one you cannot, and re-check every citation before answering.
 
 
 def format_check_logs(material: ReviewMaterial) -> str:
-    """Return each failed check's log excerpt, labelled by check and by source."""
+    """Return each failed check's log excerpt, labelled by check and by source.
+
+    The name has its header line to itself: a source written beside it was copied
+    into the diagnosis as part of the name, which the controller then rejected.
+    """
 
     blocks = []
     for log in material.check_logs:
@@ -1075,7 +1079,8 @@ def format_check_logs(material: ReviewMaterial) -> str:
             else "the check's own summary; no log is available"
         )
         blocks.append(
-            f"=== check: {contain_untrusted(log.name)} ({source}) ===\n"
+            f"=== check: {contain_untrusted(log.name)} ===\n"
+            f"--- what follows is {source} ---\n"
             f"{contain_untrusted(log.text)}"
         )
     return "<check-logs>\n" + "\n\n".join(blocks) + "\n</check-logs>"
@@ -1128,7 +1133,7 @@ WHAT TO RETURN
 One diagnosis per failed check you can explain, at most one each. Omit a check whose
 output does not show why it failed: a diagnosis must rest on what the output says,
 never on what checks like it usually fail on.
-- `check`: the check's name exactly as given above.
+- `check`: the check's name exactly as it follows `=== check:` above.
 - `category`: one of {categories}.
 - `log_excerpt`: the one line of that check's output that shows the failure, copied
   exactly as it appears above; the controller rejects a line it cannot find there.
