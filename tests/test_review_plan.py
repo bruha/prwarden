@@ -144,6 +144,44 @@ class ReviewPlanTests(unittest.TestCase):
         self.assertEqual(plan.get(DOCS_LEVEL).name, DOCS_LEVEL)
         self.assertIsNone(plan.get(DESIGN_LEVEL))
 
+    def test_the_checks_type_reads_on_its_own_model_with_no_second_engine(self):
+        """Its reading is checked by the controller, and failing costs only it."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = settings(
+                directory,
+                checks_level=True,
+                checks_model="claude-haiku-5.5",
+                checks_effort="medium",
+            )
+            plan = review_plan(base)
+            inherited = review_plan(settings(directory, checks_level=True))
+
+        self.assertEqual(plan.names, (DESIGN_LEVEL, DOCS_LEVEL, CODE_LEVEL, "checks"))
+        checks = plan.get("checks").settings
+        self.assertEqual(
+            (checks.review_engine, checks.review_model, checks.review_effort),
+            ("kiro", "claude-haiku-5.5", "medium"),
+        )
+        self.assertIsNone(verification_engine_settings(checks))
+        self.assertIsNone(fallback_engine_settings(checks))
+        own = inherited.get("checks").settings
+        self.assertEqual(
+            (own.review_model, own.review_effort), ("claude-sonnet-5.5", "high")
+        )
+
+    def test_the_checks_type_is_not_ordered_with_the_others(self) -> None:
+        """It runs when a waiting review is due, so the code review stays last."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = settings(directory)
+            for names in (
+                ("checks", DOCS_LEVEL, CODE_LEVEL),
+                (DOCS_LEVEL, CODE_LEVEL, "checks"),
+            ):
+                with self.subTest(names=names):
+                    ReviewPlan(tuple(ReviewType(name, base) for name in names))
+
 
 class ReviewStagesTests(unittest.TestCase):
     def create(self, base: Settings) -> "dict[str, cli.ReviewStages]":
@@ -330,6 +368,39 @@ class ReviewTypeRoutingTests(unittest.TestCase):
         self.assertEqual(stages[CODE_LEVEL].settings.review_effort, "xhigh")
         self.assertIsNone(stages[CODE_LEVEL].settings.review_code_effort)
         self.assertEqual(stages[DESIGN_LEVEL].settings.review_effort, "high")
+
+    def test_the_run_says_who_reads_failed_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = settings(
+                directory,
+                checks_level=True,
+                checks_model="claude-haiku-5.5",
+                checks_effort="medium",
+            )
+            args = Namespace(
+                env_file=Path(directory) / ".env",
+                repositories_file=None,
+                state_file=None,
+                repo=[],
+                pr=None,
+                live=False,
+                force=False,
+                engine=None,
+                concurrency=1,
+            )
+            with patch("prwarden.cli.load_settings", return_value=base), patch(
+                "prwarden.cli.create_review_engine",
+                side_effect=lambda engine_settings: Mock(),
+            ), patch("prwarden.cli.list_open_prs", return_value=[]), patch(
+                "sys.stdout", new_callable=StringIO
+            ) as output:
+                self.assertEqual(cli.run(args), 0)
+
+        self.assertIn(
+            "Failed checks of a review that waits for them are read by Claude Haiku "
+            "5.5 @ Kiro at medium effort.",
+            output.getvalue(),
+        )
 
 
 if __name__ == "__main__":

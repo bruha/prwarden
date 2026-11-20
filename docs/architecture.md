@@ -26,6 +26,8 @@ Use these module responsibilities:
 - `review`: construct bounded material and validate model responses.
 - `review_plan`: decide which types of review a run does, in what order, and on
   which engines, with the code review always last.
+- `check_logs`: bound and redact what a failed check's log says, and validate the
+  checks level's reading of it.
 - `secret_scan`: find credentials an added line commits by their shape, without a
   model, and keep their values out of everything shown.
 - `delivery`: format and send destination-specific messages.
@@ -59,7 +61,9 @@ The expected review flow is:
    rules. At a later head the code level leaves out each file whose change an
    earlier head's review already read and passed under the same rules, as recorded
    in state, and reads the rest.
-7. Adversarially verify candidates in a fresh model invocation.
+7. Adversarially verify candidates in a fresh model invocation. When the review
+   found nothing and would approve but checks had failed, read why from the
+   checks' own output with the checks level.
 8. Re-fetch mutable PR state and feedback.
 9. Restart against a newer head, up to the configured controller limit, or
    deliver only if the reviewed snapshot is still valid.

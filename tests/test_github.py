@@ -26,6 +26,7 @@ from prwarden.github import (
     list_open_prs,
     list_own_advisory_notes,
     list_pull_request_checks,
+    read_check_log,
     list_prior_review_comments,
     submit_approval,
     submit_review,
@@ -1090,6 +1091,54 @@ class GitHubFeedbackTests(unittest.TestCase):
         ):
             with self.assertRaises(CommandError):
                 list_pull_request_checks(repository, pull_request)
+
+    def test_a_check_keeps_what_its_failure_is_read_through(self):
+        """The checks level reads a GitHub Actions job's log under its ID, and any
+        other check's own report, so both are kept with the check."""
+
+        repository = Repository("app", "owner/app")
+        pull_request = PullRequest(7, "Title", "", "author", "sha", "url")
+        runs = json.dumps(
+            [
+                {
+                    "check_runs": [
+                        {
+                            "id": 42,
+                            "name": "Lint",
+                            "status": "completed",
+                            "conclusion": "failure",
+                            "app": {"slug": "github-actions"},
+                            "html_url": "https://github.com/owner/app/runs/42",
+                            "output": {"title": "1 error", "summary": "ESLint"},
+                        }
+                    ]
+                }
+            ]
+        )
+        statuses = json.dumps(
+            {
+                "statuses": [
+                    {
+                        "context": "deploy",
+                        "state": "failure",
+                        "description": "Build failed",
+                    }
+                ]
+            }
+        )
+        with patch("prwarden.github.run_cmd", side_effect=[runs, statuses]):
+            lint, deploy = list_pull_request_checks(repository, pull_request)
+        with patch("prwarden.github.run_cmd", return_value="log text") as run:
+            log = read_check_log(repository, lint)
+
+        self.assertEqual((lint.check_id, lint.app), (42, "github-actions"))
+        self.assertEqual(lint.summary, "1 error\n\nESLint")
+        self.assertEqual(deploy.summary, "Build failed")
+        self.assertIsNone(deploy.check_id)
+        self.assertEqual(log, "log text")
+        self.assertIn("repos/owner/app/actions/jobs/42/logs", run.call_args.args[0])
+        with self.assertRaises(CommandError):
+            read_check_log(repository, deploy)
 
 
 class GitHubAccountPinningTests(unittest.TestCase):

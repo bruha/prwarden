@@ -354,6 +354,34 @@ class EffortSettingTests(unittest.TestCase):
         self.assertIsNone(settings.review_effort)
         self.assertIsNone(settings.review_code_effort)
 
+    def test_the_checks_level_is_on_and_takes_its_own_model_and_effort(self):
+        default = self.load()
+        own = self.load(
+            "REVIEW_CHECKS_MODEL=claude-haiku-5.5", "REVIEW_CHECKS_EFFORT=Medium"
+        )
+        off = self.load("REVIEW_CHECKS_LEVEL=0")
+
+        self.assertTrue(default.checks_level)
+        self.assertIsNone(default.checks_model)
+        self.assertEqual(
+            (own.checks_model, own.checks_effort), ("claude-haiku-5.5", "medium")
+        )
+        self.assertFalse(off.checks_level)
+        with self.assertRaisesRegex(config.ConfigError, "REVIEW_CHECKS_EFFORT"):
+            self.load("REVIEW_CHECKS_EFFORT=fast")
+
+    def test_switching_the_primary_engine_drops_the_checks_model(self):
+        """A model ID belongs to the provider that publishes it, as for the reviewer."""
+
+        settings = self.load(
+            "REVIEW_CHECKS_MODEL=claude-haiku-5.5",
+            "REVIEW_CHECKS_EFFORT=medium",
+            review_engine_override="antigravity",
+        )
+
+        self.assertIsNone(settings.checks_model)
+        self.assertIsNone(settings.checks_effort)
+
     def test_naming_the_same_engine_keeps_its_effort(self):
         """The single-PR command names --engine kiro alongside a kiro configuration."""
 

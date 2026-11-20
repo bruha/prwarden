@@ -62,6 +62,23 @@ review-engine adapter, and route confirmed correctness or security findings:
   are. Another installation's waiting notes never reach the code level, like its
   advisory notes. A review withheld for any other reason, such as an unresolved
   comment, already has that feedback on the pull request and gets no note.
+- The **checks level** adds to a note waiting for checks why each one failed and a
+  possible fix, when `REVIEW_CHECKS_LEVEL` is on. It runs only for a review that
+  found nothing and would approve but for the checks that had failed when it
+  started, with no committed credential, no policy change, and nothing left unread,
+  so it never spends a call on a pull request that has a defect to fix first. It
+  reads at most five failed checks: a GitHub Actions job from its own log, the
+  failing step up to its last error and at most 120 lines, and any other check from
+  its reported summary. The text has credential-shaped values replaced and reaches
+  the prompt only as contained data, since the pull request's own code printed it.
+  It runs on `REVIEW_ENGINE` at `REVIEW_CHECKS_MODEL` and `REVIEW_CHECKS_EFFORT`, or
+  the reviewer's, with no verifier and no fallback: each diagnosis must name a
+  supplied check once, quote a line found in that check's text, and cite only
+  workspace lines found in the head, and a response that fails that is retried once
+  with the controller's reason. A reading that still fails, or a provider out of
+  quota, costs only the reading: the note is posted without it. The note names the
+  model that read it, quotes each log line as code, and breaks up any mention in the
+  model's text, so a log cannot make the comment notify anybody.
 - Configured reviewer's pull requests in a repository with `"slack": false`: the
   same results on the pull request instead, because the webhook belongs to a
   workspace that project is not part of. Findings are one GitHub review with inline

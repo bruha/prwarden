@@ -89,6 +89,13 @@ class Settings:
     max_design_findings: int = 4
     docs_level: bool = True
     max_docs_findings: int = 3
+    # Why each failed check failed, read from its log, for a review that found
+    # nothing but waits for the checks. Off unless enabled in settings built by
+    # hand, as tests do; the loader turns it on by default. Its model and effort run
+    # on the review engine, and default to the reviewer's.
+    checks_level: bool = False
+    checks_model: Optional[str] = None
+    checks_effort: Optional[str] = None
     review_verify_timeout_seconds: int = 900
     review_verify_timeout_per_candidate_seconds: int = 180
     review_concurrency: int = 2
@@ -730,6 +737,8 @@ def load_settings(
     configured_model = os.getenv("REVIEW_MODEL", "").strip() or None
     configured_effort = os.getenv("REVIEW_EFFORT", "").strip() or None
     configured_code_effort = os.getenv("REVIEW_CODE_EFFORT", "").strip() or None
+    configured_checks_model = os.getenv("REVIEW_CHECKS_MODEL", "").strip() or None
+    configured_checks_effort = os.getenv("REVIEW_CHECKS_EFFORT", "").strip() or None
     if review_engine_override and review_engine != environment_engine:
         # A model ID belongs to the provider that publishes it. Carrying
         # REVIEW_MODEL onto a different engine sent Antigravity's
@@ -741,6 +750,8 @@ def load_settings(
         configured_model = None
         configured_effort = None
         configured_code_effort = None
+        configured_checks_model = None
+        configured_checks_effort = None
     elif _engine_switched_from(declared, review_engine):
         # The same mistake reached the other way. A command and a model written in
         # the configuration file belong to the engine named in that same file, so
@@ -759,6 +770,14 @@ def load_settings(
             declared.get("REVIEW_CODE_EFFORT", "").strip() or None
         ):
             configured_code_effort = None
+        if configured_checks_model == (
+            declared.get("REVIEW_CHECKS_MODEL", "").strip() or None
+        ):
+            configured_checks_model = None
+        if configured_checks_effort == (
+            declared.get("REVIEW_CHECKS_EFFORT", "").strip() or None
+        ):
+            configured_checks_effort = None
     if review_model_override:
         # Named alongside the engine, so it was chosen for the engine that will run.
         configured_model = review_model_override.strip() or None
@@ -778,6 +797,9 @@ def load_settings(
     )
     review_code_effort = parse_effort(
         configured_code_effort, "REVIEW_CODE_EFFORT", review_engine, "REVIEW_ENGINE"
+    )
+    checks_effort = parse_effort(
+        configured_checks_effort, "REVIEW_CHECKS_EFFORT", review_engine, "REVIEW_ENGINE"
     )
 
     verify_engine, verify_engine_command, verify_model, verify_effort = (
@@ -852,6 +874,11 @@ def load_settings(
             1,
             10,
         ),
+        checks_level=parse_bool(
+            os.getenv("REVIEW_CHECKS_LEVEL", "1"), "REVIEW_CHECKS_LEVEL"
+        ),
+        checks_model=configured_checks_model,
+        checks_effort=checks_effort,
         review_verify_timeout_seconds=parse_integer(
             os.getenv("REVIEW_VERIFY_TIMEOUT_SECONDS", "900"),
             "REVIEW_VERIFY_TIMEOUT_SECONDS",

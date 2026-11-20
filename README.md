@@ -561,7 +561,8 @@ rather than advisory notes nobody checked.
   because the PR changes review policy, says so on the PR once per head, naming the
   failed checks or the policy files, so the author, or an agent waiting on the
   approval, knows PR Warden looked and what it waits for. Your own PR gets the same
-  in Slack.
+  in Slack. For a failed check it also says why it failed and a possible fix, read
+  from the check's log by a model you choose, such as a cheap one.
 - The authenticated reviewer's own PR is never self-approved; findings or a
   clean mergeable `LGTM` result go to Slack. An `LGTM` reached by rejecting
   candidates also reports how many verification threw out, which distinguishes

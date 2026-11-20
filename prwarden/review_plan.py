@@ -13,17 +13,22 @@ that names an engine already reads it from there.
 
 The code review always runs last. Its approval is what a person or an agent merges
 on, so the advisory notes are on the pull request before it, never after a merge
-they were meant to inform.
+they were meant to inform. The checks type is not ordered with the others: it reads
+why the failed checks failed, so it runs only after a code review that found nothing
+and would approve but for them, and its reading goes into the note that says the
+review waits for them.
 """
 
 from dataclasses import dataclass, replace
 from typing import Optional
 
 from .config import ConfigError, Settings
-from .engine import CODE_LEVEL, DESIGN_LEVEL, DOCS_LEVEL
+from .engine import CHECKS_LEVEL, CODE_LEVEL, DESIGN_LEVEL, DOCS_LEVEL
 
 # Every type there is, in the order a run does them unless told otherwise.
-REVIEW_TYPES = (DESIGN_LEVEL, DOCS_LEVEL, CODE_LEVEL)
+REVIEW_TYPES = (DESIGN_LEVEL, DOCS_LEVEL, CODE_LEVEL, CHECKS_LEVEL)
+# The types that run where the plan puts them; the checks type runs when it is due.
+ORDERED_TYPES = (DESIGN_LEVEL, DOCS_LEVEL, CODE_LEVEL)
 
 
 @dataclass(frozen=True)
@@ -51,7 +56,8 @@ class ReviewPlan:
         repeated = sorted({name for name in names if names.count(name) > 1})
         if repeated:
             raise ConfigError(f"Review type {repeated[0]!r} is listed twice")
-        if CODE_LEVEL in names and names[-1] != CODE_LEVEL:
+        ordered = [name for name in names if name in ORDERED_TYPES]
+        if CODE_LEVEL in ordered and ordered[-1] != CODE_LEVEL:
             raise ConfigError(
                 "The code review must run last: its approval is what a pull request "
                 "is merged on, so the advisory notes come before it"
@@ -94,4 +100,35 @@ def review_plan(settings: Settings) -> ReviewPlan:
             ),
         )
     )
+    if settings.checks_level:
+        types.append(ReviewType(CHECKS_LEVEL, checks_settings(settings)))
     return ReviewPlan(tuple(types))
+
+
+def checks_settings(settings: Settings) -> Settings:
+    """Return the settings the checks type reads failed checks with.
+
+    The review engine, at the checks type's own model and effort when set. No
+    verifier and no fallback: the reading is checked by the controller, every quoted
+    log line and cited workspace line found where it claims to be, and a reading
+    that fails costs only itself, since the note it would join is posted without it.
+    """
+
+    return replace(
+        settings,
+        review_model=settings.checks_model or settings.review_model,
+        review_effort=settings.checks_effort or settings.review_effort,
+        review_code_effort=None,
+        verify_engine=None,
+        verify_engine_command=(),
+        verify_model=None,
+        verify_effort=None,
+        fallback_engine=None,
+        fallback_engine_command=(),
+        fallback_model=None,
+        fallback_effort=None,
+        verify_fallback_engine=None,
+        verify_fallback_engine_command=(),
+        verify_fallback_model=None,
+        verify_fallback_effort=None,
+    )

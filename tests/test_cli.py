@@ -3326,6 +3326,8 @@ class OrchestrationTests(unittest.TestCase):
         linked_issues: tuple = (),
         checks=(),
         max_findings: "Optional[int]" = None,
+        checks_level: bool = False,
+        check_log: str = "",
     ) -> dict:
         repository = Repository("app", "owner/app", Path(directory))
         pull_request = PullRequest(
@@ -3339,6 +3341,7 @@ class OrchestrationTests(unittest.TestCase):
                 "max_diff_bytes": max_diff_bytes,
                 "ignored_missing_patch_patterns": ignored_missing_patch_patterns,
                 "max_review_bundles": max_review_bundles,
+                "checks_level": checks_level,
                 **({} if max_findings is None else {"max_findings": max_findings}),
             }
         )
@@ -3385,6 +3388,8 @@ class OrchestrationTests(unittest.TestCase):
         ) as submit_waiting, patch(
             "prwarden.cli.hide_earlier_comments", return_value=1
         ) as hide_comments, patch(
+            "prwarden.cli.read_check_log", return_value=check_log
+        ) as read_log, patch(
             "sys.stdout", new_callable=StringIO
         ) as output:
             workspace.return_value.__enter__.return_value = repository
@@ -3413,6 +3418,7 @@ class OrchestrationTests(unittest.TestCase):
             "send_slack": send_slack,
             "submit_waiting": submit_waiting,
             "hide_comments": hide_comments,
+            "read_log": read_log,
             "read_marks": read_marks,
             "read_issues": read_issues,
             "list_checks": list_checks,
@@ -4287,6 +4293,122 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual(result["waiting"]["items"], ["compile-code"])
         self.assertIn("Told the author the review waits for checks", result["terminal"])
         # The approval record is the one it always was.
+        self.assertEqual(result["record"]["status"], "approval_withheld")
+
+    ACTIONS_FAILED = (
+        PullRequestCheck(
+            "compile-code", "completed", "failure", check_id=5, app="github-actions"
+        ),
+    )
+    ACTIONS_LOG = (
+        "2026-11-20T10:00:00Z ##[group]Run make compile\n"
+        "2026-11-20T10:00:01Z app.py:1: compile error: value is never read\n"
+        "2026-11-20T10:00:02Z ##[error]Process completed with exit code 2.\n"
+    )
+    APPROVAL = {
+        "verdict": "approve",
+        "approval_reason": "No qualifying defects remain.",
+        "findings": [],
+    }
+    DIAGNOSIS = {
+        "diagnoses": [
+            {
+                "check": "compile-code",
+                "category": "code_defect",
+                "log_excerpt": "app.py:1: compile error: value is never read",
+                "cause": "The compiler rejects a value the change assigns and never "
+                "reads.",
+                "fix": "Read `value` where it is needed, or remove it; ask @team.",
+                "citations": [
+                    {
+                        "path": "app.py",
+                        "line": 1,
+                        "excerpt": "value = 1",
+                        "relevance": "the assignment the compiler reports",
+                    }
+                ],
+            }
+        ]
+    }
+
+    def test_the_note_says_why_a_check_failed_and_how_to_fix_it(self) -> None:
+        engine = Mock()
+        engine.review.side_effect = [self.APPROVAL, self.DIAGNOSIS]
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.ACTIONS_FAILED,
+                checks_level=True,
+                check_log=self.ACTIONS_LOG,
+            )
+
+        reading = engine.review.call_args_list[1].args[2]
+        self.assertEqual(reading.level, "checks")
+        self.assertEqual(
+            reading.check_logs[0].text.splitlines(),
+            [
+                "Step: Run make compile",
+                "app.py:1: compile error: value is never read",
+                "Process completed with exit code 2.",
+            ],
+        )
+        body = result["submit_waiting"].call_args.args[2]
+        self.assertIn("### Why they failed", body)
+        self.assertIn("**`compile-code`** · code defect", body)
+        self.assertIn("> `app.py:1: compile error: value is never read`", body)
+        self.assertIn("**Possible fix:** Read `value` where it is needed", body)
+        # A log cannot make the comment notify anybody.
+        self.assertIn("ask @\u2060team", body)
+        self.assertIn("- `app.py:1` — the assignment the compiler reports", body)
+        self.assertIn("_Read from the checks' output by provider default", body)
+        self.assertEqual(result["waiting"]["diagnosed"], 1)
+        submitted = result["submit_approval"]
+        submitted.assert_not_called()
+
+    def test_a_review_with_findings_never_reads_its_checks(self) -> None:
+        """The author has a defect to fix first; reading the checks then would be a
+        call spent on a note nobody gets."""
+
+        engine = Mock()
+        engine.review.side_effect = [finding_response("app.py", 1), CONFIRMED_JUDGMENT]
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.ACTIONS_FAILED,
+                checks_level=True,
+                check_log=self.ACTIONS_LOG,
+            )
+
+        result["read_log"].assert_not_called()
+        self.assertEqual(engine.review.call_count, 2)
+        result["submit_review"].assert_called_once()
+
+    def test_a_reading_that_fails_costs_only_itself(self) -> None:
+        unknown = {"diagnoses": [dict(self.DIAGNOSIS["diagnoses"][0], check="other")]}
+        engine = Mock()
+        engine.review.side_effect = [self.APPROVAL, unknown, unknown]
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.ACTIONS_FAILED,
+                checks_level=True,
+                check_log=self.ACTIONS_LOG,
+            )
+
+        self.assertEqual(engine.review.call_count, 3)
+        self.assertIn("Reading why the checks failed did not work", result["terminal"])
+        body = result["submit_waiting"].call_args.args[2]
+        self.assertIn("## Waiting for checks", body)
+        self.assertNotIn("Why they failed", body)
         self.assertEqual(result["record"]["status"], "approval_withheld")
 
     def test_the_checks_are_read_again_just_before_approving(self) -> None:

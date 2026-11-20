@@ -10,6 +10,7 @@ from .comment_template import CommentTemplate
 from .commands import CommandError
 from .models import (
     WAITING_FOR_CHECKS,
+    CheckDiagnosis,
     DesignFinding,
     DocsFinding,
     Finding,
@@ -801,14 +802,68 @@ def list_pull_request_checks(
                 f"GitHub returned an invalid check run for "
                 f"{repository.slug}#{pull_request.number}"
             )
+        check_id = record.get("id")
+        app = record.get("app")
+        url = record.get("html_url")
+        output = record.get("output")
         checks.append(
             PullRequestCheck(
                 name=name,
                 status=status,
                 conclusion=conclusion if isinstance(conclusion, str) else None,
+                check_id=(
+                    check_id
+                    if isinstance(check_id, int) and not isinstance(check_id, bool)
+                    else None
+                ),
+                app=(
+                    app.get("slug")
+                    if isinstance(app, dict) and isinstance(app.get("slug"), str)
+                    else None
+                ),
+                url=url if isinstance(url, str) else None,
+                summary=_check_output_summary(output),
             )
         )
     return tuple(checks) + _list_commit_statuses(repository, pull_request)
+
+
+# A check's own report is read only to say why it failed, so it is cut well before it
+# could crowd out anything else a prompt carries.
+MAX_CHECK_SUMMARY_CHARACTERS = 6000
+# The app that reports GitHub Actions jobs, whose check run ID is the job's ID.
+GITHUB_ACTIONS_APP = "github-actions"
+
+
+def _check_output_summary(output: Any) -> str:
+    """Return a check run's reported title, summary, and text as one bounded text."""
+
+    if not isinstance(output, dict):
+        return ""
+    parts = [
+        output[key].strip()
+        for key in ("title", "summary", "text")
+        if isinstance(output.get(key), str) and output[key].strip()
+    ]
+    return "\n\n".join(parts)[:MAX_CHECK_SUMMARY_CHARACTERS]
+
+
+def read_check_log(repository: Repository, check: PullRequestCheck) -> str:
+    """Return the raw log of a failed GitHub Actions job, as GitHub serves it.
+
+    Only a check run GitHub Actions reported has a log GitHub keeps, under the job's
+    ID, which is the check run's. Anything else, a commit status or a check reported
+    by another service, has only its own summary, so asking for a log is an error.
+    """
+
+    if check.app != GITHUB_ACTIONS_APP or check.check_id is None:
+        raise CommandError(f"Check {check.name!r} has no GitHub Actions log")
+    return _run_for(
+        repository,
+        ["gh", "api", f"repos/{repository.slug}/actions/jobs/{check.check_id}/logs"],
+        timeout_seconds=120,
+        retry_transient=True,
+    )
 
 
 # A commit status reports one of four states; the three settled ones read as a
@@ -857,11 +912,17 @@ def _list_commit_statuses(
                 f"{repository.slug}#{pull_request.number}"
             )
         conclusion = STATUS_CONCLUSIONS.get(state)
+        description = record.get("description")
         checks.append(
             PullRequestCheck(
                 name=context,
                 status="completed" if conclusion else "in_progress",
                 conclusion=conclusion,
+                summary=(
+                    description.strip()[:MAX_CHECK_SUMMARY_CHARACTERS]
+                    if isinstance(description, str)
+                    else ""
+                ),
             )
         )
     return tuple(checks)
@@ -1586,6 +1647,8 @@ WAITING_COMMENT_MARKER = "<!-- prwarden:waiting -->"
 # bounded like any other text the reviewed project wrote, and a long name is cut.
 MAX_WAITING_ITEMS = 10
 MAX_WAITING_ITEM_CHARACTERS = 120
+# A GitHub mention: an at sign that begins a login or a team.
+MENTION = re.compile(r"@(?=[A-Za-z0-9])")
 
 
 def waiting_items(items: "Sequence[str]") -> "tuple[list[str], int]":
@@ -1605,7 +1668,12 @@ def waiting_items(items: "Sequence[str]") -> "tuple[list[str], int]":
 
 
 def format_waiting_comment(
-    pull_request: PullRequest, reason: WaitingReason, *, own: bool = False
+    pull_request: PullRequest,
+    reason: WaitingReason,
+    *,
+    own: bool = False,
+    diagnoses: "Sequence[CheckDiagnosis]" = (),
+    reader: str = "",
 ) -> str:
     """Say what a review that found nothing waits for before it approves.
 
@@ -1614,6 +1682,8 @@ def format_waiting_comment(
     tell that apart from PR Warden never having looked. ``own`` is the reviewer's own
     pull request, which receives an LGTM rather than an approval. Names the head it
     speaks for, because a comment, unlike an approval, is not tied to a commit.
+    ``diagnoses`` are the checks level's readings of why checks failed, written by
+    ``reader``.
     """
 
     shown, more = waiting_items(reason.items)
@@ -1640,6 +1710,15 @@ def format_waiting_comment(
             "this change. PR Warden reviews this pull request again once they pass."
             + checks,
         ]
+        if diagnoses:
+            lines.extend(["", "### Why they failed", ""])
+            for diagnosis in diagnoses:
+                lines.extend(_diagnosis_lines(diagnosis))
+            lines.append(
+                f"_Read from the checks' output by {reader or 'a model'}. PR Warden "
+                "found each quoted line in that output and each cited line in this "
+                "commit; check a fix before acting on it._"
+            )
     else:
         lines = [
             "## Waiting for a person",
@@ -1654,6 +1733,35 @@ def format_waiting_comment(
         ]
     lines.extend([WAITING_COMMENT_MARKER, ""])
     return "\n".join(lines)
+
+
+def _diagnosis_lines(diagnosis: CheckDiagnosis) -> "list[str]":
+    """Render one check's reading: what failed, the line that shows it, a fix.
+
+    The reading rests on output the pull request's own code printed, so a mention in
+    it is broken up: a log cannot have the comment notify anybody.
+    """
+
+    def unmentioned(text: str) -> str:
+        return MENTION.sub("@\u2060", text)
+
+    name = " ".join(diagnosis.check.split())[:MAX_WAITING_ITEM_CHARACTERS]
+    lines = [
+        f"**{_inline_code(name)}** · {diagnosis.category.replace('_', ' ')}",
+        "",
+        unmentioned(diagnosis.cause),
+        "",
+        f"> {_inline_code(diagnosis.log_excerpt)}",
+        "",
+        f"**Possible fix:** {unmentioned(diagnosis.fix)}",
+    ]
+    for citation in diagnosis.citations:
+        lines.append(
+            f"- {_inline_code(f'{citation.path}:{citation.line}')} — "
+            f"{unmentioned(citation.relevance)}"
+        )
+    lines.append("")
+    return lines
 
 
 def submit_waiting_comment(

@@ -48,6 +48,7 @@ from .delivery import (
 from .engine import (
     code_candidate_ref,
     is_exhausted_quota,
+    CHECKS_LEVEL,
     CODE_LEVEL,
     DESIGN_LEVEL,
     DOCS_LEVEL,
@@ -84,6 +85,7 @@ from .github import (
     list_pull_request_checks,
     list_prior_review_comments,
     pin_github_account,
+    read_check_log,
     reviewer_account,
     submit_approval,
     submit_design_notes,
@@ -94,6 +96,7 @@ from .github import (
     validate_object_name,
     waiting_items,
 )
+from .check_logs import read_check_logs, validate_check_diagnoses
 from .github_status import describe_github_incident
 from .history import (
     HISTORY_DIRECTORY_NAME,
@@ -104,6 +107,7 @@ from .history import (
 from .models import (
     WAITING_FOR_A_PERSON,
     WAITING_FOR_CHECKS,
+    CheckDiagnosis,
     DesignAssessment,
     DocsAssessment,
     DiffBudget,
@@ -112,6 +116,7 @@ from .models import (
     Finding,
     PriorReviewComment,
     PullRequest,
+    PullRequestCheck,
     PullRequestSnapshot,
     Repository,
     ReviewMaterial,
@@ -164,6 +169,8 @@ from .reviewer_identity import (
     describe_severity_change,
     format_review_attribution,
     format_review_plan,
+    format_checks_reader,
+    format_reviewer_identity,
 )
 from .secret_scan import (
     CredentialMatch,
@@ -3175,6 +3182,9 @@ def _process_pull_request(
     unread_paths: "tuple[str, ...]" = ()
     unread_marks: "dict[str, str]" = {}
     policy_changes: "tuple[str, ...]" = ()
+    # Why the checks that failed at the start of the review failed, when it would
+    # otherwise approve, for the note that says it waits for them.
+    check_diagnoses: "tuple[CheckDiagnosis, ...]" = ()
     # Confirmed findings over the one limit a review posts, kept for its record.
     withheld_findings: "list[Finding]" = []
 
@@ -3505,6 +3515,35 @@ def _process_pull_request(
                     findings = tuple(findings) + tuple(bundle_findings)
                     approve = False
                     approval_reason = ""
+            checks_stage = stages.get(CHECKS_LEVEL)
+            failing_at_start = failed_checks(material.checks)
+            partial = material.diff_budget is not None and (
+                material.diff_budget.is_partial
+            )
+            if (
+                checks_stage is not None
+                and failing_at_start
+                and not findings
+                and approve
+                and not credentials
+                and not policy_changes
+                and not partial
+            ):
+                # Only a review that would approve but for its checks waits for
+                # them, and only then is the reading of why they failed worth a call:
+                # it goes into the note that tells the author so.
+                check_diagnoses = _run_checks_level(
+                    checks_stage,
+                    repository,
+                    exact_repository,
+                    pull_request,
+                    material,
+                    tuple(
+                        check
+                        for check in material.checks
+                        if failed_checks((check,))
+                    ),
+                )
         budget = material.diff_budget
         if budget is not None and budget.is_partial:
             # The spec forbids approving a partial review, and the model was never
@@ -3807,6 +3846,12 @@ def _process_pull_request(
                 store,
                 destination,
                 WaitingReason(WAITING_FOR_CHECKS, tuple(failing)),
+                diagnoses=tuple(
+                    diagnosis
+                    for diagnosis in check_diagnoses
+                    if diagnosis.check in failing
+                ),
+                diagnosed_by=stages.get(CHECKS_LEVEL),
             )
             return
 
@@ -3938,6 +3983,93 @@ def _waiting_note_key(
     )
 
 
+def _run_checks_level(
+    stage: ReviewStages,
+    repository: Repository,
+    exact_repository: Repository,
+    pull_request: PullRequest,
+    material: ReviewMaterial,
+    failing: "Sequence[PullRequestCheck]",
+) -> "tuple[CheckDiagnosis, ...]":
+    """Read why each failed check failed, and a fix, from the checks' own output.
+
+    Contained like the advisory levels: the reading only adds to the note that says
+    the review waits for its checks, so whatever goes wrong here costs the reading
+    and nothing else, and the note is posted without it. A response is retried once
+    with the controller's reason when validation rejects it.
+    """
+
+    label = _engine_label(stage.settings)
+    spent = _PRIMARY_ENGINE.exhausted_reason
+    if spent:
+        print(
+            f"      -> Not reading why the checks failed: {label} is out of quota "
+            f"for this run ({spent})"
+        )
+        return ()
+    try:
+        logs = read_check_logs(
+            failing, lambda check: read_check_log(repository, check)
+        )
+        if not logs:
+            print(
+                "      -> Not reading why the checks failed: they left no log or "
+                "summary to read"
+            )
+            return ()
+        checks_material = replace(
+            without_generated_files(material),
+            level=CHECKS_LEVEL,
+            check_logs=logs,
+            verification_candidates=(),
+            design_candidates=(),
+            docs_candidates=(),
+            validation_error=None,
+        )
+        print(
+            f"      -> Reading why {len(logs)} failed "
+            f"check{'s' if len(logs) != 1 else ''} failed with {label} "
+            f"(timeout: {_format_duration(stage.settings.review_timeout_seconds)})...",
+            flush=True,
+        )
+        attempt = checks_material
+        for number in range(1, MAX_OUTPUT_VALIDATION_ATTEMPTS + 1):
+            started = time.monotonic()
+            with _ElapsedProgressLine("Checks reading", started):
+                output = stage.engine.review(exact_repository, pull_request, attempt)
+            try:
+                diagnoses = validate_check_diagnoses(
+                    output, checks_material, exact_repository.path
+                )
+            except ReviewError as error:
+                if number == MAX_OUTPUT_VALIDATION_ATTEMPTS:
+                    raise
+                print(f"      -> Checks reading rejected: {error}")
+                print(
+                    "      -> Retrying the checks reading once with controller "
+                    "validation feedback...",
+                    flush=True,
+                )
+                attempt = replace(checks_material, validation_error=str(error))
+                continue
+            break
+    except Exception as error:
+        print(
+            "      -> Reading why the checks failed did not work: "
+            f"{type(error).__name__}: {error}"
+        )
+        return ()
+    if not diagnoses:
+        print("      -> The checks' output did not show why they failed")
+    for diagnosis in diagnoses:
+        print(
+            f"      -> {diagnosis.check} failed ({diagnosis.category}): "
+            f"{diagnosis.cause}"
+        )
+        print(f"         Possible fix: {diagnosis.fix}")
+    return diagnoses
+
+
 def _deliver_waiting_note(
     settings: Settings,
     repository: Repository,
@@ -3945,6 +4077,9 @@ def _deliver_waiting_note(
     store: JsonStateStore,
     destination: str,
     reason: WaitingReason,
+    *,
+    diagnoses: "Sequence[CheckDiagnosis]" = (),
+    diagnosed_by: Optional[ReviewStages] = None,
 ) -> None:
     """Tell the author what this head's clean review waits for, once per head.
 
@@ -3979,7 +4114,19 @@ def _deliver_waiting_note(
         print(f"      -> Not saying the review waits for {noun}: {error}")
         return
     shown, more = waiting_items(reason.items)
-    details = {"waiting_for": reason.kind, "items": list(shown)}
+    details = {
+        "waiting_for": reason.kind,
+        "items": list(shown),
+        **({"diagnosed": len(diagnoses)} if diagnoses else {}),
+    }
+    # Named, because a model wrote the reading: the author should know whose it is.
+    reader = (
+        format_reviewer_identity(
+            diagnosed_by.settings.review_engine, diagnosed_by.settings.review_model
+        )
+        if diagnoses and diagnosed_by is not None
+        else ""
+    )
     store.set_status(key, "delivery_started", **details)
     try:
         if destination == "slack":
@@ -3987,7 +4134,13 @@ def _deliver_waiting_note(
             receipt_id = send_slack_message(
                 settings.slack_webhook_url,
                 format_waiting_slack_message(
-                    repository, pull_request, reason, shown, more
+                    repository,
+                    pull_request,
+                    reason,
+                    shown,
+                    more,
+                    diagnoses=diagnoses,
+                    reader=reader,
                 ),
             )
         else:
@@ -3995,7 +4148,11 @@ def _deliver_waiting_note(
                 repository,
                 pull_request,
                 format_waiting_comment(
-                    pull_request, reason, own=destination == OWN_GITHUB_DESTINATION
+                    pull_request,
+                    reason,
+                    own=destination == OWN_GITHUB_DESTINATION,
+                    diagnoses=diagnoses,
+                    reader=reader,
                 ),
             )
     except DeliveryError as error:
@@ -5744,6 +5901,16 @@ def _run_reviews(
         verify_fallback_effort=standby_effort,
     ):
         print(line)
+    plan = review_plan(settings)
+    checks = plan.get(CHECKS_LEVEL)
+    if checks is not None:
+        print(
+            format_checks_reader(
+                checks.settings.review_engine,
+                checks.settings.review_model,
+                checks.settings.review_effort,
+            )
+        )
     if not live and not settings.dry_run:
         print(
             "Note: AUTO_REVIEW_DRY_RUN=0, but --live was not supplied; delivery is disabled."
@@ -5752,7 +5919,7 @@ def _run_reviews(
         print(f"Run log: {transcript_path}")
 
     repositories = _selected_repositories(settings.repositories, args.repo)
-    stages = _create_review_stages(review_plan(settings))
+    stages = _create_review_stages(plan)
     errors: list[str] = []
     incident_notice = _GithubIncidentNotice()
     verification_activity = _VerificationActivity()

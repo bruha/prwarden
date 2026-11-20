@@ -387,6 +387,45 @@ class PullRequestCheck:
     name: str
     status: str
     conclusion: Optional[str] = None
+    # What a failed check's log is read through: the check run's ID, the app that
+    # reported it, and GitHub's page for it. A commit status has none of the three.
+    check_id: Optional[int] = None
+    app: Optional[str] = None
+    url: Optional[str] = None
+    # The check's own report of what happened, its output title, summary, and text,
+    # which is all a check run reported by anything but GitHub Actions offers.
+    summary: str = ""
+
+
+@dataclass(frozen=True)
+class CheckLog:
+    """The part of a failed check's log that says why it failed, bounded.
+
+    ``source`` is "log" for a GitHub Actions job's own log, or "summary" for the
+    check's reported output, which is all other services offer. The text was printed
+    by code the pull request runs, so it is data, never instructions.
+    """
+
+    name: str
+    source: str
+    text: str
+
+
+@dataclass(frozen=True)
+class CheckDiagnosis:
+    """Why one failed check failed, as a model read it from the log, and a fix.
+
+    ``log_excerpt`` is a line copied from the supplied log, which the controller
+    found there; ``citations`` are workspace lines the fix concerns, each one found
+    in the reviewed head.
+    """
+
+    check: str
+    category: str
+    cause: str
+    fix: str
+    log_excerpt: str
+    citations: "tuple[FindingEvidence, ...]" = ()
 
 
 # Why a code review that found nothing still gave no approval, as told to the author.
@@ -477,3 +516,5 @@ class ReviewMaterial:
     # pull request read and found nothing in. The code level leaves their diff out and
     # names them, and nothing it raises may point at them.
     carried_files: "tuple[str, ...]" = ()
+    # The checks level's input: what each failed check's log says, bounded.
+    check_logs: "tuple[CheckLog, ...]" = ()

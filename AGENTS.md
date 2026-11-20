@@ -39,6 +39,8 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
 - `prwarden/review.py`: diff construction and semantic response validation.
 - `prwarden/review_plan.py`: which types of review a run does, in what order, and on
   which engines.
+- `prwarden/check_logs.py`: what a failed check's log says, and the checks level's
+  reading of why it failed.
 - `prwarden/secret_scan.py`: credentials an added line commits, found by their
   shape rather than by a model.
 - `prwarden/delivery.py`: Slack message formatting and delivery helpers.

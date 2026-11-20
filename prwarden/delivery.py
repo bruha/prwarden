@@ -6,6 +6,7 @@ from typing import Optional, Sequence
 
 from .models import (
     WAITING_FOR_CHECKS,
+    CheckDiagnosis,
     DesignFinding,
     DocsFinding,
     Finding,
@@ -350,11 +351,14 @@ def format_waiting_slack_message(
     reason: WaitingReason,
     shown: "Sequence[str]",
     more: int = 0,
+    *,
+    diagnoses: "Sequence[CheckDiagnosis]" = (),
+    reader: str = "",
 ) -> str:
     """Say what a clean review of the reviewer's own pull request waits for.
 
     ``shown`` are the items to name, already bounded, and ``more`` how many others
-    there are.
+    there are. ``diagnoses`` are the checks level's readings, written by ``reader``.
     """
 
     names = ", ".join(f"`{item.replace('`', '')}`" for item in shown)
@@ -380,6 +384,17 @@ def format_waiting_slack_message(
         f"*{pull_request.title}*",
         f"> {text}",
     ]
+    for diagnosis in diagnoses:
+        name = " ".join(diagnosis.check.split()).replace("`", "")[:120]
+        lines.extend(
+            [
+                "",
+                f"• `{name}`: {diagnosis.cause}",
+                f"  Possible fix: {diagnosis.fix}",
+            ]
+        )
+    if diagnoses:
+        lines.extend(["", f"_Read from the checks' output by {reader or 'a model'}._"])
     return redact_local_paths("\n".join(lines))
 
 

@@ -83,6 +83,18 @@ def _effort_phrase(effort: Optional[str], code_effort: Optional[str] = None) -> 
     return f" at {effort} effort" if effort else ""
 
 
+def format_checks_reader(
+    engine: str, model: Optional[str], effort: Optional[str] = None
+) -> str:
+    """Say, before any review, who reads why a waiting review's checks failed."""
+
+    reader = format_reviewer_identity(engine, model)
+    return (
+        f"Failed checks of a review that waits for them are read by {reader}"
+        f"{_effort_phrase(effort)}."
+    )
+
+
 def format_review_plan(
     review_engine: str,
     review_model: Optional[str],
