@@ -80,9 +80,11 @@ review-engine adapter, and route confirmed correctness or security findings:
   comment, already has that feedback on the pull request and gets no note.
 - The **checks level** adds to a note waiting for checks why each one failed and a
   possible fix, when `REVIEW_CHECKS_LEVEL` is on. It runs only for a review that
-  found nothing and would approve but for the checks that had failed when it
-  started, with no committed credential, no policy change, and nothing left unread,
-  so it never spends a call on a pull request that has a defect to fix first. It
+  found nothing and would approve but for the checks that had failed by the time it
+  finished, read again then when any was still running or none had started, with no
+  committed credential, no policy change a person has not signed off, and nothing
+  left unread, so it never spends a call on a pull request that has a defect to fix
+  first. It
   reads at most five failed checks: a GitHub Actions job from its own log, the
   failing step up to its last error and at most 120 lines, and any other check from
   its reported summary. The text has credential-shaped values replaced and reaches

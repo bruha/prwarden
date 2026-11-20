@@ -4434,6 +4434,50 @@ class OrchestrationTests(unittest.TestCase):
         self.assertNotIn("Why they failed", body)
         self.assertEqual(result["record"]["status"], "approval_withheld")
 
+    def test_a_check_that_fails_while_the_review_runs_is_read_too(self) -> None:
+        """A pull request pushed just before a run is reviewed while its CI runs:
+        a check that fails during the review gets the reading its note needs."""
+
+        running = (
+            PullRequestCheck("compile-code", "in_progress", None, check_id=5),
+        )
+        engine = Mock()
+        engine.review.side_effect = [self.APPROVAL, self.DIAGNOSIS]
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=[running, self.ACTIONS_FAILED, self.ACTIONS_FAILED],
+                checks_level=True,
+                check_log=self.ACTIONS_LOG,
+            )
+
+        self.assertEqual(result["list_checks"].call_count, 3)
+        self.assertEqual(engine.review.call_args_list[1].args[2].level, "checks")
+        body = result["submit_waiting"].call_args.args[2]
+        self.assertIn("### Why they failed", body)
+        self.assertEqual(result["waiting"]["diagnosed"], 1)
+
+    def test_finished_checks_are_not_read_again_for_the_reading(self) -> None:
+        """A finished check stays finished, so only the final read asks again."""
+
+        engine = Mock()
+        engine.review.side_effect = [self.APPROVAL, self.DIAGNOSIS]
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                engine,
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.ACTIONS_FAILED,
+                checks_level=True,
+                check_log=self.ACTIONS_LOG,
+            )
+
+        self.assertEqual(result["list_checks"].call_count, 2)
+
     def test_the_checks_are_read_again_just_before_approving(self) -> None:
         """CI often finishes while a review runs: the checks the review started
         with can all be pending and then fail before the approval would land."""

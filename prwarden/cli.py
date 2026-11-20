@@ -3274,6 +3274,9 @@ def _process_pull_request(
     # Why the checks that failed at the start of the review failed, when it would
     # otherwise approve, for the note that says it waits for them.
     check_diagnoses: "tuple[CheckDiagnosis, ...]" = ()
+    # Whether this head's sign-off was already read for this review, so it is read
+    # once even when nobody has signed it off.
+    policy_signoff_read = False
     # Confirmed findings over the one limit a review posts, kept for its record.
     withheld_findings: "list[Finding]" = []
 
@@ -3605,39 +3608,53 @@ def _process_pull_request(
                     approve = False
                     approval_reason = ""
             checks_stage = stages.get(CHECKS_LEVEL)
-            failing_at_start = failed_checks(material.checks)
             partial = material.diff_budget is not None and (
                 material.diff_budget.is_partial
             )
             if (
                 checks_stage is not None
-                and failing_at_start
                 and not findings
                 and approve
                 and not credentials
-                and not policy_changes
                 and not partial
                 and not _waiting_note_settled(
                     store, repository, pull_request, destination
                 )
             ):
-                # Only a review that would approve but for its checks waits for
-                # them, and only then is the reading of why they failed worth a call:
-                # it goes into the note that tells the author so. Read here, while
-                # the workspace is open, so a check that passes on the final read
-                # costs this reading; a head whose note is already posted costs none.
-                check_diagnoses = _run_checks_level(
-                    checks_stage,
-                    repository,
-                    exact_repository,
-                    pull_request,
-                    material,
-                    tuple(
+                if policy_changes and policy_signoff_by is None:
+                    # Read once, here, and kept for the gate below: a review-policy
+                    # change a person signed off waits only for its checks, so its
+                    # note needs the reading as much as any other.
+                    policy_signoff_by = _read_policy_signoff(
+                        repository, pull_request, None
+                    )
+                    policy_signoff_read = True
+                failing = (
+                    ()
+                    if policy_changes and policy_signoff_by is None
+                    else tuple(
                         check
-                        for check in material.checks
+                        for check in _checks_after_review(
+                            repository, pull_request, material.checks
+                        )
                         if failed_checks((check,))
-                    ),
+                    )
                 )
+                if failing:
+                    # Only a review that would approve but for its checks waits for
+                    # them, and only then is the reading of why they failed worth a
+                    # call: it goes into the note that tells the author so. Read
+                    # here, while the workspace is open, so a check that passes on
+                    # the final read costs this reading; a head whose note is
+                    # already posted costs none.
+                    check_diagnoses = _run_checks_level(
+                        checks_stage,
+                        repository,
+                        exact_repository,
+                        pull_request,
+                        material,
+                        failing,
+                    )
         budget = material.diff_budget
         if budget is not None and budget.is_partial:
             # The spec forbids approving a partial review, and the model was never
@@ -3673,8 +3690,10 @@ def _process_pull_request(
             # verdict outweighs it: a reviewer cannot approve its own reconfiguring.
             # A person can: their sign-off, an approval of this head or an LGTM
             # since its review was withheld, is what lets the approval through.
-            signer = policy_signoff_by or _read_policy_signoff(
-                repository, pull_request, None
+            signer = (
+                policy_signoff_by
+                if policy_signoff_by is not None or policy_signoff_read
+                else _read_policy_signoff(repository, pull_request, None)
             )
             if signer is None:
                 approve = False
@@ -4109,6 +4128,29 @@ def _waiting_note_settled(
         _waiting_note_key(store, repository, pull_request, destination)
     )
     return record is not None and record.get("status") != "failed"
+
+
+def _checks_after_review(
+    repository: Repository,
+    pull_request: PullRequest,
+    at_start: "Sequence[PullRequestCheck]",
+) -> "Sequence[PullRequestCheck]":
+    """Return the head's checks as they stand once the code review is done.
+
+    A check still running when the review started may have failed since, and its
+    note needs the reading as much as one that had failed already; so may a check
+    that had not started. Read again only then: a finished check stays finished. A
+    read that fails leaves the checks the review started with, since the reading
+    only adds to a note.
+    """
+
+    if at_start and all(check.status.lower() == "completed" for check in at_start):
+        return at_start
+    try:
+        return list_pull_request_checks(repository, pull_request)
+    except CommandError as error:
+        print(f"      -> Could not read the checks again after the review: {error}")
+        return at_start
 
 
 def _run_checks_level(

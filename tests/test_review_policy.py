@@ -10,7 +10,12 @@ from unittest.mock import Mock, patch
 
 from prwarden import cli
 from prwarden.config import Settings
-from prwarden.models import PriorReviewComment, PullRequest, Repository
+from prwarden.models import (
+    PriorReviewComment,
+    PullRequest,
+    PullRequestCheck,
+    Repository,
+)
 from prwarden.review import is_review_policy_path, review_policy_changes
 from prwarden.state import JsonStateStore
 from prwarden.workspace import MAX_BASE_FILE_BYTES, WorkspaceError, merge_base_commit
@@ -367,6 +372,9 @@ class OrchestrationTests(unittest.TestCase):
         force=False,
         prior=(),
         signoff=None,
+        checks=(),
+        checks_level=False,
+        check_log="",
     ):
         repository = Repository("app", "owner/app", self.root)
         pull_request = PullRequest(
@@ -387,14 +395,17 @@ class OrchestrationTests(unittest.TestCase):
             max_findings=10,
             design_level=False,
             docs_level=False,
+            checks_level=checks_level,
         )
         with patch("prwarden.cli.has_current_review", return_value=False), patch(
             "prwarden.cli.list_prior_review_comments", return_value=tuple(prior)
         ), patch("prwarden.cli._read_generated_marks", return_value={}), patch(
             "prwarden.cli.list_changed_files", return_value=files
         ), patch(
-            "prwarden.cli.list_pull_request_checks", return_value=()
+            "prwarden.cli.list_pull_request_checks", return_value=checks
         ), patch(
+            "prwarden.cli.read_check_log", return_value=check_log
+        ) as read_log, patch(
             "prwarden.cli._read_file_history", return_value=()
         ), patch(
             "prwarden.cli._read_linked_issues", return_value=()
@@ -442,6 +453,7 @@ class OrchestrationTests(unittest.TestCase):
             "submit_waiting": submit_waiting,
             "submit_waiting_review": submit_waiting_review,
             "read_signoff": read_signoff,
+            "read_log": read_log,
         }
 
     WORKFLOW_CHANGE = [
@@ -570,6 +582,70 @@ class OrchestrationTests(unittest.TestCase):
         )
         result["submit_approval"].assert_called_once()
         result["submit_waiting_review"].assert_not_called()
+
+    FAILED_CHECK = (
+        PullRequestCheck(
+            "compile-code", "completed", "failure", check_id=5, app="github-actions"
+        ),
+    )
+    CHECK_LOG = "2026-11-20T10:00:01Z app.py:1: compile error: value is never read\n"
+    DIAGNOSIS = {
+        "diagnoses": [
+            {
+                "check": "compile-code",
+                "category": "code_defect",
+                "log_excerpt": "app.py:1: compile error: value is never read",
+                "cause": "The compiler rejects a value the change never reads.",
+                "fix": "Read `value` where it is needed, or remove it.",
+                "citations": [],
+            }
+        ]
+    }
+
+    def test_a_signed_off_head_has_its_failed_checks_read(self) -> None:
+        """Signed off, the head waits for its checks alone, so the note that says
+        so carries the reading like any other; the sign-off is read once."""
+
+        engine = Mock()
+        engine.review.side_effect = [
+            self.approving_engine().review.return_value,
+            self.DIAGNOSIS,
+        ]
+
+        result = self.run_review(
+            engine,
+            self.WORKFLOW_CHANGE,
+            signoff="maintainer",
+            checks=self.FAILED_CHECK,
+            checks_level=True,
+            check_log=self.CHECK_LOG,
+        )
+
+        self.assertEqual(engine.review.call_count, 2)
+        self.assertEqual(engine.review.call_args_list[1].args[2].level, "checks")
+        result["read_signoff"].assert_called_once()
+        result["submit_approval"].assert_not_called()
+        body = result["submit_waiting"].call_args.args[2]
+        self.assertIn("## Waiting for checks", body)
+        self.assertIn("### Why they failed", body)
+
+    def test_a_policy_change_nobody_signed_off_spends_no_reading(self) -> None:
+        """It waits for a person first, and its note says so, not why checks fail."""
+
+        engine = self.approving_engine()
+
+        result = self.run_review(
+            engine,
+            self.WORKFLOW_CHANGE,
+            checks=self.FAILED_CHECK,
+            checks_level=True,
+            check_log=self.CHECK_LOG,
+        )
+
+        self.assertEqual(engine.review.call_count, 1)
+        result["read_log"].assert_not_called()
+        result["read_signoff"].assert_called_once()
+        self.assertEqual(result["record"]["status"], "approval_withheld")
 
     def test_a_signed_off_head_withheld_for_more_reopens_once_that_clears(
         self,

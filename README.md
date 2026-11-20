@@ -533,7 +533,9 @@ comments or an approval exactly as before. Approval authority belongs to this le
 alone.
 
 The **checks level** runs only when the code level found nothing and would approve
-but a check had failed. It reads that check's own output, its job log or its
+but a check had failed by the time the review finished, including one still running
+when it started, and on a review-policy change only once a person has signed it off.
+It reads that check's own output, its job log or its
 summary, and says why it failed and a possible fix in the note that tells the author
 PR Warden waits for the checks. It runs on `REVIEW_ENGINE` at `REVIEW_CHECKS_MODEL`
 and `REVIEW_CHECKS_EFFORT`, a cheap model being enough, with no verifier: PR Warden
