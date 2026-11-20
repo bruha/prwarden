@@ -9,8 +9,14 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.7.0 a7aae0afb1e47b797ac150c68a6f20181c47da2e -->
+<!-- release-baseline: 3.7.1 199f8917f01208067545cfdf351f00a2a3eda18c -->
 ## [Unreleased]
+
+## [3.7.1] - 2026-11-20
+
+### Fixed
+
+- **checks:** give each check's name its header line alone (`199f891`).
 
 ## [3.7.0] - 2026-11-20
 
