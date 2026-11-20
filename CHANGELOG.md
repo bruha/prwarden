@@ -9,8 +9,18 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.5.2 cd34cb6ee3dc8776520efb033df38ea301695572 -->
+<!-- release-baseline: 3.5.3 9d59026587ed8c9ef6a449ae8dde40861dde8cf3 -->
 ## [Unreleased]
+
+## [3.5.3] - 2026-11-20
+
+### Fixed
+
+- ask Kiro for the answer a turn ended without (`9d59026`).
+
+### Changed
+
+- plan each type of review on its own engines (`316c841`).
 
 ## [3.5.2] - 2026-11-18
 
