@@ -374,9 +374,10 @@ def format_waiting_slack_message(
     else:
         heading = "Waiting for a person"
         text = (
-            f"PR Warden found nothing to report at `{head}`, but never gives its "
-            f"LGTM to a change to review policy, which this makes in: {names}. A "
-            "person needs to review it."
+            f"PR Warden found nothing to report at `{head}`, but holds its LGTM on "
+            f"a change to review policy until a person signs it off: {names}. A "
+            "person with write access other than you approves the pull request or "
+            "replies LGTM on it."
         )
     lines = [
         f"*PR #{pull_request.number} {heading} ({repository.name})*",

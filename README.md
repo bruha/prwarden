@@ -572,7 +572,9 @@ rather than advisory notes nobody checked.
 - A review that found nothing but holds its approval over a failed check, or
   because the PR changes review policy, says so on the PR once per head, naming the
   failed checks or the policy files, so the author, or an agent waiting on the
-  approval, knows PR Warden looked and what it waits for. Your own PR gets the same
+  approval, knows PR Warden looked and what it waits for. For a policy change the
+  note sits on the change's first line, and the PR is approved once a person with
+  write access other than the author approves it or replies `LGTM`. Your own PR gets the same
   in Slack. For a failed check it also says why it failed and a possible fix, read
   from the check's log by a model you choose, such as a cheap one.
 - The authenticated reviewer's own PR is never self-approved; findings or a
@@ -680,12 +682,15 @@ is assumed to know. It is framed as untrusted context in the prompt, capped, and
 add background rather than authority, so it can never relax a review rule. A
 repository without the file costs nothing.
 
-A pull request that changes how pull requests are reviewed is never approved, only
-reviewed: one that edits anything under `.prwarden/` or `.github/workflows/`, a
-`.gitattributes`, a `CODEOWNERS`, or the "Code review" section of an instruction file
-such as `AGENTS.md`. Approving it would be the reviewer signing off its own new
-rules. Its findings are posted as usual; a clean result is recorded as withheld,
-with the files that caused it, and is left to a person. Editing the rest of an
+A pull request that changes how pull requests are reviewed is never approved on PR
+Warden's word alone: one that edits anything under `.prwarden/` or
+`.github/workflows/`, a `.gitattributes`, a `CODEOWNERS`, or the "Code review"
+section of an instruction file such as `AGENTS.md`. Approving it would be the
+reviewer signing off its own new rules. Its design, documentation, and code are
+reviewed as usual and its findings posted; a clean result is withheld, with a note
+on the first changed line asking a person to sign the change off. Once a person with
+write access other than the author approves the pull request on GitHub, or replies
+`LGTM`, PR Warden reviews it again and approves it. Editing the rest of an
 `AGENTS.md` is not policy.
 
 Every level also reads why the changed code is as it is: the latest three commits on

@@ -358,7 +358,16 @@ class OrchestrationTests(unittest.TestCase):
         }
         return engine
 
-    def run_review(self, engine, files, *, base_documents=(), force=False, prior=()):
+    def run_review(
+        self,
+        engine,
+        files,
+        *,
+        base_documents=(),
+        force=False,
+        prior=(),
+        signoff=None,
+    ):
         repository = Repository("app", "owner/app", self.root)
         pull_request = PullRequest(
             1, "Title", "", "author", "head", "url", base_ref="main"
@@ -405,6 +414,10 @@ class OrchestrationTests(unittest.TestCase):
         ) as submit_approval, patch(
             "prwarden.cli.submit_waiting_comment", return_value="comment-1"
         ) as submit_waiting, patch(
+            "prwarden.cli.submit_waiting_review", return_value="review-9"
+        ) as submit_waiting_review, patch(
+            "prwarden.cli.policy_signoff", return_value=signoff
+        ) as read_signoff, patch(
             "sys.stdout", new_callable=StringIO
         ) as output:
             workspace.return_value.__enter__.return_value = repository
@@ -427,6 +440,8 @@ class OrchestrationTests(unittest.TestCase):
             "submit_review": submit_review,
             "submit_approval": submit_approval,
             "submit_waiting": submit_waiting,
+            "submit_waiting_review": submit_waiting_review,
+            "read_signoff": read_signoff,
         }
 
     WORKFLOW_CHANGE = [
@@ -458,27 +473,40 @@ class OrchestrationTests(unittest.TestCase):
             again["terminal"],
         )
 
-    def test_the_author_is_told_a_person_must_approve_a_policy_change(self) -> None:
-        """Withheld for policy with nothing found, the author used to hear nothing.
-        Said once for the head: the next run finds the note and stays quiet."""
+    TWO_POLICY_FILES = WORKFLOW_CHANGE + [
+        {"filename": "CODEOWNERS", "patch": "@@ -1 +1,2 @@\n* @team\n+docs/ @docs"},
+    ]
+
+    def test_a_person_is_asked_on_the_first_line_the_policy_changes(self) -> None:
+        """The note sits where the person asked to sign it off reads the change,
+        names every other policy change, and is said once for the head."""
 
         engine = self.approving_engine()
 
-        first = self.run_review(engine, self.WORKFLOW_CHANGE)
-        again = self.run_review(engine, self.WORKFLOW_CHANGE)
+        first = self.run_review(engine, self.TWO_POLICY_FILES)
+        again = self.run_review(engine, self.TWO_POLICY_FILES)
 
-        first["submit_waiting"].assert_called_once()
-        body = first["submit_waiting"].call_args.args[2]
+        first["submit_waiting"].assert_not_called()
+        first["submit_waiting_review"].assert_called_once()
+        _, _, path, line, body = first["submit_waiting_review"].call_args.args
+        self.assertEqual((path, line), (".github/workflows/test.yml", 1))
         self.assertIn("## Waiting for a person", body)
-        self.assertIn("- `.github/workflows/test.yml`", body)
-        self.assertIn("A person needs to review and approve it.", body)
-        again["submit_waiting"].assert_not_called()
+        self.assertIn("This is the first such change in this pull request", body)
+        self.assertIn("- `CODEOWNERS`", body)
+        self.assertNotIn("- `.github/workflows/test.yml`", body)
+        self.assertIn("replying **LGTM** here", body)
+        self.assertEqual(
+            first["record"]["policy_anchor"],
+            [".github/workflows/test.yml", 1, ".github/workflows/test.yml"],
+        )
+        again["submit_waiting_review"].assert_not_called()
 
     def test_a_head_withheld_before_the_note_existed_gets_it_on_the_next_run(
         self,
     ) -> None:
         """Every pull request already waiting when this shipped sits in the skip
-        path, which no review reaches again, so the skip path says it too."""
+        path, which no review reaches again, so the skip path says it too, on the
+        recorded line, or on the pull request when the record names none."""
 
         engine = self.approving_engine()
         with patch(
@@ -489,7 +517,68 @@ class OrchestrationTests(unittest.TestCase):
         again = self.run_review(engine, self.WORKFLOW_CHANGE)
 
         self.assertEqual(engine.review.call_count, 1)
-        again["submit_waiting"].assert_called_once()
+        again["submit_waiting_review"].assert_called_once()
+
+        with JsonStateStore(self.root / "state.json") as store:
+            key = store.key("owner/app", 1, "head", "github")
+            record = store.get(key)
+            del record["policy_anchor"]
+            store.set_status(key, record.pop("status"), **record)
+            store.data["records"].pop(key + ":waiting")
+            store._save()
+        older = self.run_review(engine, self.WORKFLOW_CHANGE)
+
+        older["submit_waiting"].assert_called_once()
+        self.assertIn(
+            "replying **LGTM** on this pull request",
+            older["submit_waiting"].call_args.args[2],
+        )
+
+    def test_a_persons_sign_off_reopens_the_head_and_it_is_approved(self) -> None:
+        """Until a person signs the policy change off the review waits; after, the
+        head is reviewed again and approved like any other."""
+
+        engine = self.approving_engine()
+        self.run_review(engine, self.WORKFLOW_CHANGE)
+
+        waiting = self.run_review(engine, self.WORKFLOW_CHANGE)
+        signed = self.run_review(engine, self.WORKFLOW_CHANGE, signoff="maintainer")
+
+        self.assertEqual(engine.review.call_count, 2)
+        waiting["submit_approval"].assert_not_called()
+        self.assertIn("a person's sign-off reopens it", waiting["terminal"])
+        # Read since the head was withheld, by PR Warden's clock.
+        since = waiting["read_signoff"].call_args.args[2]
+        self.assertIsInstance(since, str)
+        self.assertIn(
+            "@maintainer signed off the review-policy change; reconsidering",
+            signed["terminal"],
+        )
+        signed["submit_approval"].assert_called_once()
+        self.assertEqual(signed["record"]["status"], "delivered")
+
+    def test_an_approval_of_the_head_signs_it_off_on_the_first_review(self) -> None:
+        engine = self.approving_engine()
+
+        result = self.run_review(engine, self.WORKFLOW_CHANGE, signoff="maintainer")
+
+        # With no withheld review yet, only an approval of this head can count.
+        self.assertIsNone(result["read_signoff"].call_args.args[2])
+        self.assertIn(
+            "@maintainer signed off this head's review-policy change",
+            result["terminal"],
+        )
+        result["submit_approval"].assert_called_once()
+        result["submit_waiting_review"].assert_not_called()
+
+    def test_a_sign_off_never_outweighs_a_finding(self) -> None:
+        engine = Mock()
+        engine.review.side_effect = [finding_response("app.py", 1), CONFIRMED_JUDGMENT]
+
+        result = self.run_review(engine, self.WORKFLOW_CHANGE, signoff="maintainer")
+
+        result["submit_review"].assert_called_once()
+        result["submit_approval"].assert_not_called()
 
     def test_a_policy_change_withheld_for_another_reason_gets_no_note(self) -> None:
         """Only a review that would have approved waits for a person alone."""

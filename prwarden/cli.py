@@ -93,6 +93,8 @@ from .github import (
     submit_lgtm_comment,
     submit_review,
     submit_waiting_comment,
+    submit_waiting_review,
+    policy_signoff,
     validate_object_name,
     waiting_items,
 )
@@ -127,6 +129,7 @@ from .linked_issues import find_jira_keys, read_work_item
 from .metrics import ReviewMetrics
 from .paths import PACKAGE_ROOT
 from .review import (
+    added_line_texts,
     build_bundled_review_material,
     BACKGROUND_FILE,
     UNCLASSIFIED_REJECTION,
@@ -1662,6 +1665,75 @@ def _recorded_policy_changes(record: "dict[str, Any]") -> "tuple[str, ...]":
     return tuple(recorded)
 
 
+# A policy change in an instruction file is named for the rules it holds.
+_RULES_CHANGE_PREFIX = "the code review rules in "
+
+
+def _policy_anchor(
+    policy_changes: "Sequence[str]", files: "Sequence[Mapping[str, Any]]"
+) -> "Optional[tuple[str, int, str]]":
+    """Return the file, line, and change a note waiting for a person sits on.
+
+    The first line the first changed policy file adds, so the note is read beside
+    the change it asks a person to sign off. A change that adds no line, such as a
+    deleted workflow, has nowhere to sit, so the next change is tried.
+    """
+
+    patches = {
+        str(file.get("filename")): file.get("patch")
+        for file in files
+        if isinstance(file.get("patch"), str)
+    }
+    for change in policy_changes:
+        path = (
+            change[len(_RULES_CHANGE_PREFIX) :]
+            if change.startswith(_RULES_CHANGE_PREFIX)
+            else change
+        )
+        added = added_line_texts(patches.get(path) or "")
+        if added:
+            return path, added[0][0], change
+    return None
+
+
+def _recorded_policy_anchor(
+    record: "Mapping[str, Any]",
+) -> "Optional[tuple[str, int, str]]":
+    """Return where a withheld head's note waiting for a person sits, if recorded."""
+
+    anchor = record.get("policy_anchor")
+    if (
+        isinstance(anchor, list)
+        and len(anchor) == 3
+        and isinstance(anchor[0], str)
+        and isinstance(anchor[1], int)
+        and not isinstance(anchor[1], bool)
+        and isinstance(anchor[2], str)
+    ):
+        return anchor[0], anchor[1], anchor[2]
+    return None
+
+
+def _read_policy_signoff(
+    repository: Repository, pull_request: PullRequest, since: Optional[str]
+) -> Optional[str]:
+    """Return who signed off this head's review-policy change, or None.
+
+    A sign-off that cannot be read is no sign-off, so the approval stays withheld.
+    """
+
+    try:
+        return policy_signoff(
+            repository, pull_request, since if isinstance(since, str) else None
+        )
+    except CommandError as error:
+        print(
+            "      -> Could not read whether a person signed off the review-policy "
+            f"change: {error}"
+        )
+        return None
+
+
 def _report_review_rules(rules: ReviewRules) -> None:
     sources = ", ".join(dict.fromkeys(section.path for section in rules.sections))
     print(
@@ -2976,6 +3048,9 @@ def _process_pull_request(
     )
 
     prior_comments: Optional[tuple[PriorReviewComment, ...]] = None
+    # Who signed off this head's review-policy change, once someone has: their
+    # sign-off is what lets a review that would approve it do so.
+    policy_signoff_by: Optional[str] = None
     # Everything posted to the pull request, which the advisory levels must not
     # repeat; `prior_comments` is the part the code level may weigh and cite.
     feedback: Optional[tuple[PriorReviewComment, ...]] = None
@@ -3048,19 +3123,26 @@ def _process_pull_request(
                 )
                 return
             recorded_policy = _recorded_policy_changes(record)
-            if recorded_policy:
+            # Withheld over the policy alone: the review would have approved.
+            waits_for_person = bool(recorded_policy) and record.get(
+                "reason"
+            ) == _policy_change_reason(recorded_policy)
+            if waits_for_person:
+                policy_signoff_by = _read_policy_signoff(
+                    repository, pull_request, record.get("updated_at")
+                )
+            if recorded_policy and policy_signoff_by is None:
                 # The head is the same, so it changes the same policy, and another
-                # review would end at the same withheld approval.
+                # review would end at the same withheld approval until a person
+                # signs the change off.
                 _report_skip(
                     history_record,
                     "code",
                     "approval stays withheld while this head changes review policy "
-                    "(" + ", ".join(recorded_policy) + "); a person approves it, "
-                    "and a later head or --force reviews it again",
+                    "(" + ", ".join(recorded_policy) + "); a person's sign-off "
+                    "reopens it, and a later head or --force reviews it again",
                 )
-                if live and record.get("reason") == _policy_change_reason(
-                    recorded_policy
-                ):
+                if live and waits_for_person:
                     # Said here too, for a head withheld before the note existed or
                     # whose note could not be posted.
                     _deliver_waiting_note(
@@ -3070,10 +3152,16 @@ def _process_pull_request(
                         store,
                         destination,
                         WaitingReason(WAITING_FOR_A_PERSON, recorded_policy),
+                        anchor=_recorded_policy_anchor(record),
                     )
                 return
             recorded_unread = _recorded_unread_paths(record)
-            if (
+            if policy_signoff_by is not None:
+                print(
+                    f"      -> @{policy_signoff_by} signed off the review-policy "
+                    "change; reconsidering withheld approval"
+                )
+            elif (
                 recorded_unread
                 and record.get("unread_settings_fingerprint")
                 == _unread_settings_fingerprint(settings)
@@ -3095,8 +3183,7 @@ def _process_pull_request(
                     "MAX_DIFF_BYTES, or --force reopens it",
                 )
                 return
-            recorded_failed = _recorded_failed_checks(record)
-            if recorded_failed:
+            elif _recorded_failed_checks(record):
                 # Another review of this head would be withheld again while any of
                 # its checks still fails, so it is not spent until one could pass.
                 try:
@@ -3582,8 +3669,19 @@ def _process_pull_request(
         if approve and policy_changes:
             # Like a failed check, this is the controller's own answer and no
             # verdict outweighs it: a reviewer cannot approve its own reconfiguring.
-            approve = False
-            approval_reason = _policy_change_reason(policy_changes)
+            # A person can: their sign-off, an approval of this head or an LGTM
+            # since its review was withheld, is what lets the approval through.
+            signer = policy_signoff_by or _read_policy_signoff(
+                repository, pull_request, None
+            )
+            if signer is None:
+                approve = False
+                approval_reason = _policy_change_reason(policy_changes)
+            else:
+                print(
+                    f"      -> @{signer} signed off this head's review-policy "
+                    "change, so it no longer holds the approval back"
+                )
         reviewer_engine = review_settings.review_engine
         reviewer_model = review_settings.review_model
         raw_findings = structured_output.get("findings", [])
@@ -3665,6 +3763,9 @@ def _process_pull_request(
     if not clean_candidate:
         _print_findings(findings, approve)
 
+    # Where a note waiting for a person sits: the first line of the first file the
+    # policy changes in, so whoever signs it off reads it there.
+    policy_anchor = _policy_anchor(policy_changes, files) if policy_changes else None
     if not findings and not approve:
         store.set_status(
             state_key,
@@ -3678,6 +3779,11 @@ def _process_pull_request(
             ),
             unread_generated_marks=unread_marks if unread_paths else {},
             **({"policy_changes": list(policy_changes)} if policy_changes else {}),
+            **(
+                {"policy_anchor": list(policy_anchor)}
+                if policy_changes and policy_anchor is not None
+                else {}
+            ),
             **_reviewed_patch_record(
                 files,
                 code_files,
@@ -3701,6 +3807,7 @@ def _process_pull_request(
                 store,
                 destination,
                 WaitingReason(WAITING_FOR_A_PERSON, tuple(policy_changes)),
+                anchor=policy_anchor,
             )
         return
 
@@ -4099,6 +4206,7 @@ def _deliver_waiting_note(
     *,
     diagnoses: "Sequence[CheckDiagnosis]" = (),
     diagnosed_by: Optional[ReviewStages] = None,
+    anchor: "Optional[tuple[str, int, str]]" = None,
 ) -> None:
     """Tell the author what this head's clean review waits for, once per head.
 
@@ -4132,10 +4240,13 @@ def _deliver_waiting_note(
         print(f"      -> Not saying the review waits for {noun}: {error}")
         return
     shown, more = waiting_items(reason.items)
+    inline = anchor is not None and destination != "slack"
     details = {
         "waiting_for": reason.kind,
         "items": list(shown),
         **({"diagnosed": len(diagnoses)} if diagnoses else {}),
+        # A note on a line stays: it sits beside the change a person signed off.
+        **({"inline": True} if inline else {}),
     }
     # Named, because a model wrote the reading: the author should know whose it is.
     reader = (
@@ -4159,6 +4270,23 @@ def _deliver_waiting_note(
                     more,
                     diagnoses=diagnoses,
                     reader=reader,
+                ),
+            )
+        elif inline:
+            # On the first line of the change a person must sign off, where they
+            # can answer it in its own thread.
+            assert anchor is not None
+            path, line, change = anchor
+            receipt_id = submit_waiting_review(
+                repository,
+                pull_request,
+                path,
+                line,
+                format_waiting_comment(
+                    pull_request,
+                    reason,
+                    own=destination == OWN_GITHUB_DESTINATION,
+                    anchored=change,
                 ),
             )
         else:
@@ -4221,6 +4349,7 @@ def _hide_waiting_notes(
         and key.endswith(suffix)
         and record.get("status") in ("delivered", "delivery_uncertain")
         and not record.get("hidden")
+        and not record.get("inline")
         and (
             keep_comment_id is None
             or str(record.get("receipt_id")) != str(keep_comment_id)

@@ -86,7 +86,9 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
   indeterminate mergeability, failed exact-head checks, partial reviews,
   unverified clean results, or a change to review policy: `.prwarden/`,
   `.github/workflows/`, `.gitattributes`, `CODEOWNERS`, or the "Code review"
-  sections of the instruction files.
+  sections of the instruction files, until a person with write access other than
+  its author has signed that head off, by approving it or by an `LGTM` written
+  after its review was withheld.
   "Self" is the repository's `github_account` when its entry names one, compared
   case-insensitively, and the configured reviewer otherwise.
 - A repository configured with `"slack": false` is never named in a Slack message,

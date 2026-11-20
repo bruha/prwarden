@@ -41,14 +41,28 @@ review-engine adapter, and route confirmed correctness or security findings:
   that cannot be read counts as changed, and so does every changed instruction file
   when the base side cannot be read. The review still runs and its findings are
   delivered; only the clean result is withheld, recorded with the policy it changed,
-  and a later run of the same head skips it without reviewing until a later head or
-  `--force`. A person approves it. A replay applies the same gate against its
-  pinned base, so a control case reports what a live run would deliver.
+  and a later run of the same head skips it without reviewing until a person signs
+  the change off, a later head, or `--force`. A sign-off is an approval of that exact
+  head, or a comment beginning `LGTM`, "looks good", "ship it", "approved", or a
+  thumbs-up, on the pull request, in a review, or in a review thread, written after
+  the head's review was withheld by the controller's own clock, never by a date the
+  change carries (`github.policy_signoff`). It counts only from a person with write
+  access, read from the repository's collaborator permission, who is not the pull
+  request's author and not a bot, and never from a comment carrying this tool's
+  marker; a permission or a list that cannot be read is no sign-off. Once one exists
+  the head is reviewed again, and a review that would approve now approves; findings
+  are delivered as always. A replay applies the same gate against its pinned base,
+  so a control case reports what a live run would deliver.
 - A review that found nothing and was withheld only over a failed check, or only
   because the change is to review policy, tells its author what it waits for, once
   per head: one pull-request conversation comment, `## Waiting for checks` naming
   the failed checks or `## Waiting for a person` naming the policy changes, with the
-  head it speaks for and a `<!-- prwarden:waiting -->` marker. The reviewer's own
+  head it speaks for and a `<!-- prwarden:waiting -->` marker. A note waiting for a
+  person sits on the first line the first changed policy file adds, as one `COMMENT`
+  review with that inline comment, lists the other policy changes, and says how to
+  sign the change off; the review's body carries the marker, so it never counts as
+  the head's review. A change that adds no line, or a head whose record names no
+  line, gets the conversation comment instead. The reviewer's own
   pull request gets the same as a Slack message, or as a comment in a repository
   with `"slack": false`. Without it the author could not tell a clean review held
   back from PR Warden never having looked. A head withheld before this existed gets
@@ -970,7 +984,7 @@ repository stays true as the product moves and needs no operator to remember it.
 It is read from the base branch's tip, or a replay's pinned base, never from the
 reviewed head, for the reason the code review rules are: a pull request must not
 write the context its own review is given. One that edits the note is changing
-review policy, so it is never approved. The note is still text whoever merged it
+review policy, so it is never approved until a person signs it off. The note is still text whoever merged it
 wrote, so it is untrusted like the diff: capped at 4000 characters with the
 remainder marked truncated, delimited in the prompt, and named in the sentence that
 forbids following instructions found in reviewed content. It may add context, never

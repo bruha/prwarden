@@ -3,11 +3,13 @@ import os
 import re
 import shlex
 import shutil
+from datetime import datetime
 from typing import Any, Optional, Sequence
 
 from . import commands
 from .comment_template import CommentTemplate
 from .commands import CommandError
+from .config import GITHUB_USERNAME_PATTERN
 from .models import (
     WAITING_FOR_CHECKS,
     CheckDiagnosis,
@@ -575,8 +577,13 @@ def code_level_feedback(
     return tuple(
         comment
         for comment in comments
-        if comment.kind != "conversation"
-        or not any(carries_marker(comment.body, marker) for marker in advisory)
+        # A waiting note can be inline too, on a review-policy change; it asks for
+        # a person and objects to nothing.
+        if not carries_marker(comment.body, WAITING_COMMENT_MARKER)
+        and (
+            comment.kind != "conversation"
+            or not any(carries_marker(comment.body, marker) for marker in advisory)
+        )
     )
 
 
@@ -999,6 +1006,10 @@ def has_current_review(
     accepted_states = {"APPROVED", "CHANGES_REQUESTED", "COMMENTED"}
     for review in list_reviews(repository, pull_request):
         user = review.get("user") or {}
+        body = review.get("body")
+        if isinstance(body, str) and carries_marker(body, WAITING_COMMENT_MARKER):
+            # A waiting note says the review is not done: it waits for a person.
+            continue
         if (
             str(user.get("login") or "").casefold() == reviewer_username.casefold()
             and review.get("commit_id") == pull_request.head_sha
@@ -1683,6 +1694,7 @@ def format_waiting_comment(
     own: bool = False,
     diagnoses: "Sequence[CheckDiagnosis]" = (),
     reader: str = "",
+    anchored: Optional[str] = None,
 ) -> str:
     """Say what a review that found nothing waits for before it approves.
 
@@ -1692,7 +1704,8 @@ def format_waiting_comment(
     pull request, which receives an LGTM rather than an approval. Names the head it
     speaks for, because a comment, unlike an approval, is not tied to a commit.
     ``diagnoses`` are the checks level's readings of why checks failed, written by
-    ``reader``.
+    ``reader``. ``anchored`` is the policy change an inline note sits on, which the
+    note then lists apart from the others.
     """
 
     shown, more = waiting_items(reason.items)
@@ -1729,17 +1742,45 @@ def format_waiting_comment(
                 "commit; check a fix before acting on it._"
             )
     else:
-        lines = [
-            "## Waiting for a person",
-            "",
-            f"PR Warden reviewed {head} and found nothing to report, but it never "
-            f"gives {result} to a change to review policy, which this pull request "
-            "makes in:",
-            "",
-            listed,
-            "",
-            "A person needs to review and approve it.",
-        ]
+        own_review = "reviews it again and posts its LGTM" if own else (
+            "reviews it again and approves it"
+        )
+        signoff = (
+            "A person with write access other than the author can sign it off by "
+            "approving the pull request on GitHub, or by replying **LGTM** "
+            + ("here" if anchored is not None else "on this pull request")
+            + f"; PR Warden then {own_review} if nothing else holds it back."
+        )
+        if anchored is not None:
+            rest, more_rest = waiting_items(
+                tuple(item for item in reason.items if item != anchored)
+            )
+            others = "\n".join(f"- {_inline_code(item)}" for item in rest)
+            if more_rest:
+                others += f"\n- and {more_rest} more"
+            lines = [
+                "## Waiting for a person",
+                "",
+                f"PR Warden reviewed {head} and found nothing to report, but it holds "
+                f"{result} on a change to review policy until a person signs it off. "
+                "This is the first such change in this pull request"
+                + (", and these are the others:" if others else "."),
+                *(["", others] if others else []),
+                "",
+                signoff,
+            ]
+        else:
+            lines = [
+                "## Waiting for a person",
+                "",
+                f"PR Warden reviewed {head} and found nothing to report, but it holds "
+                f"{result} on a change to review policy until a person signs it "
+                "off, and this pull request changes:",
+                "",
+                listed,
+                "",
+                signoff,
+            ]
     lines.extend([WAITING_COMMENT_MARKER, ""])
     return "\n".join(lines)
 
@@ -1793,6 +1834,178 @@ def submit_waiting_comment(
     """
 
     return _post_conversation_comment(repository, pull_request, body, "a waiting note")
+
+
+def submit_waiting_review(
+    repository: Repository,
+    pull_request: PullRequest,
+    path: str,
+    line: int,
+    body: str,
+) -> str:
+    """Post a waiting note on the first line of a review-policy change, in one write.
+
+    A COMMENT review with that one inline comment, so the person asked to sign the
+    change off reads it where it is and can answer in its thread. Its body carries
+    the waiting marker, which keeps it from counting as this head's review.
+    """
+
+    payload = {
+        "commit_id": pull_request.head_sha,
+        "event": "COMMENT",
+        "body": "PR Warden is waiting for a person to sign off a review-policy "
+        "change.\n" + WAITING_COMMENT_MARKER,
+        "comments": [{"path": path, "line": line, "side": "RIGHT", "body": body}],
+    }
+    output = _run_for(
+        repository,
+        [
+            "gh",
+            "api",
+            "--method",
+            "POST",
+            "-H",
+            "Accept: application/vnd.github+json",
+            f"repos/{repository.slug}/pulls/{pull_request.number}/reviews",
+            "--input",
+            "-",
+        ],
+        input_text=json.dumps(payload),
+        timeout_seconds=120,
+    )
+    response = _parse_json(
+        output,
+        f"posting a waiting note for {repository.slug}#{pull_request.number}",
+    )
+    if not isinstance(response, dict) or not response.get("id"):
+        raise CommandError(
+            f"GitHub did not return a review ID for the waiting note on "
+            f"{repository.slug}#{pull_request.number}"
+        )
+    return str(response["id"])
+
+
+# What a person writes to sign a change off: "LGTM", "looks good", "ship it",
+# "approved", or a thumbs-up, first on the comment's first line. A question is not a
+# sign-off, nor is anything conditional on what follows it.
+SIGNOFF = re.compile(
+    r"^(?:lgtm|looks good(?: to me)?|ship it|approved?|:\+1:|\U0001f44d)"
+    r"(?![\w-])",
+    re.IGNORECASE,
+)
+SIGNOFF_PERMISSIONS = frozenset({"admin", "maintain", "write"})
+
+
+def is_signoff(body: str) -> bool:
+    """Return whether a comment's first line signs the change off."""
+
+    first = body.strip().splitlines()[0].strip() if body.strip() else ""
+    return bool(SIGNOFF.match(first)) and "?" not in first
+
+
+def _carries_any_marker(body: str) -> bool:
+    """Return whether a comment is one this tool wrote, by any installation."""
+
+    return any(
+        variant in body for variant in marker_variants(f"<!-- {MARKER_NAME}")
+    )
+
+
+def _created_after(record: "dict[str, Any]", since: Optional[str]) -> bool:
+    """Return whether GitHub created ``record`` after ``since``, an ISO time."""
+
+    if since is None:
+        return False
+    created = record.get("submitted_at") or record.get("created_at")
+    if not isinstance(created, str):
+        return False
+    try:
+        return datetime.fromisoformat(
+            created.replace("Z", "+00:00")
+        ) > datetime.fromisoformat(since)
+    except ValueError:
+        return False
+
+
+def policy_signoff(
+    repository: Repository,
+    pull_request: PullRequest,
+    since: Optional[str] = None,
+) -> Optional[str]:
+    """Return who signed off this head's review-policy change, or None.
+
+    A sign-off is an approval of this exact head, or a comment that begins with
+    "LGTM" or the like, on the pull request, in a review, or in a review thread,
+    written after ``since``: the time this head's review was withheld, which is
+    the controller's own clock, never a date the change carries. It counts only from
+    a person with write access who is not the pull request's author and not a bot,
+    and never from a comment this tool wrote. A permission that cannot be read
+    counts as none, so a sign-off is never assumed.
+    """
+
+    candidates: "list[str]" = []
+    for review in list_reviews(repository, pull_request):
+        login = str((review.get("user") or {}).get("login") or "")
+        body = review.get("body") if isinstance(review.get("body"), str) else ""
+        if review.get("state") == "APPROVED" and (
+            review.get("commit_id") == pull_request.head_sha
+        ):
+            candidates.append(login)
+        elif is_signoff(body) and _created_after(review, since):
+            if not _carries_any_marker(body):
+                candidates.append(login)
+    for endpoint, what in (
+        (f"issues/{pull_request.number}/comments", "pull-request comments"),
+        (f"pulls/{pull_request.number}/comments", "review comments"),
+    ):
+        for comment in _list_pull_request_records(
+            repository, pull_request, endpoint, what
+        ):
+            body = comment.get("body") if isinstance(comment.get("body"), str) else ""
+            if (
+                is_signoff(body)
+                and not _carries_any_marker(body)
+                and _created_after(comment, since)
+            ):
+                candidates.append(str((comment.get("user") or {}).get("login") or ""))
+    checked: "set[str]" = set()
+    for login in candidates:
+        folded = login.casefold()
+        if (
+            not login
+            or folded in checked
+            or folded.endswith("[bot]")
+            or folded == pull_request.author.casefold()
+        ):
+            continue
+        checked.add(folded)
+        if _write_access(repository, login):
+            return login
+    return None
+
+
+def _write_access(repository: Repository, login: str) -> bool:
+    """Return whether ``login`` can push to the repository, False when unknown."""
+
+    try:
+        if not GITHUB_USERNAME_PATTERN.fullmatch(login):
+            return False
+        output = _run_for(
+            repository,
+            [
+                "gh",
+                "api",
+                f"repos/{repository.slug}/collaborators/{login}/permission",
+            ],
+            timeout_seconds=60,
+            retry_transient=True,
+        )
+        payload = _parse_json(output, f"reading {login}'s permission")
+    except CommandError:
+        return False
+    return isinstance(payload, dict) and payload.get("permission") in (
+        SIGNOFF_PERMISSIONS
+    )
 
 
 PULL_REQUEST_COMMENTS_QUERY = """

@@ -61,14 +61,20 @@ class WaitingCommentTests(unittest.TestCase):
         policy = format_waiting_comment(PULL_REQUEST, POLICY, own=True)
 
         self.assertIn("holds its LGTM while", checks)
-        self.assertIn("never gives its LGTM to a change to review policy", policy)
+        self.assertIn("holds its LGTM on a change to review policy", policy)
+        self.assertIn("reviews it again and posts its LGTM", policy)
 
     def test_a_policy_note_asks_for_a_person(self):
         body = format_waiting_comment(PULL_REQUEST, POLICY)
 
         self.assertTrue(body.startswith("## Waiting for a person\n"))
         self.assertIn("- `.github/workflows/test.yml`", body)
-        self.assertIn("A person needs to review and approve it.", body)
+        self.assertIn(
+            "A person with write access other than the author can sign it off by "
+            "approving the pull request on GitHub, or by replying **LGTM** on this "
+            "pull request; PR Warden then reviews it again and approves it",
+            body,
+        )
         self.assertNotIn("checks)", body)
 
     def test_names_from_the_head_cannot_shape_the_comment(self):
