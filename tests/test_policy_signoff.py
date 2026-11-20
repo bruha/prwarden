@@ -247,6 +247,52 @@ class WaitingReviewTests(unittest.TestCase):
         with patch("prwarden.github.run_cmd", return_value=json.dumps([reviews])):
             self.assertFalse(has_current_review(REPOSITORY, PULL_REQUEST, "reviewer"))
 
+    def current_review(self, review_body, comments):
+        reviews = [
+            {
+                "id": 5,
+                "user": user("reviewer"),
+                "state": "COMMENTED",
+                "commit_id": "head",
+                "submitted_at": "2026-11-20T10:00:00Z",
+                "body": review_body,
+            }
+        ]
+        listed = {
+            "reviews": json.dumps([reviews]),
+            "comments": json.dumps([comments]),
+        }
+
+        def run(arguments, **_):
+            return listed["comments" if "/comments" in arguments[-1] else "reviews"]
+
+        with patch("prwarden.github.run_cmd", side_effect=run):
+            return has_current_review(REPOSITORY, PULL_REQUEST, "reviewer")
+
+    def test_a_reply_in_a_thread_is_not_this_heads_review(self):
+        """An LGTM written from this account in the waiting note's thread is filed
+        by GitHub as an empty "commented" review; counting it as the review left
+        the signed-off head recorded as reviewed and never approved."""
+
+        replies = [
+            {"pull_request_review_id": 5, "in_reply_to_id": 3, "body": "lgtm"},
+            {"pull_request_review_id": 9, "in_reply_to_id": None, "body": "note"},
+        ]
+
+        self.assertFalse(self.current_review("", replies))
+
+    def test_a_review_that_starts_a_thread_or_says_something_is_one(self):
+        started = [
+            {"pull_request_review_id": 5, "in_reply_to_id": 3, "body": "lgtm"},
+            {"pull_request_review_id": 5, "in_reply_to_id": None, "body": "finding"},
+        ]
+        reply = [{"pull_request_review_id": 5, "in_reply_to_id": 3, "body": "ok"}]
+
+        self.assertTrue(self.current_review("", started))
+        self.assertTrue(self.current_review("Reviewed by hand.", reply))
+        # Nothing listed for it says nothing either way, so it still counts.
+        self.assertTrue(self.current_review("", []))
+
     def test_another_installations_inline_note_objects_to_nothing(self):
         note = PriorReviewComment(
             "inline:3",

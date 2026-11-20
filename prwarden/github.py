@@ -1081,21 +1081,62 @@ def has_current_review(
     pull_request: PullRequest,
     reviewer_username: str,
 ) -> bool:
+    """Return whether the reviewer's account has already reviewed this head.
+
+    A reply in an existing thread is not a review, though GitHub files it as a
+    "commented" review with no body: a person answering from this account, signing
+    a change off with an LGTM say, would otherwise read as the review being done,
+    and the head would never be reviewed or approved.
+    """
+
     accepted_states = {"APPROVED", "CHANGES_REQUESTED", "COMMENTED"}
+    thread_starters: "Optional[dict[int, bool]]" = None
     for review in list_reviews(repository, pull_request):
         user = review.get("user") or {}
         body = review.get("body")
         if isinstance(body, str) and carries_marker(body, WAITING_COMMENT_MARKER):
             # A waiting note says the review is not done: it waits for a person.
             continue
-        if (
+        if not (
             str(user.get("login") or "").casefold() == reviewer_username.casefold()
             and review.get("commit_id") == pull_request.head_sha
             and review.get("state") in accepted_states
             and review.get("submitted_at")
         ):
+            continue
+        if review.get("state") != "COMMENTED" or (
+            isinstance(body, str) and body.strip()
+        ):
+            return True
+        if thread_starters is None:
+            thread_starters = _reviews_starting_threads(repository, pull_request)
+        # A review none of whose comments GitHub lists says nothing either way, so
+        # it still counts: reviewing the head again could post the same findings.
+        if thread_starters.get(review.get("id"), True):
             return True
     return False
+
+
+def _reviews_starting_threads(
+    repository: Repository, pull_request: PullRequest
+) -> "dict[int, bool]":
+    """Map each review that has inline comments to whether one of them starts a
+    thread rather than replying in one."""
+
+    starts: "dict[int, bool]" = {}
+    for comment in _list_pull_request_records(
+        repository,
+        pull_request,
+        f"pulls/{pull_request.number}/comments",
+        "review comments",
+    ):
+        review_id = comment.get("pull_request_review_id")
+        if not isinstance(review_id, int):
+            continue
+        starts[review_id] = starts.get(review_id, False) or (
+            comment.get("in_reply_to_id") is None
+        )
+    return starts
 
 
 def validate_object_name(value: str, subject: str) -> str:

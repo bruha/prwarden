@@ -101,6 +101,7 @@ from .github import (
 from .check_logs import read_check_logs, validate_check_diagnoses
 from .github_status import describe_github_incident
 from .history import (
+    EXISTING_REVIEW_RECEIPT,
     HISTORY_DIRECTORY_NAME,
     ReviewHistory,
     ReviewRecord,
@@ -3147,6 +3148,19 @@ def _process_pull_request(
                 "      -> Delivered review findings are resolved; "
                 "reconsidering approval"
             )
+        elif (
+            status == "delivered"
+            and destination == "github"
+            and receipt_id == EXISTING_REVIEW_RECEIPT
+            and not has_current_review(repository, pull_request, account)
+        ):
+            # Recorded as reviewed only because a review from this account was on
+            # the head, which a reply in a thread once passed for. With none there,
+            # nothing was delivered, and the head is reviewed as if new.
+            print(
+                "      -> No review from this account is on this head; "
+                "reviewing it"
+            )
         elif status != "approval_withheld":
             _report_skip(
                 history_record,
@@ -3347,7 +3361,7 @@ def _process_pull_request(
             store.set_status(
                 state_key,
                 "delivered",
-                receipt_id="existing-github-review",
+                receipt_id=EXISTING_REVIEW_RECEIPT,
             )
         return
 

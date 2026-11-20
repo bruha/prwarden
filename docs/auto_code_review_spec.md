@@ -65,8 +65,12 @@ review-engine adapter, and route confirmed correctness or security findings:
   request's author and not a bot, and never from a comment carrying this tool's
   marker; a permission or a list that cannot be read is no sign-off. Once one exists
   the head is reviewed again, and a review that would approve now approves; findings
-  are delivered as always. A replay applies the same gate against its pinned base,
-  so a control case reports what a live run would deliver.
+  are delivered as always. A sign-off written from the reviewer's own account, as a
+  reply in a thread, is not that account's review of the head, though GitHub files
+  the reply as an empty "commented" review (`github.has_current_review`); a head an
+  earlier run recorded as reviewed on such a reply alone is reviewed again. A replay
+  applies the same gate against its pinned base, so a control case reports what a
+  live run would deliver.
 - A review that found nothing and was withheld only over a failed check, or only
   because the change is to review policy, tells its author what it waits for, once
   per head: one pull-request conversation comment, `## Waiting for checks` naming
@@ -408,7 +412,9 @@ A pull-request head is skipped when either condition is true:
 
 1. The configured GitHub reviewer already submitted a review for the current
    head commit, unless it is a delivered comment review whose inline findings
-   have all been resolved.
+   have all been resolved. A reply in an existing thread is not such a review,
+   though GitHub files it as a "commented" review with no body: one whose inline
+   comments are all replies does not count.
 2. JSON state contains a terminal record for the code level's tuple
    `(repository, PR number, head SHA, destination)`. The advisory design level is
    keyed by pull request instead, as described under its own heading below. An
