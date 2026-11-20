@@ -9,8 +9,23 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.6.0 61f73aab9d27f8f11dc24785eaaee979d8617085 -->
+<!-- release-baseline: 3.7.0 a7aae0afb1e47b797ac150c68a6f20181c47da2e -->
 ## [Unreleased]
+
+## [3.7.0] - 2026-11-20
+
+### Added
+
+- **checks:** approve over failed optional checks with a reminder (`d91d1a1`).
+
+### Fixed
+
+- **checks:** read failed checks before every waiting note (`b07bc65`).
+- **checks:** try a reminder that failed to post again (`c39842b`).
+
+### Documentation
+
+- **architecture:** say the checks level also reads for a reminder (`a7aae0a`).
 
 ## [3.6.0] - 2026-11-20
 
