@@ -14,6 +14,7 @@ from typing import Optional
 from unittest.mock import Mock, patch
 
 import prwarden.cli as cli
+import prwarden.history as history
 import prwarden.progress as progress_module
 from prwarden.commands import CommandError
 from prwarden.config import ConfigError, Settings
@@ -1419,6 +1420,89 @@ class OrchestrationTests(unittest.TestCase):
                 has_current_review.assert_not_called()
 
             engine.review.assert_called_once()
+
+    def test_a_head_recorded_over_a_review_no_longer_there_is_reviewed(
+        self,
+    ) -> None:
+        """A reply in a thread once passed for this account's review of the head, and
+        the head was recorded as reviewed and never approved."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            pull_request = PullRequest(1, "Title", "", "author", "head", "url")
+            settings = self.settings(directory, repository)
+            engine = Mock()
+            engine.review.return_value = {
+                "verdict": "approve",
+                "approval_reason": "No qualifying defects remain.",
+                "findings": [],
+            }
+            with JsonStateStore(settings.state_file) as store:
+                key = store.key(repository.slug, 1, "head", "github")
+                store.set_status(
+                    key, "delivered", receipt_id=history.EXISTING_REVIEW_RECEIPT
+                )
+                with patch(
+                    "prwarden.cli.has_current_review", return_value=False
+                ), patch(
+                    "prwarden.cli.list_prior_review_comments",
+                    side_effect=[(), ()],
+                ), patch(
+                    "prwarden.cli.list_changed_files",
+                    return_value=[
+                        {
+                            "filename": "app.py",
+                            "patch": "@@ -0,0 +1 @@\n+value = 1",
+                        }
+                    ],
+                ), patch(
+                    "prwarden.cli.get_pull_request_snapshot",
+                    side_effect=[READY_SNAPSHOT, READY_SNAPSHOT],
+                ), patch(
+                    "prwarden.cli.review_workspace"
+                ) as workspace, patch(
+                    "prwarden.cli.submit_approval", return_value="approval-12"
+                ):
+                    workspace.return_value.__enter__.return_value = repository
+                    cli._process_pull_request(
+                        settings,
+                        repository,
+                        pull_request,
+                        store,
+                        engine,
+                        live=True,
+                        force=False,
+                    )
+
+                self.assertEqual(store.get(key)["receipt_id"], "approval-12")
+                engine.review.assert_called_once()
+
+    def test_a_head_this_account_did_review_stays_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            pull_request = PullRequest(1, "Title", "", "author", "head", "url")
+            settings = self.settings(directory, repository)
+            engine = Mock()
+            with JsonStateStore(settings.state_file) as store:
+                key = store.key(repository.slug, 1, "head", "github")
+                store.set_status(
+                    key, "delivered", receipt_id=history.EXISTING_REVIEW_RECEIPT
+                )
+                with patch("prwarden.cli.has_current_review", return_value=True):
+                    cli._process_pull_request(
+                        settings,
+                        repository,
+                        pull_request,
+                        store,
+                        engine,
+                        live=True,
+                        force=False,
+                    )
+
+                self.assertEqual(
+                    store.get(key)["receipt_id"], history.EXISTING_REVIEW_RECEIPT
+                )
+                engine.review.assert_not_called()
 
     def test_a_failed_head_is_reviewed_again_on_the_next_run(self) -> None:
         """`failed` is the status a later run is meant to reconsider.
