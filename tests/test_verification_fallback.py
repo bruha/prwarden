@@ -137,6 +137,83 @@ class FallbackVerifierTests(unittest.TestCase):
                 ):
                     self.call(verification)
 
+    def test_a_chain_of_verifiers_is_tried_in_order(self) -> None:
+        """A stage may name several engines; each takes over from the one before."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = settings(directory)
+            last = replace(
+                cli.verify_fallback_engine_settings(base),
+                review_engine="codex",
+                review_model="gpt-6.1-terra",
+            )
+            primary, middle, third = Mock(), Mock(), Mock()
+            primary.review.side_effect = EngineError("Kiro is down")
+            middle.review.side_effect = EngineError("usage limit reached")
+            third.review.return_value = {"judgments": ["kept"]}
+            # Built from the last verifier back, each falling back to the next.
+            with patch(
+                "prwarden.cli.create_review_engine", side_effect=[third, middle]
+            ):
+                chain = cli._verification_passes(
+                    (
+                        cli.verification_engine_settings(base),
+                        cli.verify_fallback_engine_settings(base),
+                        last,
+                    ),
+                    primary,
+                )
+            verification = cli._with_verification_fallback(chain)
+
+            with patch("sys.stdout", new_callable=StringIO) as output:
+                result = self.call(verification)
+                self.call(verification)
+
+        self.assertEqual(result, {"judgments": ["kept"]})
+        primary.review.assert_called_once()
+        middle.review.assert_called_once()
+        self.assertEqual(third.review.call_count, 2)
+        self.assertEqual(
+            cli._verification_identity(verification, base),
+            ("codex", "gpt-6.1-terra"),
+        )
+        reported = output.getvalue()
+        self.assertIn(
+            "claude (claude-sonnet-5-5) verification fallback failed", reported
+        )
+        self.assertIn("Verifying with fallback codex (gpt-6.1-terra)", reported)
+
+    def test_every_failure_of_a_chain_is_named(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = settings(directory)
+            last = replace(
+                cli.verify_fallback_engine_settings(base),
+                review_engine="codex",
+                review_model="gpt-6.1-terra",
+            )
+            engines = [Mock(), Mock(), Mock()]
+            for engine, reason in zip(engines, ("down", "limit", "timeout")):
+                engine.review.side_effect = EngineError(reason)
+            chain = cli.VerificationPass(
+                engines[0],
+                cli.verification_engine_settings(base),
+                cli.VerificationPass(
+                    engines[1],
+                    cli.verify_fallback_engine_settings(base),
+                    cli.VerificationPass(engines[2], last),
+                ),
+            )
+            verification = cli._with_verification_fallback(chain)
+
+            with patch("sys.stdout", new_callable=StringIO):
+                with self.assertRaisesRegex(
+                    EngineError,
+                    r"kiro \(gpt-5.6-terra\) verification failed: down; "
+                    r"claude \(claude-sonnet-5-5\) fallback also failed: limit; "
+                    r"codex \(gpt-6.1-terra\) fallback also failed: timeout",
+                ):
+                    self.call(verification)
+
     def test_without_a_fallback_the_pass_is_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = settings(directory, verify_fallback_engine=None)

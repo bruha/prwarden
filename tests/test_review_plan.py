@@ -255,6 +255,43 @@ class ReviewStagesTests(unittest.TestCase):
         self.assertIs(design.fallback, code.fallback)
         self.assertEqual(code.fallback.engine._role, "fallback")
 
+    def test_a_type_falls_back_through_the_chains_it_names(self) -> None:
+        """A type may name more than one fallback and more than one verifier, and
+        every engine of the chain is made and measured once."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = settings(directory)
+            second = replace(base, review_engine="codex", review_model="gpt-6.1")
+            third = replace(base, review_engine="claude", review_model="sonnet")
+            code = ReviewType(
+                CODE_LEVEL, base, fallbacks=(second, third), verifiers=(third, second)
+            )
+            with patch(
+                "prwarden.cli.create_review_engine",
+                side_effect=lambda made: Mock(name=made.review_engine),
+            ):
+                stages = cli._create_review_stages(ReviewPlan((code,)))
+            measured = cli._measured_stages(
+                stages, lambda engine, role: Mock(name=role, wrapped=engine)
+            )
+
+        stage = stages[CODE_LEVEL]
+        self.assertEqual(
+            [reviewer.settings for reviewer in stage.fallback.chain()], [second, third]
+        )
+        self.assertEqual(stage.verification.settings, third)
+        self.assertEqual(stage.verification.fallback.settings, second)
+        self.assertIsNone(stage.verification.fallback.fallback)
+        wrapped = measured[CODE_LEVEL]
+        self.assertEqual(
+            [reviewer.engine._mock_name for reviewer in wrapped.fallback.chain()],
+            ["fallback", "fallback"],
+        )
+        self.assertIsInstance(wrapped.verification.engine, cli._FallbackVerifier)
+        self.assertEqual(
+            wrapped.verification.engine.fallback.engine._mock_name, "verify fallback"
+        )
+
 
 class ReviewTypeRoutingTests(unittest.TestCase):
     def setUp(self) -> None:

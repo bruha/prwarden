@@ -23,7 +23,15 @@ from dataclasses import dataclass, replace
 from typing import Optional
 
 from .config import ConfigError, Settings
-from .engine import CHECKS_LEVEL, CODE_LEVEL, DESIGN_LEVEL, DOCS_LEVEL
+from .engine import (
+    CHECKS_LEVEL,
+    CODE_LEVEL,
+    DESIGN_LEVEL,
+    DOCS_LEVEL,
+    fallback_engine_settings,
+    verification_engine_settings,
+    verify_fallback_engine_settings,
+)
 
 # Every type there is, in the order a run does them unless told otherwise.
 REVIEW_TYPES = (DESIGN_LEVEL, DOCS_LEVEL, CODE_LEVEL, CHECKS_LEVEL)
@@ -31,12 +39,51 @@ REVIEW_TYPES = (DESIGN_LEVEL, DOCS_LEVEL, CODE_LEVEL, CHECKS_LEVEL)
 ORDERED_TYPES = (DESIGN_LEVEL, DOCS_LEVEL, CODE_LEVEL)
 
 
+def review_fallback_chain(settings: Settings) -> "tuple[Settings, ...]":
+    """Return the reviewers that take over, in order, when the review engine fails."""
+
+    fallback = fallback_engine_settings(settings)
+    return () if fallback is None else (fallback,)
+
+
+def verification_chain(settings: Settings) -> "tuple[Settings, ...]":
+    """Return the verifier, then each one that takes over when the one before fails.
+
+    Empty when the reviewer verifies its own candidates.
+    """
+
+    verifier = verification_engine_settings(settings)
+    if verifier is None:
+        return ()
+    standby = verify_fallback_engine_settings(settings)
+    return (verifier,) if standby is None else (verifier, standby)
+
+
 @dataclass(frozen=True)
 class ReviewType:
-    """One type of review, and the settings that name its engines."""
+    """One type of review, and the settings that name its engines.
+
+    ``settings`` names the reviewer. ``fallbacks`` are the reviewers that take over,
+    in order, when it fails at the engine level, and ``verifiers`` the verifier and
+    then each one that takes over from the one before; empty when the reviewer
+    verifies its own candidates.
+    """
 
     name: str
     settings: Settings
+    fallbacks: "tuple[Settings, ...]" = ()
+    verifiers: "tuple[Settings, ...]" = ()
+
+    @classmethod
+    def of(cls, name: str, settings: Settings) -> "ReviewType":
+        """Return a type with the fallbacks and verifiers its settings name."""
+
+        return cls(
+            name,
+            settings,
+            review_fallback_chain(settings),
+            verification_chain(settings),
+        )
 
 
 @dataclass(frozen=True)
@@ -87,11 +134,11 @@ def review_plan(settings: Settings) -> ReviewPlan:
     advisory = replace(settings, review_code_effort=None)
     types = []
     if settings.design_level:
-        types.append(ReviewType(DESIGN_LEVEL, advisory))
+        types.append(ReviewType.of(DESIGN_LEVEL, advisory))
     if settings.docs_level:
-        types.append(ReviewType(DOCS_LEVEL, advisory))
+        types.append(ReviewType.of(DOCS_LEVEL, advisory))
     types.append(
-        ReviewType(
+        ReviewType.of(
             CODE_LEVEL,
             replace(
                 settings,
@@ -101,7 +148,7 @@ def review_plan(settings: Settings) -> ReviewPlan:
         )
     )
     if settings.checks_level:
-        types.append(ReviewType(CHECKS_LEVEL, checks_settings(settings)))
+        types.append(ReviewType.of(CHECKS_LEVEL, checks_settings(settings)))
     return ReviewPlan(tuple(types))
 
 

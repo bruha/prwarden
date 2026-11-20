@@ -267,8 +267,14 @@ class OrchestrationTests(unittest.TestCase):
             review_model="gemini-3.1-pro-high",
             review_timeout_seconds=900,
         )
-        fallback = Mock()
-        fallback.settings = Mock(review_engine="kiro", review_model="claude-opus-5")
+        fallback = cli.FallbackReviewer(
+            engine=Mock(),
+            settings=Mock(
+                review_engine="kiro",
+                review_model="claude-opus-5",
+                review_timeout_seconds=900,
+            ),
+        )
         exhausted = EngineError(
             "RESOURCE_EXHAUSTED (code 429): Individual quota reached. "
             "Resets in 17h59m45s."
@@ -306,8 +312,14 @@ class OrchestrationTests(unittest.TestCase):
             review_model="gemini-3.1-pro-high",
             review_timeout_seconds=900,
         )
-        fallback = Mock()
-        fallback.settings = Mock(review_engine="kiro", review_model="claude-opus-5")
+        fallback = cli.FallbackReviewer(
+            engine=Mock(),
+            settings=Mock(
+                review_engine="kiro",
+                review_model="claude-opus-5",
+                review_timeout_seconds=900,
+            ),
+        )
         with patch("sys.stdout", new_callable=StringIO), patch(
             "prwarden.cli._review_with_validation_retry"
         ) as review:
@@ -320,6 +332,117 @@ class OrchestrationTests(unittest.TestCase):
             )
 
         self.assertEqual(cli._PRIMARY_ENGINE.exhausted_reason, "")
+
+    @staticmethod
+    def chained_reviewers() -> "cli.FallbackReviewer":
+        def reviewer(engine, model, then=None):
+            return cli.FallbackReviewer(
+                engine=Mock(),
+                settings=Mock(
+                    review_engine=engine,
+                    review_model=model,
+                    review_timeout_seconds=600,
+                ),
+                fallback=then,
+            )
+
+        return reviewer("claude", "claude-opus-5-5", reviewer("codex", "gpt-6.1-terra"))
+
+    PRIMARY = Mock(
+        review_engine="antigravity",
+        review_model="gemini-3.1-pro-high",
+        review_timeout_seconds=900,
+    )
+
+    def test_a_review_falls_back_through_every_engine_its_stage_names(self) -> None:
+        cli._PRIMARY_ENGINE.reset()
+        self.addCleanup(cli._PRIMARY_ENGINE.reset)
+        chain = self.chained_reviewers()
+        last = chain.fallback
+        with patch("sys.stdout", new_callable=StringIO) as output, patch(
+            "prwarden.cli._review_with_validation_retry"
+        ) as review:
+            review.side_effect = [
+                EngineError("Antigravity is down"),
+                EngineError("usage limit reached"),
+                ({}, [], True, "", ()),
+            ]
+            result = cli._review_with_engine_fallback(
+                self.PRIMARY, Mock(), chain, Mock(), Mock(), Mock()
+            )
+
+        self.assertEqual(review.call_count, 3)
+        self.assertIs(result[5], last.settings)
+        self.assertIs(result[6], last.engine)
+        self.assertIn(
+            "claude (claude-opus-5-5) fallback review engine failed: usage limit",
+            output.getvalue(),
+        )
+        self.assertIn(
+            "Running fallback review with codex (gpt-6.1-terra)", output.getvalue()
+        )
+
+    def test_every_failure_of_a_review_chain_is_named(self) -> None:
+        cli._PRIMARY_ENGINE.reset()
+        self.addCleanup(cli._PRIMARY_ENGINE.reset)
+        with patch("sys.stdout", new_callable=StringIO), patch(
+            "prwarden.cli._review_with_validation_retry",
+            side_effect=[
+                EngineError("down"),
+                EngineError("limit"),
+                EngineError("timeout"),
+            ],
+        ):
+            with self.assertRaisesRegex(
+                EngineError,
+                r"antigravity \(gemini-3.1-pro-high\) review failed: down; "
+                r"claude \(claude-opus-5-5\) fallback also failed: limit; "
+                r"codex \(gpt-6.1-terra\) fallback also failed: timeout",
+            ):
+                cli._review_with_engine_fallback(
+                    self.PRIMARY,
+                    Mock(),
+                    self.chained_reviewers(),
+                    Mock(),
+                    Mock(),
+                    Mock(),
+                )
+
+    def test_an_advisory_level_falls_back_through_its_chain(self) -> None:
+        cli._PRIMARY_ENGINE.reset()
+        self.addCleanup(cli._PRIMARY_ENGINE.reset)
+        chain = self.chained_reviewers()
+        primary = Mock()
+        primary.review.side_effect = EngineError("down")
+        chain.engine.review.side_effect = EngineError("limit")
+        chain.fallback.engine.review.return_value = {"verdict": "sound"}
+        with patch("sys.stdout", new_callable=StringIO) as output:
+            reviewer = cli._AdvisoryReviewer(
+                "design review", self.PRIMARY, primary, chain
+            )
+            answer = reviewer.review(Mock(), Mock(), Mock())
+
+        self.assertEqual(answer, {"verdict": "sound"})
+        self.assertIs(reviewer.settings, chain.fallback.settings)
+        self.assertIn(
+            "claude (claude-opus-5-5) fallback design review engine failed: limit",
+            output.getvalue(),
+        )
+
+        chain = self.chained_reviewers()
+        chain.engine.review.side_effect = EngineError("limit")
+        chain.fallback.engine.review.side_effect = EngineError("timeout")
+        with patch("sys.stdout", new_callable=StringIO):
+            reviewer = cli._AdvisoryReviewer(
+                "design review", self.PRIMARY, primary, chain
+            )
+            with self.assertRaisesRegex(
+                EngineError,
+                r"antigravity \(gemini-3.1-pro-high\) design review failed: down; "
+                r"claude \(claude-opus-5-5\) fallback also failed: limit; "
+                r"codex \(gpt-6.1-terra\) fallback also failed: timeout",
+            ):
+                reviewer.review(Mock(), Mock(), Mock())
 
     def test_an_advisory_level_records_the_quota_it_met_first(self) -> None:
         """The advisory levels run before the code review and share its engine, so on
@@ -796,8 +919,8 @@ class OrchestrationTests(unittest.TestCase):
         with patch("prwarden.cli.load_settings", return_value=settings), patch(
             "prwarden.cli.create_review_engine"
         ), patch("prwarden.cli.create_verification_engine"), patch(
-            "prwarden.cli.create_fallback_engine"
-        ), patch("prwarden.cli.list_open_prs", return_value=[]), patch(
+            "prwarden.cli.list_open_prs", return_value=[]
+        ), patch(
             "sys.stdout", new_callable=StringIO
         ) as output:
             self.assertEqual(cli.run(args), 0)

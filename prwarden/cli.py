@@ -52,7 +52,6 @@ from .engine import (
     CODE_LEVEL,
     DESIGN_LEVEL,
     DOCS_LEVEL,
-    create_fallback_engine,
     fallback_engine_settings,
     EngineError,
     ReviewEngine,
@@ -169,7 +168,12 @@ from .review import (
     validate_findings,
     without_generated_files,
 )
-from .review_plan import ReviewPlan, review_plan
+from .review_plan import (
+    ReviewPlan,
+    review_fallback_chain,
+    review_plan,
+    verification_chain,
+)
 from .reviewer_identity import (
     describe_confirmation,
     describe_severity_change,
@@ -951,21 +955,44 @@ def _engine_label(settings: Settings) -> str:
 
 @dataclass(frozen=True)
 class FallbackReviewer:
-    """The engine and settings that retry a review after an engine failure."""
+    """The engine and settings that retry a review after an engine failure.
+
+    ``fallback`` is the reviewer that takes over when this one fails too, so a stage
+    may name several engines in the order they are tried.
+    """
 
     engine: ReviewEngine
     settings: Settings
+    fallback: Optional["FallbackReviewer"] = None
+
+    def chain(self) -> "tuple[FallbackReviewer, ...]":
+        """Return this reviewer and every one after it, in the order tried."""
+
+        reviewers: "list[FallbackReviewer]" = []
+        current: Optional[FallbackReviewer] = self
+        while current is not None:
+            reviewers.append(current)
+            current = current.fallback
+        return tuple(reviewers)
+
+
+def _fallback_reviewers(
+    chain: "Sequence[Settings]",
+) -> Optional[FallbackReviewer]:
+    """Return the reviewers ``chain`` names, each falling back to the next."""
+
+    reviewer: Optional[FallbackReviewer] = None
+    for settings in reversed(chain):
+        reviewer = FallbackReviewer(
+            engine=create_review_engine(settings), settings=settings, fallback=reviewer
+        )
+    return reviewer
 
 
 def _create_fallback_reviewer(settings: Settings) -> Optional[FallbackReviewer]:
     """Return the configured fallback reviewer, or None when there is none."""
 
-    fallback_settings = fallback_engine_settings(settings)
-    if fallback_settings is None:
-        return None
-    engine = create_fallback_engine(settings)
-    assert engine is not None
-    return FallbackReviewer(engine=engine, settings=fallback_settings)
+    return _fallback_reviewers(review_fallback_chain(settings))
 
 
 @dataclass(frozen=True)
@@ -973,12 +1000,34 @@ class VerificationPass:
     """The engine and settings that run the independent verification pass.
 
     ``fallback`` is the verifier that takes over when this one fails at the engine
-    level, or None when there is none.
+    level, or None when there is none; it may have a fallback of its own.
     """
 
     engine: ReviewEngine
     settings: Settings
     fallback: Optional["VerificationPass"] = None
+
+
+def _verification_passes(
+    chain: "Sequence[Settings]", first: Optional[ReviewEngine] = None
+) -> Optional[VerificationPass]:
+    """Return the verifiers ``chain`` names, each falling back to the next.
+
+    ``first`` is the first verifier's engine when it is already made.
+    """
+
+    verification: Optional[VerificationPass] = None
+    for index in range(len(chain) - 1, -1, -1):
+        verification = VerificationPass(
+            engine=(
+                first
+                if index == 0 and first is not None
+                else create_review_engine(chain[index])
+            ),
+            settings=chain[index],
+            fallback=verification,
+        )
+    return verification
 
 
 def _create_verification_pass(
@@ -987,26 +1036,14 @@ def _create_verification_pass(
 ) -> Optional[VerificationPass]:
     """Return a separate verification pass when one is configured."""
 
-    verification_settings = verification_engine_settings(settings)
-    if verification_settings is None:
+    chain = verification_chain(settings)
+    if not chain:
         return None
-    fallback_settings = verify_fallback_engine_settings(settings)
-    return VerificationPass(
-        engine=create_verification_engine(settings, engine),
-        settings=verification_settings,
-        fallback=(
-            VerificationPass(
-                engine=create_review_engine(fallback_settings),
-                settings=fallback_settings,
-            )
-            if fallback_settings is not None
-            else None
-        ),
-    )
+    return _verification_passes(chain, create_verification_engine(settings, engine))
 
 
 class _FallbackVerifier:
-    """The verification engine of one pull request, handed to its fallback once.
+    """The verification engine of one pull request, handed down its fallbacks.
 
     Kiro served both review and verification, so while it was down the review
     fallback still reviewed and nothing it found could be verified or delivered; a
@@ -1024,6 +1061,9 @@ class _FallbackVerifier:
         self.served_settings = verification.settings
         self.engine = verification.engine
         self.fallback: Optional[VerificationPass] = verification.fallback
+        # Every failure so far, said in the order they happened, so the last one
+        # can name them all.
+        self.failures: "list[str]" = []
 
     @property
     def handed_over(self) -> bool:
@@ -1039,22 +1079,27 @@ class _FallbackVerifier:
         try:
             return self.engine.review(repository, pull_request, material, **kwargs)
         except EngineError as error:
+            label = _engine_label(self.served_settings)
+            failure = (
+                f"{label} fallback also failed: {error}"
+                if self.failures
+                else f"{label} verification failed: {error}"
+            )
             if self.fallback is None:
-                if self.primary_error is not None:
-                    raise EngineError(
-                        f"{self.primary_label} verification failed: "
-                        f"{self.primary_error}; {_engine_label(self.served_settings)} "
-                        f"fallback also failed: {error}"
-                    ) from error
+                if self.failures:
+                    raise EngineError("; ".join((*self.failures, failure))) from error
                 raise
             print(
-                f"      -> {self.primary_label} verification engine failed: {error}",
+                f"      -> {label} verification "
+                f"{'fallback' if self.failures else 'engine'} failed: {error}",
                 flush=True,
             )
-            self.primary_error = error
+            if self.primary_error is None:
+                self.primary_error = error
+            self.failures.append(failure)
             self.served_settings = self.fallback.settings
             self.engine = self.fallback.engine
-            self.fallback = None
+            self.fallback = self.fallback.fallback
             print(
                 f"      -> Verifying with fallback "
                 f"{_engine_label(self.served_settings)}...",
@@ -1123,16 +1168,13 @@ def _create_review_stages(plan: ReviewPlan) -> "dict[str, ReviewStages]":
         )
         verification = _shared(
             verifications,
-            (
-                verification_engine_settings(type_settings),
-                verify_fallback_engine_settings(type_settings),
-            ),
-            lambda: _create_verification_pass(type_settings, engine),
+            review_type.verifiers,
+            lambda: _verification_passes(review_type.verifiers),
         )
         fallback = _shared(
             fallbacks,
-            fallback_engine_settings(type_settings),
-            lambda: _create_fallback_reviewer(type_settings),
+            review_type.fallbacks,
+            lambda: _fallback_reviewers(review_type.fallbacks),
         )
         stages[review_type.name] = ReviewStages(
             settings=type_settings,
@@ -1184,19 +1226,22 @@ def _measured_stages(
 
     def verification_of(verification: VerificationPass) -> VerificationPass:
         if id(verification) not in verifications:
+
+            def standby(
+                fallback: Optional[VerificationPass],
+            ) -> Optional[VerificationPass]:
+                if fallback is None:
+                    return None
+                return replace(
+                    fallback,
+                    engine=measured(fallback.engine, "verify fallback"),
+                    fallback=standby(fallback.fallback),
+                )
+
             wrapped = replace(
                 verification,
                 engine=measured(verification.engine, "verify"),
-                fallback=(
-                    replace(
-                        verification.fallback,
-                        engine=measured(
-                            verification.fallback.engine, "verify fallback"
-                        ),
-                    )
-                    if verification.fallback is not None
-                    else None
-                ),
+                fallback=standby(verification.fallback),
             )
             # Wrapped per pull request, so a hand-over holds for this pull request's
             # verification and never decides another's.
@@ -1206,7 +1251,13 @@ def _measured_stages(
     def fallback_of(fallback: FallbackReviewer) -> FallbackReviewer:
         if id(fallback) not in fallbacks:
             fallbacks[id(fallback)] = replace(
-                fallback, engine=measured(fallback.engine, "fallback")
+                fallback,
+                engine=measured(fallback.engine, "fallback"),
+                fallback=(
+                    fallback_of(fallback.fallback)
+                    if fallback.fallback is not None
+                    else None
+                ),
             )
         return fallbacks[id(fallback)]
 
@@ -2976,33 +3027,49 @@ def _review_with_fallback_engine(
     material: ReviewMaterial,
     error: Optional[EngineError],
 ) -> "tuple[Any, list[Finding], bool, str, tuple[str, ...], Settings, ReviewEngine]":
-    """Review with the fallback engine, naming both failures if it fails too."""
+    """Review with each fallback engine in turn, naming every failure if all fail."""
 
-    print(
-        f"      -> Running fallback review with "
-        f"{_engine_label(fallback.settings)} "
-        f"(timeout: {_format_duration(settings.review_timeout_seconds)})...",
-        flush=True,
+    failures = (
+        [f"{_engine_label(settings)} review failed: {error}"]
+        if error is not None
+        else []
     )
-    try:
-        result = _review_with_validation_retry(
-            fallback.settings,
-            fallback.engine,
-            repository,
-            pull_request,
-            material,
-            material,
-            phase="review",
+    reviewers = fallback.chain()
+    for index, reviewer in enumerate(reviewers):
+        print(
+            f"      -> Running fallback review with "
+            f"{_engine_label(reviewer.settings)} "
+            f"(timeout: {_format_duration(reviewer.settings.review_timeout_seconds)})"
+            "...",
+            flush=True,
         )
-    except EngineError as fallback_error:
-        if error is None:
-            raise
-        raise EngineError(
-            f"{_engine_label(settings)} review failed: {error}; "
-            f"{_engine_label(fallback.settings)} fallback also failed: "
-            f"{fallback_error}"
-        ) from fallback_error
-    return (*result, fallback.settings, fallback.engine)
+        try:
+            result = _review_with_validation_retry(
+                reviewer.settings,
+                reviewer.engine,
+                repository,
+                pull_request,
+                material,
+                material,
+                phase="review",
+            )
+        except EngineError as fallback_error:
+            failure = (
+                f"{_engine_label(reviewer.settings)} fallback also failed: "
+                f"{fallback_error}"
+            )
+            if index + 1 < len(reviewers):
+                print(
+                    f"      -> {_engine_label(reviewer.settings)} fallback review "
+                    f"engine failed: {fallback_error}"
+                )
+                failures.append(failure)
+                continue
+            if not failures:
+                raise
+            raise EngineError("; ".join((*failures, failure))) from fallback_error
+        return (*result, reviewer.settings, reviewer.engine)
+    raise AssertionError("a fallback chain is never empty")
 
 
 def _process_pull_request(
@@ -5092,7 +5159,7 @@ def _review_tasks_in_sequence(
 
 
 class _AdvisoryReviewer:
-    """The engine an advisory level reviews with, handed to the fallback once.
+    """The engine an advisory level reviews with, handed down its fallbacks.
 
     The code level always had a fallback and the advisory levels had none, so a
     primary that could not answer cost them every review: from 2026-10-13 a model
@@ -5115,6 +5182,8 @@ class _AdvisoryReviewer:
         self.noun = noun
         self.primary_label = _engine_label(settings)
         self.primary_error: Optional[EngineError] = None
+        # Every engine failure so far, in order, so the last can name them all.
+        self.failures: "list[str]" = []
         self.settings = settings
         self.engine = engine
         self.fallback = fallback
@@ -5140,7 +5209,7 @@ class _AdvisoryReviewer:
         assert self.fallback is not None
         self.settings = self.fallback.settings
         self.engine = self.fallback.engine
-        self.fallback = None
+        self.fallback = self.fallback.fallback
         self.on_primary = False
 
     def review(
@@ -5158,11 +5227,22 @@ class _AdvisoryReviewer:
             elapsed = _format_duration(time.monotonic() - started)
             print(f"      -> {heading} failed after {elapsed}", flush=True)
             if not self.on_primary:
-                if self.primary_error is not None and isinstance(error, EngineError):
+                if not isinstance(error, EngineError):
+                    raise
+                failure = (
+                    f"{_engine_label(self.settings)} fallback also failed: {error}"
+                )
+                if self.fallback is not None:
+                    print(
+                        f"      -> {_engine_label(self.settings)} fallback "
+                        f"{self.noun} engine failed: {error}",
+                        flush=True,
+                    )
+                    self.failures.append(failure)
+                    return self._review_on_next(repository, pull_request, material)
+                if self.failures:
                     raise EngineError(
-                        f"{self.primary_label} {self.noun} failed: "
-                        f"{self.primary_error}; {_engine_label(self.settings)} "
-                        f"fallback also failed: {error}"
+                        "; ".join((*self.failures, failure))
                     ) from error
                 raise
             _note_exhausted_quota(error)
@@ -5173,20 +5253,31 @@ class _AdvisoryReviewer:
                 flush=True,
             )
             self.primary_error = error
-            self._hand_over()
-            print(
-                f"      -> Running fallback {self.noun} with "
-                f"{_engine_label(self.settings)} (timeout: "
-                f"{_format_duration(self.settings.review_timeout_seconds)})...",
-                flush=True,
+            self.failures.append(
+                f"{self.primary_label} {self.noun} failed: {error}"
             )
-            return self.review(repository, pull_request, material)
+            return self._review_on_next(repository, pull_request, material)
         print(
             f"      -> {heading} completed in "
             f"{_format_duration(time.monotonic() - started)}",
             flush=True,
         )
         return output
+
+    def _review_on_next(
+        self,
+        repository: Repository,
+        pull_request: PullRequest,
+        material: ReviewMaterial,
+    ) -> Any:
+        self._hand_over()
+        print(
+            f"      -> Running fallback {self.noun} with "
+            f"{_engine_label(self.settings)} (timeout: "
+            f"{_format_duration(self.settings.review_timeout_seconds)})...",
+            flush=True,
+        )
+        return self.review(repository, pull_request, material)
 
 
 def _design_level(
