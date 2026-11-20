@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import re
@@ -54,6 +55,7 @@ from prwarden.engine_codex import (
 )
 from prwarden.engine_command import CommandEngine
 from prwarden.engine_kiro import (
+    KIRO_ANSWER_REQUEST,
     KIRO_WORKSPACE_FILES,
     KiroEngine,
     parse_kiro_output,
@@ -95,12 +97,21 @@ def as_streams(runner):
     return run
 
 
-def kiro_stream(*messages, credits=None, status="success"):
+def kiro_stream(
+    *messages,
+    credits=None,
+    status="success",
+    answered=True,
+    session="sess_0123-abcd",
+    stop_reason="end_turn",
+):
     """Return what `kiro-cli chat --output-format stream-json` prints, as two streams.
 
     Each message but the last ends in a tool call, as a review's narration does, and
     the last is the answer, streamed in two chunks. `credits` adds the session's
-    usage report, and `status` is how the run ended.
+    usage report, and `status` is how the run ended. With `answered` false every
+    message ends in a tool call, as a turn the model ended without its answer does.
+    `session` and `stop_reason` are what Kiro reports on finishing.
     """
 
     def update(payload):
@@ -118,7 +129,7 @@ def kiro_stream(*messages, credits=None, status="success"):
                     }
                 )
             )
-        if index < len(messages) - 1:
+        if index < len(messages) - 1 or not answered:
             call = {"toolCallId": f"tool-{index}", "kind": "read"}
             events.append(update({"sessionUpdate": "tool_call", **call}))
             events.append(
@@ -136,16 +147,15 @@ def kiro_stream(*messages, credits=None, status="success"):
                 }
             )
         )
-    events.append(
-        {
-            "type": "runFinished",
-            "data": {
-                "status": status,
-                "finalText": messages[-1] if messages else "",
-                "finalTextTruncated": False,
-            },
-        }
-    )
+    finished = {
+        "status": status,
+        "stopReason": stop_reason,
+        "finalText": messages[-1] if messages and answered else "",
+        "finalTextTruncated": False,
+    }
+    if session is not None:
+        finished["sessionId"] = session
+    events.append({"type": "runFinished", "data": finished})
     return "\n".join(json.dumps(event) for event in events), "[INFO] Kiro log line"
 
 
@@ -3946,6 +3956,137 @@ class EffortTests(unittest.TestCase):
             for call in run.call_args_list:
                 args = call.args[0]
                 self.assertEqual(args[args.index("--effort") + 1], "high")
+
+
+class KiroUnansweredTurnTests(unittest.TestCase):
+    """Claude Sonnet 5.5 on Kiro sometimes ends its turn after reasoning without
+    writing the answer. The session still holds what it read, so it is asked once for
+    the answer rather than the review being handed to another provider."""
+
+    APPROVAL = '{"verdict":"approve","findings":[]}'
+
+    def review(self, outputs, *, now=None):
+        """Review once with Kiro answering ``outputs`` in turn; return the calls."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            settings = replace(
+                ReviewEngineTests.settings(
+                    self, directory, repository, engine="kiro", command=("kiro-cli",)
+                ),
+                review_model="claude-sonnet-5.5",
+                review_effort="high",
+            )
+            take_invocation_credits()
+            clock = (
+                patch("prwarden.engine_kiro.time.monotonic", side_effect=now)
+                if now is not None
+                else patch("prwarden.engine_kiro.time.monotonic", return_value=0.0)
+            )
+            with patch(
+                "prwarden.engine_kiro.run_cmd_streams", side_effect=outputs
+            ) as run, clock, patch("sys.stderr", new_callable=io.StringIO) as said:
+                try:
+                    result = KiroEngine(settings).review(
+                        *ReviewEngineTests.input(repository)
+                    )
+                except EngineError as error:
+                    result = error
+            return result, run.call_args_list, take_invocation_credits(), said
+
+    def test_an_unanswered_turn_is_asked_for_its_answer_in_the_same_session(self):
+        result, calls, credits, said = self.review(
+            [
+                kiro_stream("Reading the change.", answered=False, credits=1.0),
+                kiro_stream(self.APPROVAL, credits=1.1),
+            ]
+        )
+
+        self.assertEqual(result, {"verdict": "approve", "findings": []})
+        self.assertEqual(len(calls), 2)
+        first, second = (call.args[0] for call in calls)
+        self.assertEqual(
+            second[-3:], ["--resume-id", "sess_0123-abcd", KIRO_ANSWER_REQUEST]
+        )
+        # The same agent, tools, model, and effort as the turn it continues.
+        self.assertEqual(second[:-3], first[:-1])
+        self.assertIn("--effort", second)
+        self.assertEqual(calls[1].kwargs["cwd"], calls[0].kwargs["cwd"])
+        # Kiro's usage report covers the session, both turns together.
+        self.assertEqual(credits, 1.1)
+        self.assertIn("without an answer; asking the same session", said.getvalue())
+
+    def test_a_second_unanswered_turn_is_an_engine_failure(self):
+        """Asked once, never again: the fallback takes it from there."""
+
+        result, calls, credits, _ = self.review(
+            [
+                kiro_stream("Reading.", answered=False, credits=1.0),
+                kiro_stream("Still reading.", answered=False, credits=1.2),
+            ]
+        )
+
+        self.assertIsInstance(result, EngineError)
+        self.assertIn("without an answer", str(result))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(credits, 1.2)
+
+    def test_only_an_ended_turn_in_a_named_session_is_resumed(self):
+        for label, stream in (
+            ("no session", kiro_stream("Reading.", answered=False, session=None)),
+            (
+                "an option for a session",
+                kiro_stream("Reading.", answered=False, session="--model"),
+            ),
+            (
+                "out of tokens",
+                kiro_stream("Reading.", answered=False, stop_reason="max_tokens"),
+            ),
+            (
+                "unfinished",
+                kiro_stream("Reading.", answered=False, status="error"),
+            ),
+        ):
+            with self.subTest(label):
+                result, calls, _, _ = self.review([stream])
+
+                self.assertIsInstance(result, EngineError)
+                self.assertEqual(len(calls), 1)
+
+    def test_too_little_time_left_is_not_spent_asking(self):
+        result, calls, _, _ = self.review(
+            [kiro_stream("Reading.", answered=False, credits=1.0)],
+            now=[0.0, 290.0],
+        )
+
+        self.assertIsInstance(result, EngineError)
+        self.assertEqual(len(calls), 1)
+
+    def test_a_failed_request_names_why_and_keeps_its_cost(self):
+        stream, _ = kiro_stream(credits=1.4, status="error")
+        refusal = CommandError(
+            "kiro-cli exited with 1",
+            command="kiro-cli",
+            output=stream,
+            returncode=1,
+            error_output="",
+        )
+        result, calls, credits, _ = self.review(
+            [kiro_stream("Reading.", answered=False, credits=1.0), refusal]
+        )
+
+        self.assertIsInstance(result, EngineError)
+        self.assertIn("asking the same session for it failed", str(result))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(credits, 1.4)
+
+    def test_a_request_that_times_out_still_charges_the_first_turn(self):
+        timeout = CommandError("kiro-cli timed out", command="kiro-cli", output="")
+        _, _, credits, _ = self.review(
+            [kiro_stream("Reading.", answered=False, credits=1.0), timeout]
+        )
+
+        self.assertEqual(credits, 1.0)
 
 
 class UntrustedTagContainmentTests(unittest.TestCase):

@@ -214,9 +214,20 @@ the text after its last tool call, so narration before a tool call is never take
 for it. The cost is the session's usage report. And the run must have finished
 successfully: anything else is an engine failure, never an empty review, explained
 by the error the stream reports, since standard error then holds only Kiro's log
-lines. A resumed session (`--resume-id`) reloads every installed skill file into
-context, which made a one-line follow-up cost more than a full review, so a
-correction retry starts a new session rather than continuing the rejected one.
+lines.
+
+Claude Sonnet 5.5 on Kiro sometimes ends its turn after its reasoning without
+writing any answer: the run finishes successfully, with no text after the last tool
+call. Such a turn is resumed once in the same session (`--resume-id`), with a request
+for the answer alone, because the session already holds everything the model read.
+Resuming one real case under the controller's agent on Kiro CLI 3.5 took 10 seconds
+and 0.6 credits, where its first turn had taken 2.6, and handing it to the fallback
+had taken three and a half minutes on another provider. Only a resumed turn that
+still gives no answer is an engine failure, which hands the review over. The usage
+report covers the whole session, so the resumed call's report is the cost of both
+turns. A correction retry still starts a new session: when it was measured, under
+Kiro's default agent, resuming reloaded every installed skill file into context and a
+one-line follow-up cost more than a full review.
 
 ## Antigravity
 

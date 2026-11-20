@@ -2,10 +2,12 @@ import json
 import math
 import re
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from . import progress
 from .commands import CommandError, run_cmd_streams
 from .config import Settings
 from .engine import (
@@ -34,6 +36,25 @@ DEFAULT_RESPONSE_KEYS = frozenset({"verdict", "findings"})
 KIRO_STREAM_ARGS = ("--output-format", "stream-json")
 # A failure message is read in notifications and the run log, so a long one is cut.
 MAX_FAILURE_DETAIL_CHARACTERS = 500
+# Claude Sonnet 5.5 on Kiro sometimes ends its turn after its reasoning without
+# writing the answer: Kiro reports the run finished and successful, with no text after
+# the last tool call and an empty `finalText`. Five of 242 review calls on that model
+# did so in two days, every one an advisory review, and each handed the review to the
+# fallback provider, which then read the whole change again. The session still holds
+# everything the model read, so the adapter resumes it once and asks for the answer:
+# resuming one real case took 10 seconds and 0.6 credits, where its first turn had
+# taken 2.6.
+KIRO_ANSWER_REQUEST = (
+    "Your turn ended before you gave your answer. Using what you have already read, "
+    "reply now with only the JSON object the task asks for, matching the schema it "
+    "gave."
+)
+# How Kiro names a session. Checked before it reaches the command line, where anything
+# else could read as an option.
+KIRO_SESSION_ID = re.compile(r"sess_[0-9A-Za-z-]{1,64}")
+# A resumed turn writes the answer and reads nothing, so less time than this left in
+# the call's budget is not enough to be worth spending.
+MIN_ANSWER_REQUEST_SECONDS = 30
 
 # Kiro reads workspace configuration from the directory it runs in, and a review runs
 # in the reviewed head. A `.kiro/settings/mcp.json` there, or a legacy
@@ -202,6 +223,20 @@ class KiroRun:
     finished: bool
     status: Optional[str]
     errors: "tuple[str, ...]"
+    # The session the run belongs to, which a later call can resume, and why the
+    # model's turn ended, both as Kiro reported them on finishing.
+    session_id: Optional[str] = None
+    stop_reason: Optional[str] = None
+
+    @property
+    def unanswered(self) -> bool:
+        """Return whether the model ended its turn without writing an answer."""
+
+        return (
+            self.finished
+            and self.stop_reason == "end_turn"
+            and not self.answer.strip()
+        )
 
 
 def _kiro_events(output: str) -> "list[dict[str, Any]]":
@@ -263,6 +298,8 @@ def read_kiro_run(output: str) -> KiroRun:
     final_text = ""
     credits: Optional[float] = None
     status: Optional[str] = None
+    session_id: Optional[str] = None
+    stop_reason: Optional[str] = None
     run_errors: "list[str]" = []
     displayed: "list[str]" = []
     for event in _kiro_events(output):
@@ -272,6 +309,10 @@ def read_kiro_run(output: str) -> KiroRun:
             status = data.get("status") if isinstance(data.get("status"), str) else ""
             if isinstance(data.get("finalText"), str):
                 final_text = data["finalText"]
+            if isinstance(data.get("sessionId"), str):
+                session_id = data["sessionId"]
+            if isinstance(data.get("stopReason"), str):
+                stop_reason = data["stopReason"]
             continue
         if kind == "runError":
             _add_message(run_errors, data.get("message"))
@@ -301,6 +342,8 @@ def read_kiro_run(output: str) -> KiroRun:
         finished=status == "success" and not run_errors,
         status=status,
         errors=tuple(run_errors or displayed),
+        session_id=session_id,
+        stop_reason=stop_reason,
     )
 
 
@@ -426,8 +469,48 @@ class KiroEngine:
         effort = effort_for(self.settings, material)
         if effort:
             args.extend(["--effort", effort])
-        args.append(prompt)
 
+        started = time.monotonic()
+        run = read_kiro_run(self._call(repository, [*args, prompt], timeout))
+        remaining = timeout - (time.monotonic() - started)
+        if (
+            run.unanswered
+            and run.session_id is not None
+            and KIRO_SESSION_ID.fullmatch(run.session_id)
+            and remaining >= MIN_ANSWER_REQUEST_SECONDS
+        ):
+            if run.credits is not None:
+                report_invocation_credits(run.credits)
+            progress.notify(
+                "      -> Kiro ended its turn without an answer; asking the same "
+                "session for it"
+            )
+            # Kiro's usage report covers the whole session, so the resumed call's
+            # report is what both turns cost together.
+            try:
+                output = self._call(
+                    repository,
+                    [*args, "--resume-id", run.session_id, KIRO_ANSWER_REQUEST],
+                    max(int(remaining), 1),
+                )
+            except EngineError as error:
+                raise EngineError(
+                    "Kiro ended its turn without an answer, and asking the same "
+                    f"session for it failed: {error}"
+                ) from error
+            run = read_kiro_run(output)
+        if run.credits is not None:
+            report_invocation_credits(run.credits)
+        if not run.finished:
+            raise EngineError(_unfinished_detail(run))
+        if not run.answer.strip():
+            raise EngineError("Kiro ended its turn without an answer")
+        return parse_kiro_output(run.answer, response_discriminator_keys(material))
+
+    def _call(self, repository: Repository, args: "list[str]", timeout: int) -> str:
+        """Run one Kiro call in the review workspace and return its event stream."""
+
+        assert repository.path is not None
         prepare_kiro_workspace(repository.path)
         try:
             output, _ = run_cmd_streams(
@@ -446,9 +529,4 @@ class KiroEngine:
             raise EngineError(_failure_detail(error, run)) from error
         finally:
             remove_kiro_generated_files(repository.path)
-        run = read_kiro_run(output)
-        if run.credits is not None:
-            report_invocation_credits(run.credits)
-        if not run.finished:
-            raise EngineError(_unfinished_detail(run))
-        return parse_kiro_output(run.answer, response_discriminator_keys(material))
+        return output
