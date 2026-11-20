@@ -557,6 +557,11 @@ rather than advisory notes nobody checked.
   since CI often finishes during a review; the approval, or the `LGTM` for your own
   PR, waits until a re-run passes or a new head arrives, and findings are still
   delivered. A cancelled, skipped, or unfinished check does not hold it back.
+- A review that found nothing but holds its approval over a failed check, or
+  because the PR changes review policy, says so on the PR once per head, naming the
+  failed checks or the policy files, so the author, or an agent waiting on the
+  approval, knows PR Warden looked and what it waits for. Your own PR gets the same
+  in Slack.
 - The authenticated reviewer's own PR is never self-approved; findings or a
   clean mergeable `LGTM` result go to Slack. An `LGTM` reached by rejecting
   candidates also reports how many verification threw out, which distinguishes

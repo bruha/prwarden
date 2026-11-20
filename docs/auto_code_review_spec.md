@@ -44,6 +44,24 @@ review-engine adapter, and route confirmed correctness or security findings:
   and a later run of the same head skips it without reviewing until a later head or
   `--force`. A person approves it. A replay applies the same gate against its
   pinned base, so a control case reports what a live run would deliver.
+- A review that found nothing and was withheld only over a failed check, or only
+  because the change is to review policy, tells its author what it waits for, once
+  per head: one pull-request conversation comment, `## Waiting for checks` naming
+  the failed checks or `## Waiting for a person` naming the policy changes, with the
+  head it speaks for and a `<!-- prwarden:waiting -->` marker. The reviewer's own
+  pull request gets the same as a Slack message, or as a comment in a repository
+  with `"slack": false`. Without it the author could not tell a clean review held
+  back from PR Warden never having looked. A head withheld before this existed gets
+  it from the run that skips it. The pull request's mutable state is read again
+  before the note is posted, and a note is kept under its own
+  `github:waiting`-style destination beside the head's record, which it never
+  changes. A note that may have been delivered is never posted again; only one that
+  definitely failed is tried on a later run. It is informational, so a failure to
+  post it is reported and contained. Once a later result or a later head's note is
+  delivered, earlier waiting notes are minimized as `OUTDATED`, as LGTM comments
+  are. Another installation's waiting notes never reach the code level, like its
+  advisory notes. A review withheld for any other reason, such as an unresolved
+  comment, already has that feedback on the pull request and gets no note.
 - Configured reviewer's pull requests in a repository with `"slack": false`: the
   same results on the pull request instead, because the webhook belongs to a
   workspace that project is not part of. Findings are one GitHub review with inline

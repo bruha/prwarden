@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 from prwarden import cli
 from prwarden.config import Settings
-from prwarden.models import PullRequest, Repository
+from prwarden.models import PriorReviewComment, PullRequest, Repository
 from prwarden.review import is_review_policy_path, review_policy_changes
 from prwarden.state import JsonStateStore
 from prwarden.workspace import MAX_BASE_FILE_BYTES, WorkspaceError, merge_base_commit
@@ -358,7 +358,7 @@ class OrchestrationTests(unittest.TestCase):
         }
         return engine
 
-    def run_review(self, engine, files, *, base_documents=(), force=False):
+    def run_review(self, engine, files, *, base_documents=(), force=False, prior=()):
         repository = Repository("app", "owner/app", self.root)
         pull_request = PullRequest(
             1, "Title", "", "author", "head", "url", base_ref="main"
@@ -380,7 +380,7 @@ class OrchestrationTests(unittest.TestCase):
             docs_level=False,
         )
         with patch("prwarden.cli.has_current_review", return_value=False), patch(
-            "prwarden.cli.list_prior_review_comments", return_value=()
+            "prwarden.cli.list_prior_review_comments", return_value=tuple(prior)
         ), patch("prwarden.cli._read_generated_marks", return_value={}), patch(
             "prwarden.cli.list_changed_files", return_value=files
         ), patch(
@@ -403,6 +403,8 @@ class OrchestrationTests(unittest.TestCase):
         ) as submit_review, patch(
             "prwarden.cli.submit_approval", return_value="approval-1"
         ) as submit_approval, patch(
+            "prwarden.cli.submit_waiting_comment", return_value="comment-1"
+        ) as submit_waiting, patch(
             "sys.stdout", new_callable=StringIO
         ) as output:
             workspace.return_value.__enter__.return_value = repository
@@ -424,6 +426,7 @@ class OrchestrationTests(unittest.TestCase):
             "terminal": output.getvalue(),
             "submit_review": submit_review,
             "submit_approval": submit_approval,
+            "submit_waiting": submit_waiting,
         }
 
     WORKFLOW_CHANGE = [
@@ -454,6 +457,58 @@ class OrchestrationTests(unittest.TestCase):
             "approval stays withheld while this head changes review policy",
             again["terminal"],
         )
+
+    def test_the_author_is_told_a_person_must_approve_a_policy_change(self) -> None:
+        """Withheld for policy with nothing found, the author used to hear nothing.
+        Said once for the head: the next run finds the note and stays quiet."""
+
+        engine = self.approving_engine()
+
+        first = self.run_review(engine, self.WORKFLOW_CHANGE)
+        again = self.run_review(engine, self.WORKFLOW_CHANGE)
+
+        first["submit_waiting"].assert_called_once()
+        body = first["submit_waiting"].call_args.args[2]
+        self.assertIn("## Waiting for a person", body)
+        self.assertIn("- `.github/workflows/test.yml`", body)
+        self.assertIn("A person needs to review and approve it.", body)
+        again["submit_waiting"].assert_not_called()
+
+    def test_a_head_withheld_before_the_note_existed_gets_it_on_the_next_run(
+        self,
+    ) -> None:
+        """Every pull request already waiting when this shipped sits in the skip
+        path, which no review reaches again, so the skip path says it too."""
+
+        engine = self.approving_engine()
+        with patch(
+            "prwarden.cli._deliver_waiting_note"
+        ):  # As an installation without the note recorded it.
+            self.run_review(engine, self.WORKFLOW_CHANGE)
+
+        again = self.run_review(engine, self.WORKFLOW_CHANGE)
+
+        self.assertEqual(engine.review.call_count, 1)
+        again["submit_waiting"].assert_called_once()
+
+    def test_a_policy_change_withheld_for_another_reason_gets_no_note(self) -> None:
+        """Only a review that would have approved waits for a person alone."""
+
+        engine = Mock()
+        engine.review.return_value = {
+            "verdict": "do_not_approve",
+            "approval_reason": "The unresolved comment on app.py still applies.",
+            "blocking_comment_ids": ["C1"],
+            "findings": [],
+        }
+        unresolved = PriorReviewComment(
+            "inline:5", "inline", "colleague", "This still fails.", "app.py", 1, False
+        )
+
+        result = self.run_review(engine, self.WORKFLOW_CHANGE, prior=(unresolved,))
+
+        self.assertEqual(result["record"]["status"], "approval_withheld")
+        result["submit_waiting"].assert_not_called()
 
     def test_force_reviews_a_policy_change_again_and_still_withholds(self) -> None:
         engine = self.approving_engine()

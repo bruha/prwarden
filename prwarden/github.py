@@ -9,6 +9,7 @@ from . import commands
 from .comment_template import CommentTemplate
 from .commands import CommandError
 from .models import (
+    WAITING_FOR_CHECKS,
     DesignFinding,
     DocsFinding,
     Finding,
@@ -18,6 +19,7 @@ from .models import (
     PullRequestCheck,
     PullRequestSnapshot,
     Repository,
+    WaitingReason,
 )
 from .reviewer_identity import (
     describe_checks,
@@ -554,8 +556,8 @@ def code_level_feedback(
     documentation notes and its LGTM comments then arrive here as that person's
     conversation comments, and the code level would read them as anyone's feedback
     and could cite one to withhold an approval. Advisory notes never do that, whoever
-    runs PR Warden, so every conversation comment carrying an advisory or LGTM
-    marker is left out of what the code level weighs, cites, and reads as new
+    runs PR Warden, so every conversation comment carrying an advisory, LGTM, or
+    waiting marker is left out of what the code level weighs, cites, and reads as new
     feedback. Only a comment's author, or a maintainer who could delete it anyway,
     can put a marker in it, so a marker can never make another person's objection
     advisory. The advisory levels still read these notes, so as not to repeat them,
@@ -563,7 +565,12 @@ def code_level_feedback(
     one left unresolved still stands in the way of an approval.
     """
 
-    advisory = (DESIGN_COMMENT_MARKER, DOCS_COMMENT_MARKER, LGTM_COMMENT_MARKER)
+    advisory = (
+        DESIGN_COMMENT_MARKER,
+        DOCS_COMMENT_MARKER,
+        LGTM_COMMENT_MARKER,
+        WAITING_COMMENT_MARKER,
+    )
     return tuple(
         comment
         for comment in comments
@@ -1332,6 +1339,15 @@ def format_github_comment(
 DESIGN_COMMENT_MARKER = "<!-- prwarden:design -->"
 
 
+def _inline_code(value: str) -> str:
+    """Render ``value`` as one Markdown code span, whatever backticks it holds."""
+
+    longest_run = max((len(run) for run in re.findall(r"`+", value)), default=0)
+    fence = "`" * (longest_run + 1)
+    padding = " " if value.startswith("`") or value.endswith("`") else ""
+    return f"{fence}{padding}{value}{padding}{fence}"
+
+
 def format_design_comment(
     findings: "Sequence[DesignFinding]",
     review_engine: str,
@@ -1346,11 +1362,7 @@ def format_design_comment(
     has read yet is not worth a configuration surface.
     """
 
-    def inline_code(value: str) -> str:
-        longest_run = max((len(run) for run in re.findall(r"`+", value)), default=0)
-        fence = "`" * (longest_run + 1)
-        padding = " " if value.startswith("`") or value.endswith("`") else ""
-        return f"{fence}{padding}{value}{padding}{fence}"
+    inline_code = _inline_code
 
     blocks = []
     for finding in findings:
@@ -1569,6 +1581,95 @@ def submit_lgtm_comment(
     return _post_conversation_comment(repository, pull_request, body, "an LGTM")
 
 
+WAITING_COMMENT_MARKER = "<!-- prwarden:waiting -->"
+# A failing check or a policy change is named by the head under review, so a list is
+# bounded like any other text the reviewed project wrote, and a long name is cut.
+MAX_WAITING_ITEMS = 10
+MAX_WAITING_ITEM_CHARACTERS = 120
+
+
+def waiting_items(items: "Sequence[str]") -> "tuple[list[str], int]":
+    """Return the items a waiting note names, each on one line, and how many more.
+
+    Check names and paths come from the reviewed head, so each is flattened to one
+    line and cut, and only the first few are named.
+    """
+
+    shown = []
+    for item in items[:MAX_WAITING_ITEMS]:
+        flat = " ".join(item.split())
+        if len(flat) > MAX_WAITING_ITEM_CHARACTERS:
+            flat = flat[: MAX_WAITING_ITEM_CHARACTERS - 1].rstrip() + "…"
+        shown.append(flat)
+    return shown, max(len(items) - MAX_WAITING_ITEMS, 0)
+
+
+def format_waiting_comment(
+    pull_request: PullRequest, reason: WaitingReason, *, own: bool = False
+) -> str:
+    """Say what a review that found nothing waits for before it approves.
+
+    Without it a pull request whose checks failed, or that changes review policy, got
+    nothing at all: the review ran and found no defects, and the author could not
+    tell that apart from PR Warden never having looked. ``own`` is the reviewer's own
+    pull request, which receives an LGTM rather than an approval. Names the head it
+    speaks for, because a comment, unlike an approval, is not tied to a commit.
+    """
+
+    shown, more = waiting_items(reason.items)
+    listed = "\n".join(f"- {_inline_code(item)}" for item in shown)
+    if more:
+        listed += f"\n- and {more} more"
+    head = _inline_code(pull_request.head_sha[:12])
+    result = "its LGTM" if own else "an approval"
+    if reason.kind == WAITING_FOR_CHECKS:
+        checks = (
+            f" See the [checks]({pull_request.url}/checks)."
+            if pull_request.url.startswith("https://")
+            else ""
+        )
+        lines = [
+            "## Waiting for checks",
+            "",
+            f"PR Warden reviewed {head} and found nothing to report, but it holds "
+            f"{result} while these checks fail at this commit:",
+            "",
+            listed,
+            "",
+            "Fix them and push, or re-run them if they failed for a reason outside "
+            "this change. PR Warden reviews this pull request again once they pass."
+            + checks,
+        ]
+    else:
+        lines = [
+            "## Waiting for a person",
+            "",
+            f"PR Warden reviewed {head} and found nothing to report, but it never "
+            f"gives {result} to a change to review policy, which this pull request "
+            "makes in:",
+            "",
+            listed,
+            "",
+            "A person needs to review and approve it.",
+        ]
+    lines.extend([WAITING_COMMENT_MARKER, ""])
+    return "\n".join(lines)
+
+
+def submit_waiting_comment(
+    repository: Repository,
+    pull_request: PullRequest,
+    body: str,
+) -> str:
+    """Post what a clean review waits for, as a pull-request conversation comment.
+
+    Never a review: it carries no verdict, and a comment review would read as
+    feedback waiting for an answer.
+    """
+
+    return _post_conversation_comment(repository, pull_request, body, "a waiting note")
+
+
 PULL_REQUEST_COMMENTS_QUERY = """
 query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
@@ -1673,6 +1774,28 @@ def hide_earlier_lgtm_comments(
     its ID. Returns how many comments were hidden.
     """
 
+    return hide_earlier_comments(
+        repository,
+        pull_request,
+        reviewer_username,
+        LGTM_COMMENT_MARKER,
+        keep_comment_id,
+    )
+
+
+def hide_earlier_comments(
+    repository: Repository,
+    pull_request: PullRequest,
+    reviewer_username: str,
+    marker: str,
+    keep_comment_id: Optional[str] = None,
+) -> int:
+    """Mark this reviewer's earlier comments carrying ``marker`` as outdated.
+
+    Selected by author and by the marker together, and the comment ``keep_comment_id``
+    names is kept. Returns how many comments were hidden.
+    """
+
     hidden = 0
     for node in _list_conversation_comment_nodes(repository, pull_request):
         author = str((node.get("author") or {}).get("login") or "")
@@ -1680,7 +1803,7 @@ def hide_earlier_lgtm_comments(
         node_id = node.get("id")
         if author.casefold() != reviewer_username.casefold():
             continue
-        if not isinstance(body, str) or not carries_marker(body, LGTM_COMMENT_MARKER):
+        if not isinstance(body, str) or not carries_marker(body, marker):
             continue
         if node.get("isMinimized") is True:
             continue
@@ -1689,7 +1812,7 @@ def hide_earlier_lgtm_comments(
         ):
             continue
         if not isinstance(node_id, str) or not node_id:
-            raise CommandError("GitHub returned an LGTM comment without a node ID")
+            raise CommandError("GitHub returned a comment without a node ID")
         output = _run_for(
             repository,
             [
@@ -1705,7 +1828,7 @@ def hide_earlier_lgtm_comments(
         )
         payload = _parse_json(
             output,
-            f"hiding an LGTM comment on {repository.slug}#{pull_request.number}",
+            f"hiding a comment on {repository.slug}#{pull_request.number}",
         )
         try:
             minimized = payload["data"]["minimizeComment"]["minimizedComment"]

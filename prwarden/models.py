@@ -389,6 +389,23 @@ class PullRequestCheck:
     conclusion: Optional[str] = None
 
 
+# Why a code review that found nothing still gave no approval, as told to the author.
+WAITING_FOR_CHECKS = "checks"
+WAITING_FOR_A_PERSON = "policy"
+
+
+@dataclass(frozen=True)
+class WaitingReason:
+    """What a clean review waits for before it approves: checks, or a person.
+
+    ``items`` names the failing checks, or the review-policy changes a person must
+    approve, as the controller found them.
+    """
+
+    kind: str
+    items: "tuple[str, ...]"
+
+
 @dataclass(frozen=True)
 class RemovedFile:
     path: str

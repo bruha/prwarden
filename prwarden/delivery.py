@@ -4,7 +4,15 @@ import urllib.error
 import urllib.request
 from typing import Optional, Sequence
 
-from .models import DesignFinding, DocsFinding, Finding, PullRequest, Repository
+from .models import (
+    WAITING_FOR_CHECKS,
+    DesignFinding,
+    DocsFinding,
+    Finding,
+    PullRequest,
+    Repository,
+    WaitingReason,
+)
 from .reviewer_identity import (
     describe_checks,
     describe_severity_change,
@@ -334,6 +342,45 @@ def format_slack_lgtm_message(
 
 def _format_pr_link(repository: Repository, pull_request: PullRequest) -> str:
     return f"<{pull_request.url}|{repository.slug} PR #{pull_request.number}>"
+
+
+def format_waiting_slack_message(
+    repository: Repository,
+    pull_request: PullRequest,
+    reason: WaitingReason,
+    shown: "Sequence[str]",
+    more: int = 0,
+) -> str:
+    """Say what a clean review of the reviewer's own pull request waits for.
+
+    ``shown`` are the items to name, already bounded, and ``more`` how many others
+    there are.
+    """
+
+    names = ", ".join(f"`{item.replace('`', '')}`" for item in shown)
+    if more:
+        names += f" and {more} more"
+    head = pull_request.head_sha[:12]
+    if reason.kind == WAITING_FOR_CHECKS:
+        heading = "Waiting for checks"
+        text = (
+            f"PR Warden found nothing to report at `{head}`, but holds its LGTM "
+            f"while these checks fail: {names}. It reviews again once they pass."
+        )
+    else:
+        heading = "Waiting for a person"
+        text = (
+            f"PR Warden found nothing to report at `{head}`, but never gives its "
+            f"LGTM to a change to review policy, which this makes in: {names}. A "
+            "person needs to review it."
+        )
+    lines = [
+        f"*PR #{pull_request.number} {heading} ({repository.name})*",
+        _format_pr_link(repository, pull_request),
+        f"*{pull_request.title}*",
+        f"> {text}",
+    ]
+    return redact_local_paths("\n".join(lines))
 
 
 def _format_reviewer(

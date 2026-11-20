@@ -3381,6 +3381,10 @@ class OrchestrationTests(unittest.TestCase):
         ) as submit_approval, patch(
             "prwarden.cli.send_slack_message", return_value="http-200"
         ) as send_slack, patch(
+            "prwarden.cli.submit_waiting_comment", return_value="comment-1"
+        ) as submit_waiting, patch(
+            "prwarden.cli.hide_earlier_comments", return_value=1
+        ) as hide_comments, patch(
             "sys.stdout", new_callable=StringIO
         ) as output:
             workspace.return_value.__enter__.return_value = repository
@@ -3397,12 +3401,18 @@ class OrchestrationTests(unittest.TestCase):
                     force=force,
                 )
                 record = store.get(store.key(repository.slug, 1, head, "github"))
+                waiting = store.get(
+                    store.key(repository.slug, 1, head, "github:waiting")
+                )
         return {
             "record": record or {},
+            "waiting": waiting or {},
             "terminal": output.getvalue(),
             "submit_review": submit_review,
             "submit_approval": submit_approval,
             "send_slack": send_slack,
+            "submit_waiting": submit_waiting,
+            "hide_comments": hide_comments,
             "read_marks": read_marks,
             "read_issues": read_issues,
             "list_checks": list_checks,
@@ -4250,6 +4260,35 @@ class OrchestrationTests(unittest.TestCase):
             result["terminal"],
         )
 
+    def test_the_author_is_told_the_review_waits_for_its_checks(self) -> None:
+        """A review that found nothing but held its approval over a failed check
+        posted nothing at all, so its author could not tell it from PR Warden never
+        having looked."""
+
+        from prwarden.github import WAITING_COMMENT_MARKER
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_partial_review(
+                directory,
+                self.approving_engine(),
+                max_diff_bytes=100000,
+                changed_files=self.CLEAN_CHANGE,
+                checks=self.FAILED,
+            )
+
+        result["submit_waiting"].assert_called_once()
+        body = result["submit_waiting"].call_args.args[2]
+        self.assertIn("## Waiting for checks", body)
+        self.assertIn("- `compile-code`", body)
+        self.assertIn("holds an approval while these checks fail", body)
+        self.assertTrue(body.rstrip().endswith(WAITING_COMMENT_MARKER))
+        self.assertEqual(result["waiting"]["status"], "delivered")
+        self.assertEqual(result["waiting"]["receipt_id"], "comment-1")
+        self.assertEqual(result["waiting"]["items"], ["compile-code"])
+        self.assertIn("Told the author the review waits for checks", result["terminal"])
+        # The approval record is the one it always was.
+        self.assertEqual(result["record"]["status"], "approval_withheld")
+
     def test_the_checks_are_read_again_just_before_approving(self) -> None:
         """CI often finishes while a review runs: the checks the review started
         with can all be pending and then fail before the approval would land."""
@@ -4328,6 +4367,8 @@ class OrchestrationTests(unittest.TestCase):
                 still["terminal"],
             )
             self.assertEqual(engine.review.call_count, 1)
+            # Said once for the head, not again on every run that finds it waiting.
+            still["submit_waiting"].assert_not_called()
 
             passed = self.run_partial_review(
                 directory,
@@ -4340,6 +4381,12 @@ class OrchestrationTests(unittest.TestCase):
         self.assertIn("No check fails at this head any more", passed["terminal"])
         self.assertEqual(engine.review.call_count, 2)
         passed["submit_approval"].assert_called_once()
+        # The approval answers the note, which is collapsed as outdated.
+        passed["hide_comments"].assert_called_once()
+        self.assertEqual(
+            passed["hide_comments"].call_args.args[3], "<!-- prwarden:waiting -->"
+        )
+        self.assertIn("Marked 1 earlier waiting note as outdated", passed["terminal"])
 
     def test_unreadable_checks_keep_a_withheld_approval_without_a_review(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

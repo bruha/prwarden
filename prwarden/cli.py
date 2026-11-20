@@ -41,6 +41,7 @@ from .delivery import (
     format_slack_lgtm_message,
     format_slack_message,
     format_stale_review_message,
+    format_waiting_slack_message,
     send_slack_message,
     withheld_note,
 )
@@ -64,14 +65,17 @@ from .github import (
     DESIGN_COMMENT_MARKER,
     DOCS_COMMENT_MARKER,
     MAX_PRIOR_REVIEW_BYTES,
+    WAITING_COMMENT_MARKER,
     code_level_feedback,
     delivered_review_findings_resolved,
     format_design_comment,
     format_docs_comment,
     format_lgtm_comment,
+    format_waiting_comment,
     get_branch_head_sha,
     get_pull_request_snapshot,
     has_current_review,
+    hide_earlier_comments,
     hide_earlier_lgtm_comments,
     list_changed_files,
     list_closing_issues,
@@ -86,7 +90,9 @@ from .github import (
     submit_docs_notes,
     submit_lgtm_comment,
     submit_review,
+    submit_waiting_comment,
     validate_object_name,
+    waiting_items,
 )
 from .github_status import describe_github_incident
 from .history import (
@@ -96,6 +102,8 @@ from .history import (
     prune as prune_history,
 )
 from .models import (
+    WAITING_FOR_A_PERSON,
+    WAITING_FOR_CHECKS,
     DesignAssessment,
     DocsAssessment,
     DiffBudget,
@@ -108,6 +116,7 @@ from .models import (
     Repository,
     ReviewMaterial,
     ReviewRules,
+    WaitingReason,
 )
 from .linked_issues import find_jira_keys, read_work_item
 from .metrics import ReviewMetrics
@@ -3042,6 +3051,19 @@ def _process_pull_request(
                     "(" + ", ".join(recorded_policy) + "); a person approves it, "
                     "and a later head or --force reviews it again",
                 )
+                if live and record.get("reason") == _policy_change_reason(
+                    recorded_policy
+                ):
+                    # Said here too, for a head withheld before the note existed or
+                    # whose note could not be posted.
+                    _deliver_waiting_note(
+                        settings,
+                        repository,
+                        pull_request,
+                        store,
+                        destination,
+                        WaitingReason(WAITING_FOR_A_PERSON, recorded_policy),
+                    )
                 return
             recorded_unread = _recorded_unread_paths(record)
             if (
@@ -3090,6 +3112,15 @@ def _process_pull_request(
                         f"{_describe_failed_checks(failing)} failed at this head; a "
                         "re-run that passes, a later head, or --force reopens it",
                     )
+                    if live:
+                        _deliver_waiting_note(
+                            settings,
+                            repository,
+                            pull_request,
+                            store,
+                            destination,
+                            WaitingReason(WAITING_FOR_CHECKS, tuple(failing)),
+                        )
                     return
                 print(
                     "      -> No check fails at this head any more; reconsidering "
@@ -3614,6 +3645,19 @@ def _process_pull_request(
             ),
         )
         print(f"      -> Recorded as approval_withheld: {approval_reason}")
+        if policy_changes and approval_reason == _policy_change_reason(
+            policy_changes
+        ):
+            # The review found nothing and would have approved: what it waits for is
+            # a person, and the author is told so rather than left with silence.
+            _deliver_waiting_note(
+                settings,
+                repository,
+                pull_request,
+                store,
+                destination,
+                WaitingReason(WAITING_FOR_A_PERSON, tuple(policy_changes)),
+            )
         return
 
     try:
@@ -3756,6 +3800,14 @@ def _process_pull_request(
                 "      -> Recorded as approval_withheld; a re-run that passes or a "
                 "later head reopens it"
             )
+            _deliver_waiting_note(
+                settings,
+                repository,
+                pull_request,
+                store,
+                destination,
+                WaitingReason(WAITING_FOR_CHECKS, tuple(failing)),
+            )
             return
 
     if clean_candidate:
@@ -3854,12 +3906,175 @@ def _process_pull_request(
         else "Sent LGTM" if not findings else "Delivered"
     )
     print(f"      -> {action} successfully (receipt: {receipt_id})")
+    if destination != "slack":
+        # This result answers what any earlier waiting note said it waited for.
+        _hide_waiting_notes(settings, repository, pull_request, store, destination)
     if destination == OWN_GITHUB_DESTINATION:
         _hide_earlier_lgtm_comments(
             repository,
             pull_request,
             account,
             receipt_id if not findings else None,
+        )
+
+
+# A waiting note is kept beside the head's own record, under its own destination, so
+# the code level's record and every reading of it stay exactly as they were.
+WAITING_NOTE_SUFFIX = ":waiting"
+_WAITING_NOUNS = {WAITING_FOR_CHECKS: "checks", WAITING_FOR_A_PERSON: "a person"}
+
+
+def _waiting_note_key(
+    store: JsonStateStore,
+    repository: Repository,
+    pull_request: PullRequest,
+    destination: str,
+) -> str:
+    return store.key(
+        repository.slug,
+        pull_request.number,
+        pull_request.head_sha,
+        destination + WAITING_NOTE_SUFFIX,
+    )
+
+
+def _deliver_waiting_note(
+    settings: Settings,
+    repository: Repository,
+    pull_request: PullRequest,
+    store: JsonStateStore,
+    destination: str,
+    reason: WaitingReason,
+) -> None:
+    """Tell the author what this head's clean review waits for, once per head.
+
+    A review that found nothing but could not approve, because a check failed or the
+    change is to review policy, used to say nothing at all, and its author could not
+    tell that from PR Warden never having looked. The note is informational: the
+    head's own record already holds the outcome, so a note that cannot be posted is
+    reported and contained, and one that may have been posted is never posted again.
+    Only a note that definitely was not delivered is tried again, on a later run.
+    """
+
+    key = _waiting_note_key(store, repository, pull_request, destination)
+    record = store.get(key)
+    if record is not None and record.get("status") != "failed":
+        return
+    noun = _WAITING_NOUNS.get(reason.kind, reason.kind)
+    if destination == "slack" and not settings.slack_webhook_url:
+        print(
+            f"      -> Not saying the review waits for {noun}: SLACK_WEBHOOK_URL is "
+            "not set"
+        )
+        return
+    try:
+        # Mutable state is read again first, as before any delivery: a closed, moved,
+        # or newly excluded pull request needs no note about this head.
+        _validate_pull_request_snapshot(
+            get_pull_request_snapshot(repository, pull_request),
+            pull_request,
+            settings.excluded_pr_labels,
+        )
+    except (ReviewError, CommandError) as error:
+        print(f"      -> Not saying the review waits for {noun}: {error}")
+        return
+    shown, more = waiting_items(reason.items)
+    details = {"waiting_for": reason.kind, "items": list(shown)}
+    store.set_status(key, "delivery_started", **details)
+    try:
+        if destination == "slack":
+            assert settings.slack_webhook_url is not None
+            receipt_id = send_slack_message(
+                settings.slack_webhook_url,
+                format_waiting_slack_message(
+                    repository, pull_request, reason, shown, more
+                ),
+            )
+        else:
+            receipt_id = submit_waiting_comment(
+                repository,
+                pull_request,
+                format_waiting_comment(
+                    pull_request, reason, own=destination == OWN_GITHUB_DESTINATION
+                ),
+            )
+    except DeliveryError as error:
+        store.set_status(key, "failed", error=str(error), **details)
+        print(f"      -> Could not say the review waits for {noun}: {error}")
+        return
+    except (DeliveryUncertainError, CommandError) as error:
+        store.set_status(key, "delivery_uncertain", error=str(error), **details)
+        print(
+            f"      -> Saying the review waits for {noun} may not have been "
+            f"delivered, so it is not tried again: {error}"
+        )
+        return
+    store.set_status(key, "delivered", receipt_id=receipt_id, **details)
+    print(
+        f"      -> Told the author the review waits for {noun} "
+        f"(receipt: {receipt_id})"
+    )
+    if destination != "slack":
+        _hide_waiting_notes(
+            settings, repository, pull_request, store, destination, receipt_id
+        )
+
+
+def _hide_waiting_notes(
+    settings: Settings,
+    repository: Repository,
+    pull_request: PullRequest,
+    store: JsonStateStore,
+    destination: str,
+    keep_comment_id: Optional[str] = None,
+) -> None:
+    """Collapse the waiting notes a later result on this pull request replaced.
+
+    Asked only when one was posted and not yet hidden, so a pull request that never
+    waited costs no GitHub call. Hiding is cosmetic, as for LGTM comments: a failure
+    is reported and left alone, never retried blindly.
+    """
+
+    prefix = f"{repository.slug}#{pull_request.number}#"
+    suffix = f"#{destination}{WAITING_NOTE_SUFFIX}"
+    visible = {
+        key: record
+        for key, record in store.pull_request_records(
+            repository.slug, pull_request.number
+        ).items()
+        if key.startswith(prefix)
+        and key.endswith(suffix)
+        and record.get("status") in ("delivered", "delivery_uncertain")
+        and not record.get("hidden")
+        and (
+            keep_comment_id is None
+            or str(record.get("receipt_id")) != str(keep_comment_id)
+        )
+    }
+    if not visible:
+        return
+    try:
+        hidden = hide_earlier_comments(
+            repository,
+            pull_request,
+            reviewer_account(repository, settings.reviewer_username),
+            WAITING_COMMENT_MARKER,
+            keep_comment_id,
+        )
+    except CommandError as error:
+        print(f"      -> Earlier waiting notes were left visible: {error}")
+        return
+    for key, record in visible.items():
+        kept = {
+            name: value
+            for name, value in record.items()
+            if name not in ("status", "updated_at")
+        }
+        store.set_status(key, record["status"], **{**kept, "hidden": True})
+    if hidden:
+        print(
+            f"      -> Marked {hidden} earlier waiting note"
+            f"{'s' if hidden != 1 else ''} as outdated"
         )
 
 
