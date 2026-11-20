@@ -492,7 +492,10 @@ is recorded `skipped_oversized`, with the measurement in the reported reason.
 A review runs in levels. Each level is one reviewer invocation followed by one
 adversarial verifier invocation, and the levels run sequentially. The code level
 always runs last: its approval is what a person or an agent merges on, so the
-advisory notes are on the pull request before it. Every level is
+advisory notes are on the pull request before it. The checks level, described with
+the waiting note under Objective, is the exception: one invocation with no verifier,
+made only after a code review that found nothing but for a failed check. Every
+other level is
 reviewed by `REVIEW_ENGINE` at `REVIEW_MODEL` and verified by
 `REVIEW_VERIFY_ENGINE` at `REVIEW_VERIFY_MODEL`, so a level is defined by its
 prompt, response schema, validation, and delivery route, never by its own provider

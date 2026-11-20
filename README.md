@@ -472,7 +472,9 @@ rejects a second live run.
 ## Review levels
 
 A review runs in three levels, each reviewed by `REVIEW_ENGINE` and judged by its own
-adversarial verification pass on `REVIEW_VERIFY_ENGINE`.
+adversarial verification pass on `REVIEW_VERIFY_ENGINE`. A fourth, the checks level,
+runs only when the code level found nothing but a check failed; it is described after
+the code level.
 
 The **solution-design level** goes first and judges the approach rather than the
 lines: where the change puts responsibility, what contracts it establishes, how
@@ -529,6 +531,14 @@ The **code level** then reports line-level correctness, reliability, data-loss,
 concurrency, and security defects on added lines, delivered as inline review
 comments or an approval exactly as before. Approval authority belongs to this level
 alone.
+
+The **checks level** runs only when the code level found nothing and would approve
+but a check had failed. It reads that check's own output, its job log or its
+summary, and says why it failed and a possible fix in the note that tells the author
+PR Warden waits for the checks. It runs on `REVIEW_ENGINE` at `REVIEW_CHECKS_MODEL`
+and `REVIEW_CHECKS_EFFORT`, a cheap model being enough, with no verifier: PR Warden
+itself finds every log line it quotes and every workspace line it cites, and drops a
+reading that fails, so the note is still posted without it.
 
 Beside the model, PR Warden checks every added line itself for a committed
 credential with a distinctive shape: AWS access key IDs, GitHub, Slack, npm, Stripe
