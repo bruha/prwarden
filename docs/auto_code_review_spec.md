@@ -25,8 +25,9 @@ review-engine adapter, and route confirmed correctness or security findings:
   checks, and while any check on that head still fails a later run skips it without
   reviewing; a re-run that passes, a later head, or `--force` reopens it. Checks
   that cannot be read keep it skipped.
-- No clean result is delivered for a pull request that changes review policy,
-  because a reviewer that approved it would be signing off its own reconfiguration.
+- No clean result is delivered for a pull request that changes review policy until
+  a person signs it off, because a reviewer that approved it alone would be signing
+  off its own reconfiguration.
   Policy is any file under `.prwarden/` or `.github/workflows/`, any
   `.gitattributes`, a `CODEOWNERS` at the root, in `.github/`, or in `docs/`, and
   the "Code review" sections of the instruction files the rules are read from
@@ -73,8 +74,9 @@ review-engine adapter, and route confirmed correctness or security findings:
   definitely failed is tried on a later run. It is informational, so a failure to
   post it is reported and contained. Once a later result or a later head's note is
   delivered, earlier waiting notes are minimized as `OUTDATED`, as LGTM comments
-  are. Another installation's waiting notes never reach the code level, like its
-  advisory notes. A review withheld for any other reason, such as an unresolved
+  are, except a note on a line, which stays beside the change a person was asked to
+  sign off. Another installation's waiting notes, on the pull request or on a line,
+  never reach the code level, like its advisory notes. A review withheld for any other reason, such as an unresolved
   comment, already has that feedback on the pull request and gets no note.
 - The **checks level** adds to a note waiting for checks why each one failed and a
   possible fix, when `REVIEW_CHECKS_LEVEL` is on. It runs only for a review that
@@ -579,8 +581,9 @@ colliding with this review:
 
 - Its design and documentation notes, its `LGTM` comments, and its waiting notes
   never reach the code level. `github.code_level_feedback` leaves every conversation
-  comment that carries a design, documentation, `LGTM`, or waiting marker, under
-  either name of this tool, out of
+  comment that carries a design, documentation, `LGTM`, or waiting marker, and every
+  inline comment that carries a waiting marker, under either name of this tool, out
+  of
   what the code level weighs and may cite as a blocker, out of the feedback
   fingerprint an `approval_withheld` record is reconsidered by, and out of the
   feedback re-read before delivery, so a note posted during a review is not an
@@ -1370,9 +1373,9 @@ conversation comments, and exact-head check runs. Each inline comment includes
 its resolution state. Resolved feedback supplies context but cannot block
 approval. Bot-authored review summaries and conversation comments are excluded
 as noise; inline bot findings remain available. Conversation comments carrying a
-PR Warden design, documentation, `LGTM`, or waiting marker, such as another
-developer's installation posts, are left out of the code level's feedback and kept
-for the advisory levels, as described under Review Levels. The common prompt requires every
+PR Warden design, documentation, `LGTM`, or waiting marker, and inline comments
+carrying a waiting marker, such as another developer's installation posts, are left
+out of the code level's feedback and kept for the advisory levels, as described under Review Levels. The common prompt requires every
 engine to omit a finding when prior
 feedback already describes the same underlying issue, including when the
 wording or reported location differs. If the complete prior-feedback text
