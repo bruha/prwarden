@@ -4368,6 +4368,29 @@ class OrchestrationTests(unittest.TestCase):
         submitted = result["submit_approval"]
         submitted.assert_not_called()
 
+    def test_a_head_whose_note_is_posted_is_not_read_again(self) -> None:
+        """--force reviews the head again, but its note is never posted twice, so a
+        second reading would be a call spent for nothing."""
+
+        engine = Mock()
+        engine.review.side_effect = [self.APPROVAL, self.DIAGNOSIS, self.APPROVAL]
+        with tempfile.TemporaryDirectory() as directory:
+            for force in (False, True):
+                result = self.run_partial_review(
+                    directory,
+                    engine,
+                    max_diff_bytes=100000,
+                    changed_files=self.CLEAN_CHANGE,
+                    checks=self.ACTIONS_FAILED,
+                    checks_level=True,
+                    check_log=self.ACTIONS_LOG,
+                    force=force,
+                )
+
+        self.assertEqual(engine.review.call_count, 3)
+        result["read_log"].assert_not_called()
+        result["submit_waiting"].assert_not_called()
+
     def test_a_review_with_findings_never_reads_its_checks(self) -> None:
         """The author has a defect to fix first; reading the checks then would be a
         call spent on a note nobody gets."""

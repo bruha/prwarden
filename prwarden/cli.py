@@ -3528,10 +3528,15 @@ def _process_pull_request(
                 and not credentials
                 and not policy_changes
                 and not partial
+                and not _waiting_note_settled(
+                    store, repository, pull_request, destination
+                )
             ):
                 # Only a review that would approve but for its checks waits for
                 # them, and only then is the reading of why they failed worth a call:
-                # it goes into the note that tells the author so.
+                # it goes into the note that tells the author so. Read here, while
+                # the workspace is open, so a check that passes on the final read
+                # costs this reading; a head whose note is already posted costs none.
                 check_diagnoses = _run_checks_level(
                     checks_stage,
                     repository,
@@ -3983,6 +3988,20 @@ def _waiting_note_key(
     )
 
 
+def _waiting_note_settled(
+    store: JsonStateStore,
+    repository: Repository,
+    pull_request: PullRequest,
+    destination: str,
+) -> bool:
+    """Return whether this head's waiting note is posted, or may have been."""
+
+    record = store.get(
+        _waiting_note_key(store, repository, pull_request, destination)
+    )
+    return record is not None and record.get("status") != "failed"
+
+
 def _run_checks_level(
     stage: ReviewStages,
     repository: Repository,
@@ -4092,8 +4111,7 @@ def _deliver_waiting_note(
     """
 
     key = _waiting_note_key(store, repository, pull_request, destination)
-    record = store.get(key)
-    if record is not None and record.get("status") != "failed":
+    if _waiting_note_settled(store, repository, pull_request, destination):
         return
     noun = _WAITING_NOUNS.get(reason.kind, reason.kind)
     if destination == "slack" and not settings.slack_webhook_url:

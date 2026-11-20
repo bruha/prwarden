@@ -77,12 +77,15 @@ approval is what a pull request is merged on, so the advisory notes are posted
 before it. Each level carries its own engines in that plan, so a level is defined by
 its prompt, schema, validation, and delivery route, and its provider configuration
 is the plan's to give. Today the plan gives every level the same engine and model to
-review and the same second engine and model to verify. The one exception is
-reasoning effort: the code level may take its own (`REVIEW_CODE_EFFORT`), because it
-alone can approve, and every other level runs at the role's effort. Levels configured
-alike share their engines, so a verifier that handed over for one level stays handed
-over for the pull request's other levels. The levels share no data, which is what
-keeps the design level advisory.
+review and the same second engine and model to verify, with two exceptions. The
+code level may take its own reasoning effort (`REVIEW_CODE_EFFORT`), because it
+alone can approve, and every other level runs at the role's effort. The checks
+level reads failed checks rather than the change, at a model and effort of its own
+(`REVIEW_CHECKS_MODEL`, `REVIEW_CHECKS_EFFORT`), with no verifier and no fallback,
+because the controller checks its reading and a failed one costs only itself. Levels
+configured alike share their engines, so a verifier that handed over for one level
+stays handed over for the pull request's other levels. The levels share no data,
+which is what keeps the design level advisory.
 
 ## Design rules
 

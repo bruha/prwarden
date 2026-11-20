@@ -272,6 +272,8 @@ Important `.env` settings:
 | `MAX_DESIGN_FINDINGS` | Findings one design review may report |
 | `REVIEW_DOCS_LEVEL` | Advisory level checking the change against this repository's documentation |
 | `MAX_DOCS_FINDINGS` | Documentation updates one docs review may propose |
+| `REVIEW_CHECKS_LEVEL` | Say why failed checks failed, and a fix, in a note waiting for them; default `1` |
+| `REVIEW_CHECKS_MODEL`, `REVIEW_CHECKS_EFFORT` | Model and effort that read failed checks on `REVIEW_ENGINE`; default the reviewer's |
 | `REVIEW_VERIFY_TIMEOUT_SECONDS` | Base budget for one verification pass |
 | `REVIEW_VERIFY_TIMEOUT_PER_CANDIDATE_SECONDS` | Added to that base for each candidate verified |
 | `REVIEW_CONCURRENCY` | Pull requests reviewed at the same time, 1 to 8 |

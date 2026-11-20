@@ -499,6 +499,9 @@ prompt, response schema, validation, and delivery route, never by its own provid
 settings. Reasoning effort is the one setting a level may have of its own:
 `REVIEW_CODE_EFFORT` overrides `REVIEW_EFFORT` for the code level, which alone can
 approve, and the verifier and fallback each run at their own effort on every level.
+The checks level, below, is the exception: it reads failed checks rather than the
+change, on `REVIEW_ENGINE` at `REVIEW_CHECKS_MODEL` and `REVIEW_CHECKS_EFFORT`, with
+no verifier and no fallback.
 The adapters are unaware of levels: the level travels on the review
 material they are handed, and prompt, schema, and effort selection stays in the
 provider-neutral core.
@@ -555,9 +558,10 @@ history, and schedule, and touches only what its own account posted. Its comment
 reach this installation as that developer's feedback, and three rules keep them from
 colliding with this review:
 
-- Its design and documentation notes and its `LGTM` comments never reach the code
-  level. `github.code_level_feedback` leaves every conversation comment that carries
-  a design, documentation, or `LGTM` marker, under either name of this tool, out of
+- Its design and documentation notes, its `LGTM` comments, and its waiting notes
+  never reach the code level. `github.code_level_feedback` leaves every conversation
+  comment that carries a design, documentation, `LGTM`, or waiting marker, under
+  either name of this tool, out of
   what the code level weighs and may cite as a blocker, out of the feedback
   fingerprint an `approval_withheld` record is reconsidered by, and out of the
   feedback re-read before delivery, so a note posted during a review is not an
