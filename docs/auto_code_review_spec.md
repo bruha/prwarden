@@ -105,7 +105,8 @@ review-engine adapter, and route confirmed correctness or security findings:
   its reported summary. The text has credential-shaped values replaced and reaches
   the prompt only as contained data, since the pull request's own code printed it.
   It runs on `REVIEW_ENGINE` at `REVIEW_CHECKS_MODEL` and `REVIEW_CHECKS_EFFORT`, or
-  the reviewer's, with no verifier and no fallback: each diagnosis must name a
+  the reviewer's, or, with a reviews file, on the one engine its `types.checks.review`
+  names, with no verifier and no fallback: each diagnosis must name a
   supplied check once, quote a line found in that check's text, and cite only
   workspace lines found in the head, and a response that fails that is retried once
   with the controller's reason. A reading that still fails, or a provider out of
@@ -217,7 +218,8 @@ token without it costs the level the log, and it reads the check's summary inste
 ### The reviews file
 
 `reviews.json` sits in the configuration directory, or where `REVIEWS_FILE` in
-`.env` points (`prwarden/reviews_file.py`). It is private configuration like
+`.env` points (`prwarden/reviews_file.py`); a `REVIEWS_FILE` that names no file
+stops the run rather than review on `.env`'s engines. It is private configuration like
 `repositories.json` and is never committed; `reviews.example.json` is, and a test
 loads it with the real loader. Without the file a run takes every setting below from
 `.env`, as it always has, and `reviews_payload` writes those settings out as the file
@@ -573,17 +575,18 @@ adversarial verifier invocation, and the levels run sequentially. The code level
 always runs last: its approval is what a person or an agent merges on, so the
 advisory notes are on the pull request before it. The checks level, described with
 the waiting note under Objective, is the exception: one invocation with no verifier,
-made only after a code review that found nothing but for a failed check. Every
-other level is
-reviewed by `REVIEW_ENGINE` at `REVIEW_MODEL` and verified by
-`REVIEW_VERIFY_ENGINE` at `REVIEW_VERIFY_MODEL`, so a level is defined by its
-prompt, response schema, validation, and delivery route, never by its own provider
-settings. Reasoning effort is the one setting a level may have of its own:
+made only after a code review that found nothing but for a failed check. Without a
+reviews file, every other level is reviewed by `REVIEW_ENGINE` at `REVIEW_MODEL` and
+verified by `REVIEW_VERIFY_ENGINE` at `REVIEW_VERIFY_MODEL`, so a level is defined by
+its prompt, response schema, validation, and delivery route, not by its own provider
+settings. With a reviews file, each type names its own review and verify engines, in
+order, and those keys are not read (see [The reviews file](#the-reviews-file)).
+Reasoning effort is the one setting a level may have of its own:
 `REVIEW_CODE_EFFORT` overrides `REVIEW_EFFORT` for the code level, which alone can
 approve, and the verifier and fallback each run at their own effort on every level.
 The checks level, below, is the exception: it reads failed checks rather than the
-change, on `REVIEW_ENGINE` at `REVIEW_CHECKS_MODEL` and `REVIEW_CHECKS_EFFORT`, with
-no verifier and no fallback.
+change, on `REVIEW_ENGINE` at `REVIEW_CHECKS_MODEL` and `REVIEW_CHECKS_EFFORT`, or
+the engine a reviews file names for it, with no verifier and no fallback.
 The adapters are unaware of levels: the level travels on the review
 material they are handed, and prompt, schema, and effort selection stays in the
 provider-neutral core.

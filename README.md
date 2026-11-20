@@ -300,7 +300,8 @@ adapter-specific commands.
 A `reviews.json` beside `.env` takes the place of every review-engine setting in the
 table above, from `REVIEW_ENGINE` to `IGNORED_MISSING_PATCH_PATTERNS`, and `.env`'s
 are then not read; `prwarden doctor` names any it skips. Without the file a run reads
-`.env` as before. `REVIEWS_FILE` in `.env` points elsewhere. Start from
+`.env` as before. `REVIEWS_FILE` in `.env` points elsewhere, and stops the run if
+nothing is there. Start from
 [reviews.example.json](reviews.example.json); in a clone, `reviews.json` is ignored by
 Git.
 

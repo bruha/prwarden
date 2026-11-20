@@ -881,6 +881,7 @@ def load_settings(
 
     # Imported here: the reviews file builds on these settings.
     from .reviews_file import (
+        FILE_KEYS,
         apply_overrides,
         engines_placeholder,
         load_reviews_file,
@@ -915,6 +916,13 @@ def load_settings(
         )
         engines = engines_placeholder(reviews)
 
+    def setting(key: str, default: Optional[str] = None) -> Optional[str]:
+        # With a reviews file the keys it replaces are not read at all, so a stale
+        # value left in `.env` can neither apply nor stop the run.
+        if reviews is not None and key in FILE_KEYS:
+            return default
+        return os.getenv(key, default)
+
     settings = Settings(
         **engines,
         reviewer_username=resolve_github_username(),
@@ -925,55 +933,55 @@ def load_settings(
         slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL", "").strip() or None,
         state_file=selected_state_file,
         review_engine_env_allowlist=parse_env_allowlist(
-            os.getenv("REVIEW_ENGINE_ENV_ALLOWLIST", "[]")
+            setting("REVIEW_ENGINE_ENV_ALLOWLIST", "[]")
         ),
         review_timeout_seconds=parse_integer(
-            os.getenv("REVIEW_TIMEOUT_SECONDS", "300"),
+            setting("REVIEW_TIMEOUT_SECONDS", "300"),
             "REVIEW_TIMEOUT_SECONDS",
             30,
             1800,
         ),
         design_level=parse_bool(
-            os.getenv("REVIEW_DESIGN_LEVEL", "1"), "REVIEW_DESIGN_LEVEL"
+            setting("REVIEW_DESIGN_LEVEL", "1"), "REVIEW_DESIGN_LEVEL"
         ),
         max_design_findings=parse_integer(
-            os.getenv("MAX_DESIGN_FINDINGS", "4"),
+            setting("MAX_DESIGN_FINDINGS", "4"),
             "MAX_DESIGN_FINDINGS",
             1,
             10,
         ),
         docs_level=parse_bool(
-            os.getenv("REVIEW_DOCS_LEVEL", "1"), "REVIEW_DOCS_LEVEL"
+            setting("REVIEW_DOCS_LEVEL", "1"), "REVIEW_DOCS_LEVEL"
         ),
         max_docs_findings=parse_integer(
-            os.getenv("MAX_DOCS_FINDINGS", "3"),
+            setting("MAX_DOCS_FINDINGS", "3"),
             "MAX_DOCS_FINDINGS",
             1,
             10,
         ),
         checks_level=parse_bool(
-            os.getenv("REVIEW_CHECKS_LEVEL", "1"), "REVIEW_CHECKS_LEVEL"
+            setting("REVIEW_CHECKS_LEVEL", "1"), "REVIEW_CHECKS_LEVEL"
         ),
         review_verify_timeout_seconds=parse_integer(
-            os.getenv("REVIEW_VERIFY_TIMEOUT_SECONDS", "900"),
+            setting("REVIEW_VERIFY_TIMEOUT_SECONDS", "900"),
             "REVIEW_VERIFY_TIMEOUT_SECONDS",
             30,
             3600,
         ),
         review_verify_timeout_per_candidate_seconds=parse_integer(
-            os.getenv("REVIEW_VERIFY_TIMEOUT_PER_CANDIDATE_SECONDS", "180"),
+            setting("REVIEW_VERIFY_TIMEOUT_PER_CANDIDATE_SECONDS", "180"),
             "REVIEW_VERIFY_TIMEOUT_PER_CANDIDATE_SECONDS",
             0,
             600,
         ),
         max_diff_bytes=parse_integer(
-            os.getenv("MAX_DIFF_BYTES", "200000"),
+            setting("MAX_DIFF_BYTES", "200000"),
             "MAX_DIFF_BYTES",
             1000,
             500000,
         ),
         max_findings=parse_integer(
-            os.getenv("MAX_FINDINGS", "10"),
+            setting("MAX_FINDINGS", "10"),
             "MAX_FINDINGS",
             1,
             10,
@@ -982,7 +990,7 @@ def load_settings(
         # single review this tool has always done. Each bundle is another invocation,
         # so the cap is what stops one enormous pull request spending a whole slot.
         max_review_bundles=parse_integer(
-            os.getenv("MAX_REVIEW_BUNDLES", "4"),
+            setting("MAX_REVIEW_BUNDLES", "4"),
             "MAX_REVIEW_BUNDLES",
             1,
             MAX_REVIEW_BUNDLE_LIMIT,
@@ -990,7 +998,7 @@ def load_settings(
         # Reviews are bound by provider capacity rather than local CPU, and
         # every extra slot is another CLI invocation against one account.
         review_concurrency=parse_integer(
-            os.getenv("REVIEW_CONCURRENCY", "2"),
+            setting("REVIEW_CONCURRENCY", "2"),
             "REVIEW_CONCURRENCY",
             1,
             MAX_REVIEW_CONCURRENCY,
@@ -1009,7 +1017,7 @@ def load_settings(
             os.getenv("EXCLUDED_PR_LABELS", "[]")
         ),
         ignored_missing_patch_patterns=parse_ignored_missing_patch_patterns(
-            os.getenv("IGNORED_MISSING_PATCH_PATTERNS")
+            setting("IGNORED_MISSING_PATCH_PATTERNS")
         ),
         design_excluded_head_branches=parse_design_excluded_head_branches(
             os.getenv(
@@ -1024,9 +1032,17 @@ def load_settings(
 
 
 def _reviews_file(locations: Locations, base_directory: Path) -> Path:
-    """Return where the reviews file is: REVIEWS_FILE, or the configuration's own."""
+    """Return where the reviews file is: REVIEWS_FILE, or the configuration's own.
+
+    Only the configuration's own file may be absent. A REVIEWS_FILE that names no
+    file stops the run, since reviewing on `.env`'s engines instead could send the
+    change to a provider the file was written to keep it from.
+    """
 
     configured = os.getenv("REVIEWS_FILE", "").strip()
-    if configured:
-        return resolve_path(configured, base_directory)
-    return locations.reviews_file
+    if not configured:
+        return locations.reviews_file
+    path = resolve_path(configured, base_directory)
+    if not path.exists():
+        raise ConfigError(f"REVIEWS_FILE names {path}, which does not exist")
+    return path

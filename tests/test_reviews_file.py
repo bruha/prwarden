@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from prwarden import cli, config, doctor
 from prwarden.config import ConfigError
 from prwarden.engine import CHECKS_LEVEL, CODE_LEVEL, DESIGN_LEVEL, DOCS_LEVEL
-from prwarden.paths import PACKAGE_ROOT
+from prwarden.paths import PACKAGE_ROOT, Locations
 from prwarden.review_plan import review_plan
 from prwarden.reviews_file import (
     EngineChoice,
@@ -446,7 +446,27 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(code.settings.review_engine, "codex")
         self.assertEqual(code.fallbacks, ())
 
-    def test_without_the_file_env_names_the_engines_as_before(self) -> None:
+    def test_stale_values_of_replaced_keys_neither_apply_nor_stop_the_run(
+        self,
+    ) -> None:
+        settings = self.load(
+            (
+                "MAX_DIFF_BYTES=999999",
+                "REVIEW_TIMEOUT_SECONDS=5",
+                "REVIEW_CONCURRENCY=99",
+                "REVIEW_DESIGN_LEVEL=maybe",
+                "MAX_FINDINGS=0",
+                "REVIEW_ENGINE_ENV_ALLOWLIST=not json",
+                "IGNORED_MISSING_PATCH_PATTERNS=not json",
+            ),
+            example(),
+        )
+
+        self.assertEqual(settings.max_diff_bytes, 200000)
+        self.assertEqual(settings.review_concurrency, example()["concurrency"])
+        self.assertIsNotNone(review_plan(settings).get(DESIGN_LEVEL))
+
+    def test_a_reviews_file_setting_that_names_no_file_stops_the_run(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             env_file = Path(directory) / ".env"
             write_private_env(
@@ -460,12 +480,37 @@ class LoaderTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with patch.dict(os.environ, {}, clear=True):
+                with self.assertRaisesRegex(ConfigError, "missing.json"):
+                    config.load_settings(
+                        env_file, repositories, Path(directory) / "state.json"
+                    )
+
+    def test_without_the_file_env_names_the_engines_as_before(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env_file = Path(directory) / ".env"
+            write_private_env(
+                env_file,
+                "GITHUB_REVIEWER_USERNAME=reviewer\nREVIEW_ENGINE=claude\n"
+                "MAX_DIFF_BYTES=5000\n",
+            )
+            repositories = Path(directory) / "repositories.json"
+            repositories.write_text(
+                '[{"slug": "owner/repo", "path": "' + directory + '"}]',
+                encoding="utf-8",
+            )
+            locations = Locations(
+                "test", Path(directory), Path(directory), Path(directory)
+            )
+            with patch.dict(os.environ, {}, clear=True), patch.object(
+                config, "default_locations", return_value=locations
+            ):
                 settings = config.load_settings(
                     env_file, repositories, Path(directory) / "state.json"
                 )
 
         self.assertIsNone(settings.reviews)
         self.assertEqual(settings.review_engine, "claude")
+        self.assertEqual(settings.max_diff_bytes, 5000)
 
 
 class DoctorTests(unittest.TestCase):

@@ -519,7 +519,9 @@ verifier and the fallback each run at their own effort on every level; neither
 inherits the code override, which was chosen for the reviewer's model. The checks
 level, which reads why a waiting review's checks failed, runs on the review engine
 at `REVIEW_CHECKS_EFFORT` and `REVIEW_CHECKS_MODEL` when set, and at the reviewer's
-otherwise, and has no verifier or fallback of its own.
+otherwise, and has no verifier or fallback of its own. With a reviews file,
+`types.checks.review` names its one engine, model, and effort instead, and these
+keys are not read.
 
 The `kiro`, `antigravity`, and `claude` adapters pass an effort to their CLI as
 `--effort`, and `codex` passes it as `--config model_reasoning_effort="…"`, because
