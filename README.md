@@ -179,8 +179,8 @@ GitHub CLI's own login usually carries the `repo`, `workflow`, `gist`, and
 `read:org` scopes, and `workflow` lets the token rewrite CI. A
 [fine-grained token](https://github.com/settings/personal-access-tokens/new)
 limited to the reviewed repositories, with **Contents** read, **Pull requests** read
-and write, **Issues** read, **Checks** read, and **Commit statuses** read, is
-enough: set it as `GH_TOKEN` in the configuration's `.env`, and every call made as
+and write, **Issues** read, **Checks** read, **Commit statuses** read, and
+**Actions** read, for the failed job logs the checks level reads, is enough: set it as `GH_TOKEN` in the configuration's `.env`, and every call made as
 the reviewer uses it in place of the CLI's login. A repository whose entry names a
 `"github_account"` is still read with that account's GitHub CLI login, which no
 `GH_TOKEN` replaces; narrow it by logging that account in with a fine-grained token,

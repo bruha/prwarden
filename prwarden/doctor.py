@@ -122,9 +122,11 @@ def check_github(settings: Settings) -> List[Check]:
     ]
 
 
+# Actions read is for the checks level, which reads a failed GitHub Actions job's log;
+# without it the level reads the check's summary instead.
 FINE_GRAINED_PERMISSIONS = (
-    "Contents read, Pull requests read and write, Issues read, Checks read, and "
-    "Commit statuses read"
+    "Contents read, Pull requests read and write, Issues read, Checks read, "
+    "Commit statuses read, and Actions read"
 )
 
 

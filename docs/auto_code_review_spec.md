@@ -173,9 +173,10 @@ the reviewer's, which a `GH_TOKEN` in the environment replaces, and the GitHub C
 login of each account a repository is read as, which no `GH_TOKEN` reaches, even
 when it is the reviewer's own account; each is told the remedy that reaches it. A
 fine-grained `GH_TOKEN` in `.env` with Contents read, Pull requests read and write,
-Issues read, Checks read, and Commit statuses read covers every call a review makes
-as the reviewer, and the same token logged in for a `github_account` covers its
-repositories.
+Issues read, Checks read, Commit statuses read, and Actions read covers every call a
+review makes as the reviewer, and the same token logged in for a `github_account`
+covers its repositories. Actions read is only for the checks level's job logs: a
+token without it costs the level the log, and it reads the check's summary instead.
 
 ### Installation commands
 
