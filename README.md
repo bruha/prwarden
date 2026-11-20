@@ -419,8 +419,8 @@ gh pr view 123 -R your-org/example-app --json reviews,comments \
 When another developer runs PR Warden on the same pull requests, neither needs to
 know about the other. Its findings count as a colleague's: they are not repeated, and
 one left unresolved holds back this installation's approval. Its design notes,
-documentation notes, and `LGTM` comments never hold back an approval, and are not
-repeated either.
+documentation notes, `LGTM` comments, and waiting notes never hold back an approval,
+and are not repeated either.
 
 To let another agent answer "did PR Warden review this?", add a line like this to its
 instructions, such as `AGENTS.md` or `CLAUDE.md`:
