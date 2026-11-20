@@ -395,6 +395,9 @@ one account's limit then stops both, which looks like two independent safety net
 is one. It says so too when the reviewer and the verifier share a provider and the
 fallback does not: while that provider is down the fallback can still review and
 approve a clean change, but any finding it raises has no verifier to confirm it.
+With a reviews file, both notes are said of the code review's engine chains: every
+fallback and every verifier on one other provider, or every verifier on the
+reviewer's provider while a fallback is not.
 
 Dry runs invoke the selected model and may consume quota, but they do not post
 or record terminal delivery state. The [review history](#checking-what-pr-warden-did-on-a-pull-request)

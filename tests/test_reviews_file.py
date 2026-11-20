@@ -267,6 +267,34 @@ class PlanTests(unittest.TestCase):
             lines[3], "Checks reading: Claude Haiku 5.5 @ Kiro at medium effort."
         )
 
+    def test_the_run_warns_when_one_provider_carries_two_roles(self) -> None:
+        def notes(verify):
+            payload = example()
+            payload["types"]["code"]["verify"]["engines"] = verify
+            with tempfile.TemporaryDirectory() as directory:
+                plan = review_plan(self.with_file(payload, directory))
+                return [
+                    line
+                    for line in cli._describe_plan(plan)
+                    if line.startswith("Note: ")
+                ]
+
+        self.assertEqual(notes(example()["types"]["code"]["verify"]["engines"]), [])
+        self.assertEqual(
+            notes([{"engine": "claude", "model": "claude-sonnet-5-5"}]),
+            [
+                "Note: claude serves both fallback and verification, so one "
+                "provider limit stops both."
+            ],
+        )
+        self.assertEqual(
+            notes([{"engine": "kiro", "model": "gpt-5.6-luna"}]),
+            [
+                "Note: kiro serves both review and verification, so while it is "
+                "down the fallback's findings cannot be verified or delivered."
+            ],
+        )
+
     def test_the_file_env_writes_runs_as_env_did(self) -> None:
         """The file `reviews_payload` writes from `.env` settings plans the same
         reviews, so moving to the file changes nothing a run does."""

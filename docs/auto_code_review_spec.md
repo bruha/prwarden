@@ -1338,7 +1338,12 @@ LaunchAgent logs do not receive progress frames or terminal control codes.
 Once per run, startup states the engines the run intends to use, in the future
 tense and one per line: the reviewer, the fallback engine and the failure that
 would invoke it, and the verifier. Only configured engines appear, and an engine
-matching the primary engine and model is omitted rather than repeated.
+matching the primary engine and model is omitted rather than repeated. With a reviews
+file, startup instead names the file and gives one line per enabled type, with that
+type's review engines in the order they are tried and its verifying engines, or the
+reviewer's own separate pass. The warnings for one provider carrying both the
+fallback and verification, or both review and verification, are then said of the
+code review's chains.
 
 Delivered attribution is separate and reports completed work. Slack messages and
 every GitHub inline finding name the verifying engine and model only when a

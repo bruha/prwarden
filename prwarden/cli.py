@@ -181,6 +181,7 @@ from .reviewer_identity import (
     format_review_plan,
     format_checks_reader,
     format_reviewer_identity,
+    format_shared_providers,
     format_type_engines,
 )
 from .reviews_file import TYPE_NOUNS
@@ -6355,7 +6356,7 @@ def _describe_plan(plan: ReviewPlan) -> "tuple[str, ...]":
             for item in settings
         )
 
-    return tuple(
+    lines = tuple(
         format_type_engines(
             TYPE_NOUNS.get(review_type.name, review_type.name),
             chain((review_type.settings, *review_type.fallbacks)),
@@ -6363,6 +6364,13 @@ def _describe_plan(plan: ReviewPlan) -> "tuple[str, ...]":
             verified=review_type.name != CHECKS_LEVEL,
         )
         for review_type in plan.types
+    )
+    code = plan.get(CODE_LEVEL)
+    if code is None:
+        return lines
+    return lines + format_shared_providers(
+        [item.review_engine for item in (code.settings, *code.fallbacks)],
+        [item.review_engine for item in code.verifiers],
     )
 
 

@@ -129,6 +129,34 @@ def format_type_engines(
     return line + "."
 
 
+def format_shared_providers(
+    review: "Sequence[str]", verify: "Sequence[str]"
+) -> "tuple[str, ...]":
+    """Warn, before any review, when one provider carries what looks like two.
+
+    ``review`` and ``verify`` are the engines of the code review's stages, in the
+    order they are tried. These are the notes ``format_review_plan`` gives one
+    fallback and one verifier, said of whole chains.
+    """
+
+    if not verify or len(review) < 2:
+        return ()
+    reviewer, fallbacks = review[0], set(review[1:])
+    verifiers = set(verify)
+    if len(fallbacks) == 1 and fallbacks == verifiers and reviewer not in fallbacks:
+        (shared,) = fallbacks
+        return (
+            f"Note: {shared} serves both fallback and verification, "
+            "so one provider limit stops both.",
+        )
+    if verifiers == {reviewer} and fallbacks - {reviewer}:
+        return (
+            f"Note: {reviewer} serves both review and verification, so while "
+            f"it is down the fallback's findings cannot be verified or delivered.",
+        )
+    return ()
+
+
 def format_review_plan(
     review_engine: str,
     review_model: Optional[str],
