@@ -9,8 +9,30 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.7.1 199f8917f01208067545cfdf351f00a2a3eda18c -->
+<!-- release-baseline: 3.8.0 c605017df3da911bb1d90aad0ce05be917838edc -->
 ## [Unreleased]
+
+## [3.8.0] - 2026-11-22
+
+### Added
+
+- **config:** read review types and their engines from reviews.json (`0bd30ce`).
+
+### Fixed
+
+- **config:** leave replaced .env keys unread and refuse a missing REVIEWS_FILE (`774f52d`).
+- **config:** refuse a custom engine on the command line with a reviews file (`85702a8`).
+- **cli:** keep the shared-provider startup notes with a reviews file (`db61fb4`).
+- **github:** do not take a reply in a thread for the reviewer's review (`91723dc`).
+
+### Changed
+
+- **engine:** let a stage fall back through a chain of engines (`36c41bb`).
+
+### Documentation
+
+- say the effort keys are not read with a reviews file (`87cf508`).
+- say a thread reply is not the reviewer's review of a head (`c605017`).
 
 ## [3.7.1] - 2026-11-20
 
