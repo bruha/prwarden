@@ -13,7 +13,8 @@ installing a schedule are each asked for.
 `--slack` connects Slack to an existing configuration the same way, and
 `--import CHECKOUT` copies a source checkout's configuration and delivery records
 instead, so an installed copy carries on where the clone left off without
-reviewing anything twice.
+reviewing anything twice. `--reviews` writes `reviews.json` from the review-engine
+settings in `.env`, once it has checked that the file plans the same reviews.
 """
 
 import argparse
@@ -37,11 +38,21 @@ from .config import (
     default_locations,
     load_env_file,
     load_repositories,
+    load_settings,
     managed_checkout_path,
     resolve_path,
 )
 from .models import Repository
 from .paths import Locations
+from .reviews_file import (
+    FILE_KEYS,
+    load_reviews_file,
+    parse_reviews,
+    plan_summary,
+    render_reviews,
+    reviews_payload,
+    settings_from_reviews,
+)
 
 
 ENV_REFERENCE = "https://github.com/bruha/prwarden/blob/main/.env.example"
@@ -953,6 +964,47 @@ def interactive(prompter: Prompter, locations: Locations) -> int:
     return 0
 
 
+# The reviews file --------------------------------------------------------------
+
+
+def write_reviews_file(locations: Locations, say: Callable[[str], None] = print) -> int:
+    """Write `reviews.json` from the review-engine settings in `.env`.
+
+    The file is written only when it plans exactly the reviews `.env` does, so the
+    move changes nothing a run does; from then on the `.env` keys it replaces are
+    not read, and deleting the file goes back to them.
+    """
+
+    target = locations.reviews_file
+    if target.exists():
+        raise SetupError(
+            f"{target} already exists; edit it, or move it away to write it again "
+            "from .env"
+        )
+    settings = load_settings(locations.env_file)
+    if settings.reviews is not None:
+        raise SetupError(
+            f"PR Warden already reads its review types from {settings.reviews.source}"
+        )
+    payload = json.loads(json.dumps(reviews_payload(settings)))
+    moved = settings_from_reviews(settings, parse_reviews(payload, target))
+    if plan_summary(moved) != plan_summary(settings):
+        raise SetupError(
+            "A reviews file written from .env would not plan the same reviews, so "
+            "none was written; write it by hand from reviews.example.json"
+        )
+    _write_private(target, render_reviews(payload))
+    say(f"Wrote {target}: it plans the same reviews as .env.")
+    unread = [key for key in FILE_KEYS if os.environ.get(key, "").strip()]
+    if unread:
+        say(
+            "From now on these .env settings are not read, and you can remove them: "
+            + ", ".join(unread)
+        )
+    say(f"To go back to .env, delete {target.name}.")
+    return 0
+
+
 # Importing a clone -------------------------------------------------------------
 
 
@@ -973,16 +1025,34 @@ def import_checkout(
     source_repositories = resolve_path(configured_repositories, checkout)
     configured_state = declared.get("STATE_FILE", ".state/review-state.json")
     source_state = resolve_path(configured_state, checkout)
+    source_reviews = resolve_path(
+        declared.get("REVIEWS_FILE") or "reviews.json", checkout
+    )
+    if declared.get("REVIEWS_FILE") and not source_reviews.exists():
+        raise SetupError(
+            f"{checkout}'s REVIEWS_FILE names {source_reviews}, which does not exist"
+        )
     if not source_repositories.exists():
         raise SetupError(f"{checkout} has no {configured_repositories} to import")
     if locations.config_directory == checkout:
         raise SetupError("That checkout is this installation's own configuration")
-    for path in (locations.env_file, locations.repositories_file, locations.state_file):
+    for path in (
+        locations.env_file,
+        locations.repositories_file,
+        locations.reviews_file,
+        locations.state_file,
+    ):
         if path.exists():
             raise SetupError(
                 f"{path} already exists; move it away first, so nothing is merged "
                 "by accident"
             )
+    # Read before anything is written, so a file no run could read stops the import
+    # rather than arriving beside the rest.
+    reviews_text = None
+    if source_reviews.exists():
+        load_reviews_file(source_reviews)
+        reviews_text = source_reviews.read_text(encoding="utf-8")
 
     entries = json.loads(source_repositories.read_text(encoding="utf-8"))
     for entry in entries:
@@ -992,7 +1062,7 @@ def import_checkout(
     for raw in source_env.read_text(encoding="utf-8").splitlines():
         key = raw.split("=", 1)[0].strip()
         # The copied files are now where these defaults point.
-        if key in ("REPOSITORIES_FILE", "STATE_FILE"):
+        if key in ("REPOSITORIES_FILE", "REVIEWS_FILE", "STATE_FILE"):
             continue
         if key in ("GITHUB_COMMENT_TEMPLATE_FILE", "GITHUB_COMMENT_TAGS_FILE"):
             value = raw.split("=", 1)[1].strip().strip("'\"")
@@ -1002,6 +1072,9 @@ def import_checkout(
     _write_private(locations.repositories_file, json.dumps(entries, indent=2) + "\n")
     load_repositories(locations.repositories_file, locations.checkouts_directory)
     say(f"Imported {source_env} and {source_repositories}")
+    if reviews_text is not None:
+        _write_private(locations.reviews_file, reviews_text)
+        say(f"Imported the review types in {source_reviews}")
     if source_state.exists():
         locations.state_directory.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_state, locations.state_file)
@@ -1035,13 +1108,21 @@ def main(argv: Sequence[str], prompter: Optional[Prompter] = None) -> int:
         dest="import_from",
         type=Path,
         metavar="CHECKOUT",
-        help="copy a source checkout's .env, repositories, and delivery records",
+        help="copy a source checkout's .env, repositories, review types, and "
+        "delivery records",
+    )
+    choice.add_argument(
+        "--reviews",
+        action="store_true",
+        help="write reviews.json from the review-engine settings in .env",
     )
     args = parser.parse_args(argv)
     try:
         locations = default_locations()
         if args.import_from is not None:
             return import_checkout(args.import_from, locations)
+        if args.reviews:
+            return write_reviews_file(locations)
         if prompter is None:
             if not sys.stdin.isatty():
                 raise SetupError("setup asks questions; run it in a terminal")

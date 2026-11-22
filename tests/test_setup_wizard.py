@@ -9,11 +9,12 @@ import urllib.parse
 from pathlib import Path
 from unittest.mock import patch
 
-from prwarden import setup_wizard
+from prwarden import config, setup_wizard
 from prwarden.commands import CommandError
-from prwarden.config import load_env_file, load_repositories
+from prwarden.config import ConfigError, load_env_file, load_repositories
 from prwarden.delivery import DeliveryError, DeliveryUncertainError
-from prwarden.paths import Locations
+from prwarden.paths import PACKAGE_ROOT, Locations
+from prwarden.reviews_file import plan_summary
 from prwarden.setup_wizard import Prompter, SetupError
 from prwarden.tools import TOOLS_BY_KEY, ToolState
 
@@ -367,6 +368,112 @@ class ImportTests(unittest.TestCase):
             setup_wizard.import_checkout(self.checkout, self.locations, print)
         self.assertFalse(self.locations.env_file.exists())
 
+    def test_the_review_types_carry_over(self) -> None:
+        example = (PACKAGE_ROOT / "reviews.example.json").read_text(encoding="utf-8")
+        (self.checkout / "reviews.json").write_text(example, encoding="utf-8")
+        with (self.checkout / ".env").open("a", encoding="utf-8") as env:
+            env.write("REVIEWS_FILE=reviews.json\n")
+
+        setup_wizard.import_checkout(self.checkout, self.locations, lambda line: None)
+
+        self.assertEqual(
+            self.locations.reviews_file.read_text(encoding="utf-8"), example
+        )
+        self.assertEqual(mode(self.locations.reviews_file), 0o600)
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertNotIn(
+                "REVIEWS_FILE", load_env_file(self.locations.env_file)
+            )
+
+    def test_review_types_no_run_could_read_stop_the_import(self) -> None:
+        (self.checkout / "reviews.json").write_text('{"types": {}}', encoding="utf-8")
+
+        with self.assertRaises(ConfigError):
+            setup_wizard.import_checkout(self.checkout, self.locations, print)
+        self.assertFalse(self.locations.env_file.exists())
+        self.assertFalse(self.locations.reviews_file.exists())
+
+
+class WriteReviewsFileTests(unittest.TestCase):
+    """`setup --reviews` moves `.env`'s review engines into the file only when the
+    file plans exactly the reviews `.env` did."""
+
+    ENV = (
+        "GITHUB_REVIEWER_USERNAME=reviewer\n"
+        "REVIEW_ENGINE=kiro\nREVIEW_MODEL=claude-sonnet-5.5\nREVIEW_EFFORT=high\n"
+        "REVIEW_VERIFY_ENGINE=codex\nREVIEW_FALLBACK_ENGINE=claude\n"
+        "REVIEW_CONCURRENCY=3\nMAX_DIFF_BYTES=5000\nREVIEW_DOCS_LEVEL=0\n"
+    )
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name).resolve()
+        self.locations = Locations("user", root, root / "state", root / "checkouts")
+        self.write_env(self.ENV)
+        self.locations.repositories_file.write_text(
+            '[{"slug": "owner/repo", "path": "' + str(root) + '"}]',
+            encoding="utf-8",
+        )
+        for patcher in (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(config, "default_locations", return_value=self.locations),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def write_env(self, text: str) -> None:
+        self.locations.env_file.write_text(text, encoding="utf-8")
+        self.locations.env_file.chmod(0o600)
+
+    def settings(self):
+        with patch.dict(os.environ, {}, clear=True):
+            return config.load_settings()
+
+    def test_the_file_plans_the_reviews_env_did(self) -> None:
+        before = plan_summary(self.settings())
+        said = []
+
+        self.assertEqual(
+            setup_wizard.write_reviews_file(self.locations, said.append), 0
+        )
+
+        after = self.settings()
+        self.assertEqual(after.reviews.source, self.locations.reviews_file)
+        self.assertEqual(plan_summary(after), before)
+        self.assertEqual(mode(self.locations.reviews_file), 0o600)
+        text = self.locations.reviews_file.read_text(encoding="utf-8")
+        self.assertIn(
+            '{"engine": "kiro", "model": "claude-sonnet-5.5", "effort": "high"}', text
+        )
+        self.assertIn("REVIEW_ENGINE, REVIEW_MODEL", "\n".join(said))
+
+    def test_an_existing_file_is_never_replaced(self) -> None:
+        self.locations.reviews_file.write_text("{}", encoding="utf-8")
+
+        with self.assertRaisesRegex(SetupError, "already exists"):
+            setup_wizard.write_reviews_file(self.locations, print)
+        self.assertEqual(
+            self.locations.reviews_file.read_text(encoding="utf-8"), "{}"
+        )
+
+    def test_a_file_that_would_review_differently_is_not_written(self) -> None:
+        with patch(
+            "prwarden.setup_wizard.plan_summary", side_effect=[["file"], ["env"]]
+        ), self.assertRaisesRegex(SetupError, "not plan the same reviews"):
+            setup_wizard.write_reviews_file(self.locations, print)
+        self.assertFalse(self.locations.reviews_file.exists())
+
+    def test_a_custom_command_engine_stays_in_env(self) -> None:
+        self.write_env(
+            "GITHUB_REVIEWER_USERNAME=reviewer\nREVIEW_ENGINE=command\n"
+            'REVIEW_ENGINE_COMMAND=["/bin/review"]\n'
+        )
+
+        with self.assertRaisesRegex(ConfigError, "names only the built-in"):
+            setup_wizard.write_reviews_file(self.locations, print)
+        self.assertFalse(self.locations.reviews_file.exists())
+
 
 class OpenInBrowserTests(unittest.TestCase):
     URL = "https://api.slack.com/apps?new_app=1"
@@ -701,6 +808,14 @@ class MainTests(unittest.TestCase):
             self.assertEqual(cli.main(["setup", "--import", "x"]), 0)
 
         entry.assert_called_once_with(["--import", "x"])
+
+    def test_setup_reviews_needs_no_terminal(self) -> None:
+        with patch("sys.stdin", io.StringIO()), patch(
+            "prwarden.setup_wizard.write_reviews_file", return_value=0
+        ) as write:
+            self.assertEqual(setup_wizard.main(["--reviews"]), 0)
+
+        write.assert_called_once()
 
     def test_setup_slack_connects_slack_alone(self) -> None:
         prompter = ScriptedPrompter([])

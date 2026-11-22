@@ -802,3 +802,79 @@ def reviews_payload(settings: Settings) -> "dict[str, Any]":
     payload["order"] = [name for name in plan.names if name in ORDERED_TYPES]
     payload["types"] = types
     return payload
+
+
+def plan_summary(settings: Settings) -> "list[Any]":
+    """Return everything the reviews ``settings`` plan depend on, as plain values.
+
+    Two settings whose summaries are equal review every pull request alike: the same
+    types in the same order, on the same engines, models and efforts, within the
+    same limits. Setup compares the two before it moves `.env` into a file.
+    """
+
+    from .review_plan import review_plan
+
+    def chain(items: "Sequence[Settings]") -> "list[Any]":
+        return [
+            (
+                item.review_engine,
+                item.review_model,
+                item.review_effort,
+                item.review_engine_env_allowlist,
+            )
+            for item in items
+        ]
+
+    return [
+        (
+            settings.review_concurrency,
+            settings.max_diff_bytes,
+            settings.max_review_bundles,
+            tuple(settings.ignored_missing_patch_patterns),
+        ),
+        *(
+            (
+                review_type.name,
+                chain((review_type.settings, *review_type.fallbacks)),
+                chain(review_type.verifiers),
+                review_type.settings.review_timeout_seconds,
+                review_type.settings.review_verify_timeout_seconds,
+                review_type.settings.review_verify_timeout_per_candidate_seconds,
+                review_type.settings.max_findings,
+                review_type.settings.max_design_findings,
+                review_type.settings.max_docs_findings,
+            )
+            for review_type in review_plan(settings).types
+        ),
+    ]
+
+
+def render_reviews(payload: "Mapping[str, Any]") -> str:
+    """Return ``payload`` as the text of a reviews file a person can read and edit.
+
+    Indented as JSON usually is, except that an object or list holding no other, an
+    engine or the order, stays on one line when it fits, as in the example file.
+    """
+
+    def render(value: Any, depth: int, before: int) -> str:
+        # ``before`` is how much of the line precedes the value, so a value kept on
+        # one line is kept there only when the whole line fits.
+        if not isinstance(value, (dict, list)):
+            return json.dumps(value)
+        items = list(value.values()) if isinstance(value, dict) else value
+        flat = json.dumps(value)
+        if not any(isinstance(item, (dict, list)) and item for item in items) and (
+            before + len(flat) + 1 <= 88
+        ):
+            return flat
+        inner = "  " * (depth + 1)
+        if isinstance(value, dict):
+            lines = []
+            for key, item in value.items():
+                head = f"{inner}{json.dumps(key)}: "
+                lines.append(head + render(item, depth + 1, len(head)))
+            return "{\n" + ",\n".join(lines) + "\n" + "  " * depth + "}"
+        lines = [f"{inner}{render(item, depth + 1, len(inner))}" for item in value]
+        return "[\n" + ",\n".join(lines) + "\n" + "  " * depth + "]"
+
+    return render(dict(payload), 0, 0) + "\n"

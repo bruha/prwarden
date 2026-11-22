@@ -227,7 +227,10 @@ stops the run rather than review on `.env`'s engines. It is private configuratio
 `repositories.json` and is never committed; `reviews.example.json` is, and a test
 loads it with the real loader. Without the file a run takes every setting below from
 `.env`, as it always has, and `reviews_payload` writes those settings out as the file
-that plans the same reviews.
+that plans the same reviews. `prwarden setup --reviews` writes that file, only when
+none exists and only once `plan_summary` finds the two plans equal: the same types in
+the same order, on the same engines, models, efforts and allowlists, within the same
+timeouts and limits. A custom `command` engine cannot move and is refused.
 
 - `types` holds `design`, `docs`, `code`, and `checks`. `code` is required and
   cannot be disabled, since it alone approves; another type left out or set
@@ -283,8 +286,8 @@ review invocation can be mistaken for one.
   leaves Slack off for every entry unless a webhook is connected. It writes
   `AUTO_REVIEW_DRY_RUN=1`; a preview, going live, and a schedule are each asked
   for. `--import` copies a source checkout's configuration with its relative paths
-  made absolute, and its delivery records, and refuses to merge into an existing
-  installation.
+  made absolute, its `reviews.json` once the loader accepts it, and its delivery
+  records, and refuses to merge into an existing installation.
 - Connecting Slack, in `setup` or alone with `setup --slack`, is asked for. Without
   a webhook it can open Slack's new-app page with a manifest filled in for an app
   whose one scope is `incoming-webhook`, and only on a desktop session: never over

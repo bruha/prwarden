@@ -15,6 +15,7 @@ from prwarden.reviews_file import (
     apply_overrides,
     load_reviews_file,
     parse_reviews,
+    render_reviews,
     reviews_payload,
     settings_from_reviews,
 )
@@ -321,6 +322,13 @@ class PlanTests(unittest.TestCase):
                             review_type.settings.review_engine_env_allowlist,
                             base.review_engine_env_allowlist,
                         )
+
+    def test_the_written_file_reads_back_as_the_payload(self) -> None:
+        text = render_reviews(example())
+
+        self.assertEqual(json.loads(text), example())
+        self.assertIn('"order": ["design", "docs", "code"]', text)
+        self.assertTrue(all(len(line) <= 88 for line in text.splitlines()))
 
     def test_a_custom_command_engine_stays_in_env(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

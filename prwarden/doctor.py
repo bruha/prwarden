@@ -412,7 +412,13 @@ def check_reviews_file(settings: Settings) -> List[Check]:
     """Say where each type's engines come from, and which `.env` keys go unread."""
 
     if settings.reviews is None:
-        return [Check(OK, "reviews: engines from .env; no reviews file")]
+        return [
+            Check(
+                OK,
+                "reviews: engines from .env; no reviews file "
+                "(`prwarden setup --reviews` writes one)",
+            )
+        ]
     checks = [
         Check(
             OK,
