@@ -9,8 +9,18 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.8.0 c605017df3da911bb1d90aad0ce05be917838edc -->
+<!-- release-baseline: 3.9.0 48f793ce94e672075598699928e6c5c549982b4d -->
 ## [Unreleased]
+
+## [3.9.0] - 2026-11-23
+
+### Added
+
+- **setup:** write reviews.json from .env with setup --reviews (`0ac5d74`).
+
+### Fixed
+
+- **cli:** explain a closed requested PR and an unwritable state directory (`48b373a`).
 
 ## [3.8.0] - 2026-11-22
 
