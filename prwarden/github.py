@@ -274,6 +274,45 @@ def _flatten_pages(output: str, description: str) -> list[dict[str, Any]]:
     return records
 
 
+def why_not_listed(
+    repository: Repository,
+    number: int,
+    excluded_labels: frozenset[str] = frozenset(),
+) -> Optional[str]:
+    """Return why ``number`` is rightly not among the pull requests to review.
+
+    Merged, closed, a draft, or carrying an excluded label: each leaves nothing to
+    review, so a run asked for that one pull request has nothing to do. None means
+    no such reason was read, which leaves the request an error: a pull request that
+    does not exist, or one GitHub would not describe.
+    """
+
+    try:
+        output = _run_for(
+            repository,
+            ["gh", "api", f"repos/{repository.slug}/pulls/{number}"],
+            retry_transient=True,
+        )
+        item = _parse_json(output, f"reading {repository.slug}#{number}")
+    except CommandError:
+        return None
+    if not isinstance(item, dict):
+        return None
+    if item.get("merged_at"):
+        return "is merged"
+    if item.get("state") == "closed":
+        return "is closed"
+    if item.get("draft") is True:
+        return "is a draft"
+    excluded = {label.strip().casefold() for label in excluded_labels}
+    labels = item.get("labels") if isinstance(item.get("labels"), list) else []
+    for label in labels:
+        name = label.get("name") if isinstance(label, dict) else None
+        if isinstance(name, str) and name.strip().casefold() in excluded:
+            return f"has the excluded label {name!r}"
+    return None
+
+
 def list_open_prs(
     repository: Repository,
     excluded_labels: frozenset[str] = frozenset(),

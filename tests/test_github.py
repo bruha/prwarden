@@ -30,6 +30,7 @@ from prwarden.github import (
     list_prior_review_comments,
     submit_approval,
     submit_review,
+    why_not_listed,
 )
 from prwarden.models import Finding, FindingEvidence, PullRequest, Repository
 
@@ -94,6 +95,39 @@ class ObjectNameValidationTests(unittest.TestCase):
         with patch("prwarden.github.run_cmd", return_value=response):
             with self.assertRaisesRegex(CommandError, "not a Git object name"):
                 get_pull_request_snapshot(Repository("app", "owner/app"), pull_request)
+
+
+class WhyNotListedTests(unittest.TestCase):
+    """Why a pull request asked for by number is not among those to review."""
+
+    REPOSITORY = Repository("app", "owner/app")
+
+    def reason(self, item=None, error=None):
+        output = json.dumps(item) if item is not None else ""
+        with patch(
+            "prwarden.github.run_cmd",
+            side_effect=error or (lambda *args, **kwargs: output),
+        ):
+            return why_not_listed(self.REPOSITORY, 7, frozenset({"In Progress"}))
+
+    def test_what_leaves_nothing_to_review(self):
+        open_item = {"state": "open", "draft": False, "labels": []}
+        for item, expected in (
+            ({**open_item, "state": "closed", "merged_at": "2026-11-20"}, "is merged"),
+            ({**open_item, "state": "closed", "merged_at": None}, "is closed"),
+            ({**open_item, "draft": True}, "is a draft"),
+            (
+                {**open_item, "labels": [{"name": "in progress"}]},
+                "has the excluded label 'in progress'",
+            ),
+        ):
+            with self.subTest(expected=expected):
+                self.assertEqual(self.reason(item), expected)
+
+    def test_what_leaves_the_request_an_error(self):
+        self.assertIsNone(self.reason({"state": "open", "draft": False, "labels": []}))
+        self.assertIsNone(self.reason(error=CommandError("HTTP 404: Not Found")))
+        self.assertIsNone(self.reason([]))
 
 
 class ReviewerCommentMiningTests(unittest.TestCase):

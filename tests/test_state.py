@@ -2,8 +2,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from prwarden.state import JsonStateStore, StateError
+from prwarden.state import JsonStateStore, StateError, StateLockedError
 
 
 class JsonStateTests(unittest.TestCase):
@@ -104,6 +105,21 @@ class JsonStateTests(unittest.TestCase):
             with JsonStateStore(path):
                 with JsonStateStore(path, lock_enabled=False) as store:
                     self.assertEqual(store.data, {"version": 1, "records": {}})
+
+    def test_a_state_directory_it_cannot_write_is_said_plainly(self):
+        """A sandboxed run once crashed here with a bare PermissionError."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.json"
+            with patch.object(
+                Path, "open", side_effect=PermissionError(1, "Operation not permitted")
+            ):
+                with self.assertRaisesRegex(
+                    StateError, "Cannot write the review state.*outside any sandbox"
+                ) as raised:
+                    with JsonStateStore(path):
+                        pass
+        self.assertNotIsInstance(raised.exception, StateLockedError)
 
 
 if __name__ == "__main__":
