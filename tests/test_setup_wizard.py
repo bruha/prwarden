@@ -115,6 +115,19 @@ class WizardTests(unittest.TestCase):
             answers[int(index[1:])] = value
         return answers
 
+    def test_the_engines_chosen_win_over_ones_the_shell_exports(self) -> None:
+        """Setup read its answers back through the environment, so an exported
+        REVIEW_ENGINE replaced the engine just chosen."""
+
+        os.environ.update({"REVIEW_ENGINE": "codex", "REVIEW_MODEL": "gpt-x"})
+
+        self.run_wizard(self.answers())
+
+        code = load_reviews_file(self.locations.reviews_file).get("code")
+        self.assertEqual(code.review.engines[0].engine, "claude")
+        self.assertIsNone(code.review.engines[0].model)
+        self.assertEqual(os.environ["REVIEW_ENGINE"], "codex")
+
     def test_a_new_configuration_is_written_dry_and_private(self) -> None:
         result, prompter = self.run_wizard(self.answers())
 
@@ -470,6 +483,18 @@ class WriteReviewsFileTests(unittest.TestCase):
         backup = self.locations.config_directory / ".env.before-4.0.0"
         self.assertEqual(backup.read_text(encoding="utf-8"), self.ENV)
         self.assertEqual(mode(backup), 0o600)
+
+    def test_a_reviews_file_read_from_elsewhere_is_refused(self) -> None:
+        elsewhere = self.locations.config_directory / "other-reviews.json"
+        elsewhere.write_text(
+            (PACKAGE_ROOT / "reviews.example.json").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        self.write_env(self.ENV + f"REVIEWS_FILE={elsewhere}\n")
+
+        with self.assertRaisesRegex(SetupError, "already reads its review types"):
+            setup_wizard.write_reviews_file(self.locations, print)
+        self.assertFalse(self.locations.reviews_file.exists())
 
     def test_with_nothing_to_move_it_points_to_setup(self) -> None:
         self.write_env("GITHUB_REVIEWER_USERNAME=reviewer\n")

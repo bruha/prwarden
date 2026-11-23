@@ -44,7 +44,7 @@ from .config import (
 )
 from .models import Repository
 from .paths import Locations
-from .reviews_file import load_reviews_file, move_env_into_file
+from .reviews_file import FILE_KEYS, load_reviews_file, move_env_into_file
 
 
 ENV_REFERENCE = "https://github.com/bruha/prwarden/blob/main/.env.example"
@@ -359,13 +359,20 @@ def write_configuration(
     # The engines chosen go where every run reads them, written the way a move from
     # `.env` writes them, so a new configuration and a moved one look alike.
     locations.reviews_file.unlink(missing_ok=True)
-    move_env_into_file(
-        load_settings(
+    # The answers just given, not whatever review settings the shell exports, which
+    # the environment would otherwise put ahead of `.env`.
+    shell = dict(os.environ)
+    try:
+        for key in FILE_KEYS:
+            os.environ.pop(key, None)
+        chosen = load_settings(
             locations.env_file, locations.repositories_file, locations.state_file
-        ),
-        locations.env_file,
-        locations.reviews_file,
-        backup=False,
+        )
+    finally:
+        os.environ.clear()
+        os.environ.update(shell)
+    move_env_into_file(
+        chosen, locations.env_file, locations.reviews_file, backup=False
     )
     say(
         f"Wrote {locations.env_file}, {locations.repositories_file}, and "
@@ -990,7 +997,9 @@ def write_reviews_file(locations: Locations, say: Callable[[str], None] = print)
         raise SetupError(f"{target} already exists; edit it to change the reviews")
     settings = load_settings(locations.env_file, move_env=True)
     if settings.reviews is not None and settings.reviews.source != target:
-        say(f"PR Warden already reads its review types from {settings.reviews.source}")
+        raise SetupError(
+            f"PR Warden already reads its review types from {settings.reviews.source}"
+        )
     return 0
 
 

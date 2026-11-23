@@ -703,6 +703,21 @@ class MoveEnvTests(unittest.TestCase):
         # Every other reader still reads `.env` as it is.
         self.assertIsNone(self.load()[0].reviews)
 
+    def test_an_installation_with_no_configuration_is_told_its_repositories_first(
+        self,
+    ) -> None:
+        """The install check looks for the repositories file in the first error."""
+
+        self.locations.env_file.unlink()
+        self.locations.repositories_file.unlink()
+
+        with self.assertRaisesRegex(ConfigError, "repositories.json"):
+            self.load(move_env=True)
+        self.assertEqual(
+            sorted(path.name for path in self.locations.config_directory.iterdir()),
+            [],
+        )
+
     def test_a_setting_only_the_environment_holds_is_not_moved(self) -> None:
         with self.assertRaisesRegex(ConfigError, "REVIEW_EFFORT is set in the"):
             self.load({"REVIEW_EFFORT": "max"}, move_env=True)

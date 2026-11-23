@@ -900,6 +900,11 @@ def load_settings(
         settings_from_reviews,
     )
 
+    # Read first, so an installation with no configuration at all is told about the
+    # list of repositories it needs before anything else.
+    repositories = load_repositories(
+        selected_repositories_file, locations.checkouts_directory
+    )
     reviews_path = _reviews_file(locations, base_directory)
     reviews = load_reviews_file(reviews_path)
     if reviews is None and move_env:
@@ -947,9 +952,7 @@ def load_settings(
     settings = Settings(
         **engines,
         reviewer_username=resolve_github_username(),
-        repositories=load_repositories(
-            selected_repositories_file, locations.checkouts_directory
-        ),
+        repositories=repositories,
         dry_run=parse_bool(os.getenv("AUTO_REVIEW_DRY_RUN", "1"), "AUTO_REVIEW_DRY_RUN"),
         slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL", "").strip() or None,
         state_file=selected_state_file,
