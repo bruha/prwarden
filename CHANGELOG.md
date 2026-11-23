@@ -9,8 +9,30 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 3.9.0 48f793ce94e672075598699928e6c5c549982b4d -->
+<!-- release-baseline: 4.0.0 92e2df6514020119b92942b7f81d5e90a4139e92 -->
 ## [Unreleased]
+
+## [4.0.0] - 2026-11-23
+
+### Breaking Changes
+
+- **config:** move .env's review settings into reviews.json (`6468943`).
+
+### Added
+
+- **config:** let reviews.json name each engine's command (`41b59e8`).
+- **reviews:** give matched pull requests their own plan, and add --types (`6c3d5ff`).
+
+### Fixed
+
+- **schedule:** put every executable reviews.json names on the scheduled PATH (`3ed7a76`).
+- **config:** name the repositories first and keep setup to its own answers (`da56445`).
+- **workspace:** clear review folders earlier runs left behind (`9b04ed6`).
+- **doctor:** check the engines a rule names, and say rules pick the plan (`92e2df6`).
+
+### Testing
+
+- **setup:** expect the wrapper path as the loader resolves it (`22d40c5`).
 
 ## [3.9.0] - 2026-11-23
 
