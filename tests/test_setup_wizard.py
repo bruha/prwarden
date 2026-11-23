@@ -511,7 +511,10 @@ class WriteReviewsFileTests(unittest.TestCase):
 
         after = self.settings()
         self.assertEqual(plan_summary(after), before)
-        self.assertEqual(after.review_engine_command, ("/bin/review",))
+        # Resolved as every absolute command is: /bin is a link on some systems.
+        self.assertEqual(
+            after.review_engine_command, (os.path.realpath("/bin/review"),)
+        )
 
 
 class OpenInBrowserTests(unittest.TestCase):
