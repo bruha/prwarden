@@ -71,7 +71,7 @@ def check_engines(
     }
     if settings.reviews is not None:
         # Every engine the file names, once, whichever stages name it.
-        commands = engine_commands()
+        commands = engine_commands(settings.reviews)
         named = sorted(
             {
                 choice.engine

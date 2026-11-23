@@ -230,14 +230,19 @@ loads it with the real loader. Without the file a run takes every setting below 
 that plans the same reviews. `prwarden setup --reviews` writes that file, only when
 none exists and only once `plan_summary` finds the two plans equal: the same types in
 the same order, on the same engines, models, efforts and allowlists, within the same
-timeouts and limits. A custom `command` engine cannot move and is refused.
+timeouts and limits, from the same commands. `.env`'s one command,
+`REVIEW_ENGINE_COMMAND`, moves to `engines.<engine>.command` for the reviewer's
+engine; where `.env` ran that engine from its default executable in another role,
+the plans differ and nothing is written.
 
 - `types` holds `design`, `docs`, `code`, and `checks`. `code` is required and
   cannot be disabled, since it alone approves; another type left out or set
   `"enabled": false` does not run.
 - Each type has a `review` stage and, except `checks`, an optional `verify` stage.
   A stage lists one to four engines, each a built-in engine with an optional model
-  and effort, and no engine and model twice. The first reviews or verifies, and each
+  and effort, and no engine and model twice. The custom `command` engine may be a
+  review stage's first engine only, takes no effort, and needs
+  `engines.command.command`. The first reviews or verifies, and each
   after it takes over when the one before fails at the engine level, as the single
   fallback always did; the error that ends the chain names every failure. A type
   with no `verify` stage verifies with its reviewer in a separate pass, within the
@@ -249,10 +254,11 @@ timeouts and limits. A custom `command` engine cannot move and is refused.
 - `order` lists the enabled ordered types, `design`, `docs`, and `code`, once each,
   and must end with `code`.
 - `concurrency`, `diff.max_bytes`, `diff.max_bundles`, `diff.ignored_missing_patch`,
-  and `engines.<engine>.env` apply to the whole run; each engine's CLI is given the
-  variables its own `env` names, beyond the few every engine gets.
+  and `engines.<engine>` apply to the whole run; each engine's CLI is given the
+  variables its own `env` names, beyond the few every engine gets, and runs from
+  its `command`, an argument list, when one is named, in every role.
 
-An unknown key, a value out of range, or a custom `command` engine is refused with
+An unknown key, a value out of range, or a misplaced `command` engine is refused with
 the setting's path in the file. The run's own settings, which name its reviewer in
 the run's reports, are the code review's. The command-line engine and model options
 change the file's first engine of every type's matching stage for one run, a

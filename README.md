@@ -324,11 +324,15 @@ Git.
   `code`: the advisory notes reach the pull request before the approval an agent
   merges on.
 - `concurrency`, `diff` (`max_bytes`, `max_bundles`, `ignored_missing_patch`), and
-  `engines.<engine>.env`, the variables that engine's CLI is given beyond the few
-  every one gets, are shared by every type.
+  `engines.<engine>`, are shared by every type: its `env` lists the variables that
+  engine's CLI is given beyond the few every one gets, and its `command`, as a list
+  of arguments, runs the engine from another executable, for every stage that names
+  it.
+- A custom wrapper is the engine `command`, run by `engines.command.command`. It
+  takes no effort and, as in `.env`, can only be the first engine of a `review`
+  stage.
 
-A custom `command` engine cannot be named in the file; keep it in `.env` without a
-`reviews.json`. `--engine`, `--model`, `--verify-engine`, `--verify-model`,
+`--engine`, `--model`, `--verify-engine`, `--verify-model`,
 `--fallback-engine`, `--fallback-model`, `--no-fallback`, and `--concurrency` change
 the file's settings for one run, for every type: a different engine does not take the
 model or effort written for the one it replaces.

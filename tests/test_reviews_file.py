@@ -158,7 +158,28 @@ class ParseTests(unittest.TestCase):
                 lambda p: code(p)["review"]["engines"][0].update({"effort": "fast"})
             ),
             "types.code.review.engines[0].engine must be one of": changed(
-                lambda p: code(p)["review"]["engines"][0].update({"engine": "command"})
+                lambda p: code(p)["review"]["engines"][0].update({"engine": "cursor"})
+            ),
+            "engines.command.command is required": changed(
+                lambda p: code(p)["review"]["engines"].__setitem__(
+                    0, {"engine": "command"}
+                )
+            ),
+            "types.code.review.engines[1] names the command engine": changed(
+                lambda p: code(p)["review"]["engines"].insert(1, {"engine": "command"})
+            ),
+            "types.code.verify.engines[0] names the command engine": changed(
+                lambda p: code(p)["verify"]["engines"].insert(0, {"engine": "command"})
+            ),
+            "types.code.review.engines[0].effort cannot be set for the command": (
+                changed(
+                    lambda p: code(p)["review"]["engines"][0].update(
+                        {"engine": "command", "effort": "high"}
+                    )
+                )
+            ),
+            "engines.kiro.command must be a list of arguments": changed(
+                lambda p: p["engines"]["kiro"].update({"command": "kiro-cli"})
             ),
             "types.checks.review.engines must list one engine": changed(
                 lambda p: p["types"]["checks"]["review"]["engines"].append(
@@ -330,10 +351,56 @@ class PlanTests(unittest.TestCase):
         self.assertIn('"order": ["design", "docs", "code"]', text)
         self.assertTrue(all(len(line) <= 88 for line in text.splitlines()))
 
-    def test_a_custom_command_engine_stays_in_env(self) -> None:
+    def test_the_reviewers_own_command_moves_into_the_file(self) -> None:
+        """A built-in engine run from its own path, or a custom wrapper, once could
+        not move, or moved onto the engine's default executable unnoticed."""
+
         with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(ConfigError, "names only the built-in"):
-                reviews_payload(env_settings(directory, review_engine="command"))
+            for overrides in (
+                {"review_engine_command": ("/opt/tools/kiro-cli",)},
+                {
+                    "review_engine": "command",
+                    "review_engine_command": ("/opt/tools/review", "--json"),
+                    "review_model": None,
+                    "review_effort": None,
+                    "review_code_effort": None,
+                    "checks_effort": None,
+                    "fallback_engine": None,
+                },
+            ):
+                with self.subTest(overrides=overrides):
+                    base = env_settings(directory, **overrides)
+                    payload = json.loads(json.dumps(reviews_payload(base)))
+                    engine = base.review_engine
+                    self.assertEqual(
+                        payload["engines"][engine]["command"],
+                        list(base.review_engine_command),
+                    )
+                    moved = settings_from_reviews(
+                        base, parse_reviews(payload, SOURCE)
+                    )
+                    code = review_plan(moved).get(CODE_LEVEL)
+                    self.assertEqual(
+                        code.settings.review_engine_command,
+                        base.review_engine_command,
+                    )
+                    self.assertEqual(code.settings.review_engine, engine)
+
+    def test_an_engine_the_file_runs_from_its_own_path_runs_from_there(self) -> None:
+        payload = example()
+        payload["engines"]["kiro"]["command"] = ["/opt/tools/kiro-cli", "--quiet"]
+        with tempfile.TemporaryDirectory() as directory:
+            plan = review_plan(self.with_file(payload, directory))
+
+        code = plan.get(CODE_LEVEL)
+        self.assertEqual(
+            code.settings.review_engine_command, ("/opt/tools/kiro-cli", "--quiet")
+        )
+        self.assertEqual(
+            code.verifiers[0].review_engine_command,
+            ("/opt/tools/kiro-cli", "--quiet"),
+        )
+        self.assertNotEqual(code.fallbacks[0].review_engine_command[0], "/opt/tools")
 
     def test_types_configured_alike_still_share_engines(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -134,7 +134,7 @@ def review_plan(settings: Settings) -> ReviewPlan:
     """
 
     if settings.reviews is not None:
-        commands = engine_commands()
+        commands = engine_commands(settings.reviews)
         return ReviewPlan(
             tuple(
                 ReviewType(

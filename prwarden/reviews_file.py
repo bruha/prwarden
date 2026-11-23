@@ -71,6 +71,10 @@ FILE_KEYS = (
 # The main engine and up to three that take over from it.
 MAX_STAGE_ENGINES = 4
 ENGINES = tuple(sorted(DEFAULT_ENGINE_COMMANDS))
+# A wrapper implementing the common command contract, named by its own command. As in
+# `.env`, it may only be the engine a review stage tries first.
+CUSTOM_ENGINE = "command"
+NAMED_ENGINES = (*ENGINES, CUSTOM_ENGINE)
 # The types a run orders; the checks type runs only when a code review waits for
 # failed checks, so it has no place in the order.
 ORDERED_TYPES = (DESIGN_LEVEL, DOCS_LEVEL, CODE_LEVEL)
@@ -147,6 +151,8 @@ class ReviewsFile:
     )
     # Beyond the few variables every CLI gets, the ones each provider's is given.
     engine_env: "tuple[tuple[str, tuple[str, ...]], ...]" = ()
+    # The executable an engine runs in place of its built-in one, as an argument list.
+    engine_command: "tuple[tuple[str, tuple[str, ...]], ...]" = ()
 
     def get(self, name: str) -> Optional[ReviewTypeConfig]:
         for review_type in self.types:
@@ -156,6 +162,9 @@ class ReviewsFile:
 
     def env_for(self, engine: str) -> "tuple[str, ...]":
         return dict(self.engine_env).get(engine, ())
+
+    def command_for(self, engine: str) -> "Optional[tuple[str, ...]]":
+        return dict(self.engine_command).get(engine)
 
 
 def _refuse(source: object, where: str, problem: str) -> ConfigError:
@@ -204,14 +213,20 @@ def _names(value: Any, source: object, where: str) -> "tuple[str, ...]":
 def _engine_choice(value: Any, source: object, where: str) -> EngineChoice:
     payload = _object(value, source, where, ("engine", "model", "effort"))
     engine = payload.get("engine")
-    if not isinstance(engine, str) or engine.strip().lower() not in ENGINES:
+    if not isinstance(engine, str) or engine.strip().lower() not in NAMED_ENGINES:
         raise _refuse(
-            source, f"{where}.engine", "must be one of " + ", ".join(ENGINES)
+            source, f"{where}.engine", "must be one of " + ", ".join(NAMED_ENGINES)
         )
     model = payload.get("model")
     if model is not None and (not isinstance(model, str) or not model.strip()):
         raise _refuse(source, f"{where}.model", "must be a model ID, or left out")
     effort = payload.get("effort")
+    if effort is not None and engine.strip().lower() == CUSTOM_ENGINE:
+        raise _refuse(
+            source,
+            f"{where}.effort",
+            "cannot be set for the command engine, which has no effort to pass",
+        )
     if effort is not None and (
         not isinstance(effort, str) or effort.strip().lower() not in EFFORT_LEVELS
     ):
@@ -259,6 +274,13 @@ def _stage(
                 "repeats an engine and model the stage already lists",
             )
         seen.add(key)
+        if choice.engine == CUSTOM_ENGINE and (verify or index > 0):
+            raise _refuse(
+                source,
+                f"{where}.engines[{index}]",
+                "names the command engine, which may only be the first engine of a "
+                "review stage",
+            )
     return Stage(
         choices,
         _integer(
@@ -385,23 +407,43 @@ def parse_reviews(payload: Any, source: Path) -> ReviewsFile:
         ("max_bytes", "max_bundles", "ignored_missing_patch"),
     )
     ignored = diff.get("ignored_missing_patch")
-    engines = _object(top.get("engines", {}), source, "engines", ENGINES)
+    engines = _object(top.get("engines", {}), source, "engines", NAMED_ENGINES)
     engine_env = []
-    for engine in ENGINES:
+    engine_command = []
+    for engine in NAMED_ENGINES:
         if engine not in engines:
             continue
         where = f"engines.{engine}"
-        names = _names(
-            _object(engines[engine], source, where, ("env",)).get("env", []),
-            source,
-            f"{where}.env",
-        )
+        entry = _object(engines[engine], source, where, ("command", "env"))
+        names = _names(entry.get("env", []), source, f"{where}.env")
         bad = [name for name in names if not ENV_KEY_PATTERN.fullmatch(name)]
         if bad:
             raise _refuse(
                 source, f"{where}.env", f"names {bad[0]!r}, which is not a variable"
             )
         engine_env.append((engine, names))
+        if "command" in entry:
+            command = entry["command"]
+            if not isinstance(command, list) or not command:
+                raise _refuse(
+                    source, f"{where}.command", "must be a list of arguments"
+                )
+            engine_command.append(
+                (engine, parse_command(json.dumps(_names(command, source, where))))
+            )
+    named = {
+        choice.engine
+        for review_type in types
+        for stage in (review_type.review, review_type.verify)
+        if stage is not None
+        for choice in stage.engines
+    }
+    if CUSTOM_ENGINE in named and CUSTOM_ENGINE not in dict(engine_command):
+        raise _refuse(
+            source,
+            f"engines.{CUSTOM_ENGINE}.command",
+            "is required: the command engine runs the wrapper it names",
+        )
     return ReviewsFile(
         source=source,
         types=types,
@@ -426,6 +468,7 @@ def parse_reviews(payload: Any, source: Path) -> ReviewsFile:
             else _names(ignored, source, "diff.ignored_missing_patch")
         ),
         engine_env=tuple(engine_env),
+        engine_command=tuple(engine_command),
     )
 
 
@@ -469,12 +512,19 @@ def apply_overrides(
         ("--fallback-engine", fallback_engine),
     ):
         selected = (named or "").strip().lower()
-        if selected and selected not in ENGINES:
-            raise ConfigError(
-                f"{flag} {selected}: {reviews.source} names only the built-in "
-                f"engines, {', '.join(ENGINES)}; a custom command engine is set in "
-                ".env without a reviews file"
-            )
+        if not selected or selected in ENGINES:
+            continue
+        if (
+            selected == CUSTOM_ENGINE
+            and flag == "--engine"
+            and reviews.command_for(CUSTOM_ENGINE)
+        ):
+            continue
+        raise ConfigError(
+            f"{flag} {selected}: {reviews.source} can run the built-in engines, "
+            f"{', '.join(ENGINES)}, and as a review's first engine the command "
+            f"engine its engines.{CUSTOM_ENGINE}.command names"
+        )
 
     def chosen(
         first: EngineChoice, new_engine: Optional[str], new_model: Optional[str]
@@ -567,13 +617,22 @@ def apply_overrides(
     return replace(reviews, types=tuple(types))
 
 
-def engine_commands() -> "dict[str, tuple[str, ...]]":
-    """Return the command of every built-in engine, resolved on this machine."""
+def engine_commands(
+    reviews: "Optional[ReviewsFile]" = None,
+) -> "dict[str, tuple[str, ...]]":
+    """Return the command of every engine, resolved on this machine.
 
-    return {
+    Each built-in engine's own executable, unless ``reviews`` names another for it,
+    and the command engine's wrapper when ``reviews`` names one.
+    """
+
+    commands = {
         engine: parse_command(json.dumps(command))
         for engine, command in DEFAULT_ENGINE_COMMANDS.items()
     }
+    if reviews is not None:
+        commands.update(dict(reviews.engine_command))
+    return commands
 
 
 def engines_placeholder(reviews: ReviewsFile) -> "dict[str, Any]":
@@ -584,7 +643,7 @@ def engines_placeholder(reviews: ReviewsFile) -> "dict[str, Any]":
     first = code.review.engines[0]
     return {
         "review_engine": first.engine,
-        "review_engine_command": engine_commands()[first.engine],
+        "review_engine_command": engine_commands(reviews)[first.engine],
         "review_model": first.model,
     }
 
@@ -630,7 +689,7 @@ def type_engines(
     settings, as every report of who reviewed does, reads this type's own.
     """
 
-    commands = commands if commands is not None else engine_commands()
+    commands = commands if commands is not None else engine_commands(reviews)
     review = review_type.review.engines
     verify = review_type.verify.engines if review_type.verify is not None else ()
 
@@ -733,11 +792,6 @@ def reviews_payload(settings: Settings) -> "dict[str, Any]":
 
     from .review_plan import review_plan
 
-    if settings.review_engine not in DEFAULT_ENGINE_COMMANDS:
-        raise ConfigError(
-            f"REVIEW_ENGINE={settings.review_engine} cannot move to "
-            f"{REVIEWS_FILE_NAME}: it names only the built-in engines"
-        )
     plan = review_plan(settings)
     types: "dict[str, Any]" = {}
     used: "set[str]" = set()
@@ -794,11 +848,21 @@ def reviews_payload(settings: Settings) -> "dict[str, Any]":
         "concurrency": settings.review_concurrency,
         "diff": diff,
     }
+    engines: "dict[str, Any]" = {}
     if settings.review_engine_env_allowlist:
-        payload["engines"] = {
+        engines = {
             engine: {"env": list(settings.review_engine_env_allowlist)}
             for engine in sorted(used)
         }
+    # `.env` names one command, the reviewer's, which the file names for its engine.
+    # Plans that differ by it, as when the same engine also verifies on its own
+    # executable, are what `plan_summary` catches.
+    if settings.review_engine_command != engine_commands().get(settings.review_engine):
+        engines.setdefault(settings.review_engine, {})["command"] = list(
+            settings.review_engine_command
+        )
+    if engines:
+        payload["engines"] = dict(sorted(engines.items()))
     payload["order"] = [name for name in plan.names if name in ORDERED_TYPES]
     payload["types"] = types
     return payload
@@ -818,6 +882,7 @@ def plan_summary(settings: Settings) -> "list[Any]":
         return [
             (
                 item.review_engine,
+                item.review_engine_command,
                 item.review_model,
                 item.review_effort,
                 item.review_engine_env_allowlist,

@@ -464,15 +464,18 @@ class WriteReviewsFileTests(unittest.TestCase):
             setup_wizard.write_reviews_file(self.locations, print)
         self.assertFalse(self.locations.reviews_file.exists())
 
-    def test_a_custom_command_engine_stays_in_env(self) -> None:
+    def test_a_custom_command_engine_moves_with_its_wrapper(self) -> None:
         self.write_env(
             "GITHUB_REVIEWER_USERNAME=reviewer\nREVIEW_ENGINE=command\n"
             'REVIEW_ENGINE_COMMAND=["/bin/review"]\n'
         )
+        before = plan_summary(self.settings())
 
-        with self.assertRaisesRegex(ConfigError, "names only the built-in"):
-            setup_wizard.write_reviews_file(self.locations, print)
-        self.assertFalse(self.locations.reviews_file.exists())
+        setup_wizard.write_reviews_file(self.locations, lambda line: None)
+
+        after = self.settings()
+        self.assertEqual(plan_summary(after), before)
+        self.assertEqual(after.review_engine_command, ("/bin/review",))
 
 
 class OpenInBrowserTests(unittest.TestCase):
