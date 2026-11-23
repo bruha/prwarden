@@ -18,8 +18,8 @@ Use these module responsibilities:
 
 - `config`: parse and validate untrusted local configuration.
 - `reviews_file`: read `reviews.json`, which names each type of review's engines,
-  their order, and the limits every review shares, and write `.env`'s settings out
-  as one.
+  their order, and the limits every review shares, and move the settings older
+  releases kept in `.env` into one.
 - `paths`: decide where configuration and state live, for a checkout or an
   installed copy, before any of it is read.
 - `commands`: execute subprocesses and preserve failure output.
@@ -82,16 +82,13 @@ verifier, outside that order, made only after a code review that found nothing a
 would approve, either but for a failed check or beside failed checks GitHub does not
 require. Each level carries its own engines in that plan, so a level is defined by
 its prompt, schema, validation, and delivery route, and its provider configuration
-is the plan's to give. With a `reviews.json`, each type names its own engines: a
-review stage and a verify stage, each a chain of up to four engines tried in order,
-the first reviewing and each after it taking over when the one before fails at the
-engine level. Without the file the plan gives every level the same engine and model
-to review and the same second engine and model to verify, with two exceptions. The
-code level may take its own reasoning effort (`REVIEW_CODE_EFFORT`), because it
-alone can approve, and every other level runs at the role's effort. The checks
-level reads failed checks rather than the change, at a model and effort of its own
-(`REVIEW_CHECKS_MODEL`, `REVIEW_CHECKS_EFFORT`), with no verifier and no fallback,
-because the controller checks its reading and a failed one costs only itself. Levels
+is the plan's to give. Each type in `reviews.json` names its own engines: a review
+stage and a verify stage, each a chain of up to four engines tried in order, the
+first reviewing and each after it taking over when the one before fails at the
+engine level, and each engine with its own model and effort. The checks level reads
+failed checks rather than the change, on the one engine, model, and effort of its
+own `types.checks.review`, with no verifier and no fallback, because the controller
+checks its reading and a failed one costs only itself. Levels
 configured alike share their engines, so a verifier that handed over for one level
 stays handed over for the pull request's other levels. The levels share no data,
 which is what keeps the design level advisory.

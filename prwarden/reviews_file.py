@@ -8,12 +8,13 @@ the types, the file holds what every review shares: how many pull requests run a
 once, how much of a change one review reads, and which environment variables each
 provider's CLI is given beyond the few every one gets.
 
-Without the file a run takes the same settings from `.env`, as it always has.
-`reviews_payload` writes those settings out as the file, so a run with the file it
-returns does what the run without it did.
+A review run that finds no file moves the review settings `.env` names into one,
+once: `reviews_payload` writes them out as the file, and `move_env_into_file` writes
+it only when it plans what `.env` did, keeping the old `.env` beside it.
 
-Only the built-in engines can be named: the controller supplies their commands. A
-custom `command` engine stays in `.env`.
+The controller supplies each built-in engine's command, unless `engines.<engine>`
+names another; the custom `command` engine runs the wrapper `engines.command.command`
+names.
 """
 
 import json
@@ -790,9 +791,8 @@ def _choice(
 def reviews_payload(settings: Settings) -> "dict[str, Any]":
     """Return the reviews file that says what ``settings`` say, from `.env`.
 
-    Every built-in engine named is given the one allowlist `.env` gives every engine
-    today. A custom `command` engine cannot be written into the file, so it is
-    refused.
+    Every engine named is given the one allowlist `.env` gives every engine, and the
+    reviewer's engine the command `.env` names for it.
     """
 
     from .review_plan import review_plan
@@ -948,3 +948,97 @@ def render_reviews(payload: "Mapping[str, Any]") -> str:
         return "[\n" + ",\n".join(lines) + "\n" + "  " * depth + "]"
 
     return render(dict(payload), 0, 0) + "\n"
+
+
+# Moving `.env` into the file --------------------------------------------------
+
+ENV_BACKUP_SUFFIX = ".before-4.0.0"
+
+
+def declared_file_keys(declared: "Mapping[str, str]") -> "list[str]":
+    """Return the review settings, among ``declared``, that the file replaces."""
+
+    return [key for key in FILE_KEYS if str(declared.get(key, "")).strip()]
+
+
+def _write_private(path: Path, text: str) -> None:
+    """Write ``text`` readable by its owner alone, replacing ``path`` atomically."""
+
+    import os
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def _backup_path(env_file: Path) -> Path:
+    """Return a backup name beside ``env_file`` that no earlier backup holds."""
+
+    backup = env_file.with_name(env_file.name + ENV_BACKUP_SUFFIX)
+    count = 2
+    while backup.exists():
+        backup = env_file.with_name(f"{env_file.name}{ENV_BACKUP_SUFFIX}-{count}")
+        count += 1
+    return backup
+
+
+def strip_file_keys(env_file: Path) -> "list[str]":
+    """Remove from ``env_file`` the settings the reviews file replaces.
+
+    Comments and every other setting stay as they are. Returns the keys removed.
+    """
+
+    kept: "list[str]" = []
+    removed: "list[str]" = []
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        name = line.split("=", 1)[0].strip()
+        if name.startswith("export "):
+            name = name[7:].strip()
+        if "=" in line and not line.lstrip().startswith("#") and name in FILE_KEYS:
+            removed.append(name)
+            continue
+        kept.append(line)
+    if removed:
+        _write_private(env_file, "\n".join(kept) + "\n")
+    return removed
+
+
+def move_env_into_file(
+    settings: Settings,
+    env_file: Path,
+    target: Path,
+    *,
+    backup: bool = True,
+) -> "tuple[list[str], Optional[Path]]":
+    """Write ``target`` from what ``settings`` read in `.env`, then strip `.env`.
+
+    Nothing changes unless the file plans exactly the reviews `.env` did, so moving
+    changes nothing a run does. `.env` is copied aside first, when ``backup`` is
+    set, and the file is written before `.env` loses a line, so no step leaves the
+    settings in neither place. Returns the keys moved and the backup.
+    """
+
+    import shutil
+
+    if target.exists():
+        raise ConfigError(f"{target} already exists; nothing was moved")
+    payload = json.loads(json.dumps(reviews_payload(settings)))
+    moved = settings_from_reviews(settings, parse_reviews(payload, target))
+    if plan_summary(moved) != plan_summary(settings):
+        raise ConfigError(
+            f"A {target.name} written from {env_file} would not plan the same "
+            f"reviews, so nothing was moved. Write {target} by hand from "
+            "reviews.example.json, or run `prwarden setup`"
+        )
+    copied: Optional[Path] = None
+    if backup and env_file.exists():
+        copied = _backup_path(env_file)
+        shutil.copy2(env_file, copied)
+        copied.chmod(0o600)
+    _write_private(target, render_reviews(payload))
+    removed = strip_file_keys(env_file) if env_file.exists() else []
+    return removed, copied

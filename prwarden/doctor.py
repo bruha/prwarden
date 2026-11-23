@@ -412,11 +412,21 @@ def check_reviews_file(settings: Settings) -> List[Check]:
     """Say where each type's engines come from, and which `.env` keys go unread."""
 
     if settings.reviews is None:
+        moving = [key for key in FILE_KEYS if os.environ.get(key, "").strip()]
+        if not moving:
+            return [
+                Check(
+                    PROBLEM,
+                    "reviews: no reviews file, so a review run stops; run "
+                    "`prwarden setup` to choose the engines that review",
+                )
+            ]
         return [
             Check(
-                OK,
-                "reviews: engines from .env; no reviews file "
-                "(`prwarden setup --reviews` writes one)",
+                NOTE,
+                "reviews: no reviews file yet; the next review run moves these .env "
+                "settings into reviews.json, keeping the old .env beside it, or "
+                "`prwarden setup --reviews` does it now: " + ", ".join(moving),
             )
         ]
     checks = [

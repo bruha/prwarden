@@ -6334,6 +6334,7 @@ def run(args: argparse.Namespace) -> int:
         fallback_engine_override=getattr(args, "fallback_engine", None),
         fallback_model_override=getattr(args, "fallback_model", None),
         fallback_disabled=getattr(args, "no_fallback", False),
+        move_env=True,
     )
     if args.pr is not None and not args.repo:
         raise ConfigError(

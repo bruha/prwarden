@@ -13,8 +13,8 @@ installing a schedule are each asked for.
 `--slack` connects Slack to an existing configuration the same way, and
 `--import CHECKOUT` copies a source checkout's configuration and delivery records
 instead, so an installed copy carries on where the clone left off without
-reviewing anything twice. `--reviews` writes `reviews.json` from the review-engine
-settings in `.env`, once it has checked that the file plans the same reviews.
+reviewing anything twice. `--reviews` moves the review-engine settings in `.env`
+into `reviews.json`, once it has checked that the file plans the same reviews.
 """
 
 import argparse
@@ -44,15 +44,7 @@ from .config import (
 )
 from .models import Repository
 from .paths import Locations
-from .reviews_file import (
-    FILE_KEYS,
-    load_reviews_file,
-    parse_reviews,
-    plan_summary,
-    render_reviews,
-    reviews_payload,
-    settings_from_reviews,
-)
+from .reviews_file import load_reviews_file, move_env_into_file
 
 
 ENV_REFERENCE = "https://github.com/bruha/prwarden/blob/main/.env.example"
@@ -352,7 +344,11 @@ def write_configuration(
     entries: "List[dict]",
     say: Callable[[str], None],
 ) -> None:
-    for path in (locations.env_file, locations.repositories_file):
+    for path in (
+        locations.env_file,
+        locations.repositories_file,
+        locations.reviews_file,
+    ):
         backup = _backup(path)
         if backup:
             say(f"Kept the previous {path.name} as {backup}")
@@ -360,7 +356,21 @@ def write_configuration(
     _write_private(
         locations.repositories_file, json.dumps(entries, indent=2) + "\n"
     )
-    say(f"Wrote {locations.env_file} and {locations.repositories_file}")
+    # The engines chosen go where every run reads them, written the way a move from
+    # `.env` writes them, so a new configuration and a moved one look alike.
+    locations.reviews_file.unlink(missing_ok=True)
+    move_env_into_file(
+        load_settings(
+            locations.env_file, locations.repositories_file, locations.state_file
+        ),
+        locations.env_file,
+        locations.reviews_file,
+        backup=False,
+    )
+    say(
+        f"Wrote {locations.env_file}, {locations.repositories_file}, and "
+        f"{locations.reviews_file}"
+    )
 
 
 # The questions -----------------------------------------------------------------
@@ -968,40 +978,19 @@ def interactive(prompter: Prompter, locations: Locations) -> int:
 
 
 def write_reviews_file(locations: Locations, say: Callable[[str], None] = print) -> int:
-    """Write `reviews.json` from the review-engine settings in `.env`.
+    """Move the review settings in `.env` into `reviews.json` now.
 
-    The file is written only when it plans exactly the reviews `.env` does, so the
-    move changes nothing a run does; from then on the `.env` keys it replaces are
-    not read, and deleting the file goes back to them.
+    It is the move a review run makes on its own when it finds no file, with the
+    same checks: the file must plan exactly the reviews `.env` did, a setting only
+    the environment holds is not moved, and with nothing to move it points here.
     """
 
     target = locations.reviews_file
     if target.exists():
-        raise SetupError(
-            f"{target} already exists; edit it, or move it away to write it again "
-            "from .env"
-        )
-    settings = load_settings(locations.env_file)
-    if settings.reviews is not None:
-        raise SetupError(
-            f"PR Warden already reads its review types from {settings.reviews.source}"
-        )
-    payload = json.loads(json.dumps(reviews_payload(settings)))
-    moved = settings_from_reviews(settings, parse_reviews(payload, target))
-    if plan_summary(moved) != plan_summary(settings):
-        raise SetupError(
-            "A reviews file written from .env would not plan the same reviews, so "
-            "none was written; write it by hand from reviews.example.json"
-        )
-    _write_private(target, render_reviews(payload))
-    say(f"Wrote {target}: it plans the same reviews as .env.")
-    unread = [key for key in FILE_KEYS if os.environ.get(key, "").strip()]
-    if unread:
-        say(
-            "From now on these .env settings are not read, and you can remove them: "
-            + ", ".join(unread)
-        )
-    say(f"To go back to .env, delete {target.name}.")
+        raise SetupError(f"{target} already exists; edit it to change the reviews")
+    settings = load_settings(locations.env_file, move_env=True)
+    if settings.reviews is not None and settings.reviews.source != target:
+        say(f"PR Warden already reads its review types from {settings.reviews.source}")
     return 0
 
 
@@ -1114,7 +1103,7 @@ def main(argv: Sequence[str], prompter: Optional[Prompter] = None) -> int:
     choice.add_argument(
         "--reviews",
         action="store_true",
-        help="write reviews.json from the review-engine settings in .env",
+        help="move the review-engine settings in .env into reviews.json",
     )
     args = parser.parse_args(argv)
     try:

@@ -60,8 +60,8 @@ Out of scope:
   those to their vendors;
 - a model ignoring its instructions when the controller still blocks the result;
 - risks that follow from the operator's own configuration, such as forwarding
-  secrets through `REVIEW_ENGINE_ENV_ALLOWLIST` or running an arbitrary command
-  through the `command` engine.
+  secrets through an engine's `env` in `reviews.json` or running an arbitrary
+  command through the `command` engine.
 
 [The threat model](docs/threat-model.md) lists what the reviewer defends against,
 where each defence lives, and the risk that remains. A report showing that a listed

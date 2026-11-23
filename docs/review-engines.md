@@ -5,8 +5,11 @@ its sign-in; `prwarden doctor` shows which are installed and signed in. The sect
 below are the reference for doing the same by hand.
 
 The controller has first-party adapters for Antigravity, Codex, Claude Code,
-and Kiro CLI. Select a persistent default with `REVIEW_ENGINE` or override it
-for one invocation with `--engine`.
+and Kiro CLI. Select the engines a run uses in `reviews.json`, the first of each
+type's `review.engines`, or override them for one invocation with `--engine`.
+Releases before 4.0.0 selected them in `.env`; the README's
+[moving from `.env`](../README.md#moving-from-env) says where each of those
+settings went.
 
 ```sh
 python3 -m prwarden --engine codex
@@ -15,14 +18,17 @@ python3 -m prwarden --engine kiro
 python3 -m prwarden --engine antigravity
 ```
 
-The override uses the built-in executable name. Do not set
-`REVIEW_ENGINE_COMMAND` when switching this way unless every selected provider
-is exposed through the same wrapper. To use a nonstandard executable path, set
-the command and engine together for that run:
+The override runs the engine from its built-in executable name, unless
+`reviews.json` names another for it. To use a nonstandard executable path, give the
+engine a `command`, an argument list, under `engines`; every stage that names that
+engine runs it, and so does `--engine` naming it:
 
-```sh
-REVIEW_ENGINE=codex REVIEW_ENGINE_COMMAND='["/absolute/path/to/codex"]' \
-  python3 -m prwarden
+```json
+{
+  "engines": {
+    "codex": {"command": ["/absolute/path/to/codex"]}
+  }
+}
 ```
 
 ## Codex
@@ -91,24 +97,23 @@ would each have created a file.
 
 ## A command and a model belong to one engine
 
-`REVIEW_ENGINE_COMMAND` and `REVIEW_MODEL` are read as settings of the
-`REVIEW_ENGINE` named in the same configuration file. Selecting a different engine,
-either with `--engine` or by setting `REVIEW_ENGINE` in the environment, drops both:
-a provider's model ID means nothing to another provider, and a path to one provider's
-CLI is not a path to another's.
+In `reviews.json` a model is written beside the engine it belongs to, and a command
+under that engine's own `engines.<engine>` entry. Selecting a different engine with
+`--engine` drops the model and effort written for the engine it replaces: a
+provider's model ID means nothing to another provider. The command follows the
+engine, so the replacement runs from its own `command` when the file names one and
+from its built-in executable otherwise, never from a path to another provider's CLI.
 
 This is not pedantry about configuration. Handing one provider's arguments to another
 provider's binary does not fail loudly — the binary prints its own help text and exits,
 which the controller can only report as a failed review. A scheduled run would leave the
 pull request unreviewed and say nothing about why.
 
-To run another engine with its own command or model, set those in the environment
-alongside the engine, and they are kept because they were chosen with that engine in
-view:
+To run another engine with a model of its own for one run, name the model beside it:
 
 ```sh
-REVIEW_ENGINE=claude REVIEW_MODEL=sonnet \
-  python3 -m prwarden --repo your-org/example-app --pr 123
+python3 -m prwarden --engine claude --model sonnet \
+  --repo your-org/example-app --pr 123
 ```
 
 ## Claude Code
@@ -361,7 +366,7 @@ A warning-only failed exit is treated as transient because the
 CLI may have written the actual provider failure only to its internal state.
 Recognized transient provider, routing, transport, timeout, and availability
 failures retry twice with 15-second and 30-second delays, for at most three
-engine invocations, and all of them share one `REVIEW_TIMEOUT_SECONDS` budget: a
+engine invocations, and all of them share the stage's one `timeout_seconds` budget: a
 retry runs only for what is left of it, so a provider that hangs costs one timeout
 rather than three. Authentication, authorization, invalid-request, print-timeout
 expiry, and other recognized permanent failures are not retried, and neither is
@@ -380,20 +385,19 @@ the user's global `~/.gemini/antigravity-cli/settings.json`.
 
 ## Models, credentials, and custom commands
 
-`REVIEW_MODEL` passes an explicit model ID through the selected built-in
-adapter. Leave it empty to use that CLI's default.
+An engine entry's `model` in `reviews.json` passes an explicit model ID through the
+selected built-in adapter. Leave it out to use that CLI's default.
 
 ## Verification engine
 
-`REVIEW_VERIFY_ENGINE` runs the adversarial verification pass on a second
-built-in adapter, and `REVIEW_VERIFY_MODEL` selects its model. Only the named
-adapters are accepted; `command` is not, because the wrapper contract already
-allows a custom primary engine. Setting the same engine and model as the primary
-is treated as unconfigured, since a second pass with identical priors adds cost
-without independent judgment. With a reviews file these keys are not read: each
-type's `verify` stage lists one to four engines, tried in order, each with its own
-model and effort, and a type with no `verify` stage verifies with its reviewer in a
-separate pass.
+The first engine of a type's `verify.engines` runs the adversarial verification pass
+on a second built-in adapter, at the `model` and `effort` written beside it. Only the
+built-in adapters are accepted; `command` is not, because the wrapper contract
+already allows a custom primary engine. Naming the reviewer's own engine and model
+verifies in a separate pass with identical priors, as leaving `verify` out does, so
+it adds cost without independent judgment. A stage lists one to four engines, tried in
+order, and a type with no `verify` stage verifies with its reviewer in a separate
+pass.
 
 The point is decorrelation: a candidate finding produced from one model's
 training priors should be judged by a different model, ideally from a different
@@ -408,32 +412,43 @@ kiro-cli chat --list-models -f json
 ```
 
 With a Claude model reviewing through Kiro, a GPT model on the same CLI
-verifies, so one model family's priors are not the only judge of its output:
+verifies, so one model family's priors are not the only judge of its output. Each
+type lists its own engines; this fragment shows the code review's, and `design` and
+`docs` take the same shape:
 
-```dotenv
-REVIEW_ENGINE=kiro
-REVIEW_MODEL=claude-opus-5.5
-REVIEW_VERIFY_ENGINE=kiro
-REVIEW_VERIFY_MODEL=gpt-5.6-terra
+```json
+{
+  "types": {
+    "code": {
+      "review": {
+        "engines": [{"engine": "kiro", "model": "claude-opus-5.5"}]
+      },
+      "verify": {
+        "engines": [{"engine": "kiro", "model": "gpt-5.6-terra"}]
+      }
+    }
+  }
+}
 ```
 
-Verify the pairing on one pull request before scheduling it:
+Verify the pairing on one pull request before scheduling it, or try another verifier
+for one run with `--verify-engine` and `--verify-model`:
 
 ```sh
 python3 -m prwarden --repo owner/repository --pr 123
+python3 -m prwarden --verify-engine claude --verify-model opus \
+  --repo owner/repository --pr 123
 ```
 
 ## Fallback engine
 
-`REVIEW_FALLBACK_ENGINE` reviews a pull request when the primary engine fails at
-the engine level, and `REVIEW_FALLBACK_MODEL` selects its model. It covers every
-level the primary reviews, the advisory design and documentation levels as well as
-the code level, and with no separate verifier it also judges what it found. The same
-rules as the verification engine apply: built-in adapters only, and a fallback equal
-to the primary engine and model counts as unconfigured. With a reviews file these
-keys are not read: each type's `review` stage lists up to four engines, and each one
-after the first takes over, in order, when the one before it fails at the engine
-level.
+Each engine after the first in a type's `review.engines`, up to three of them,
+reviews a pull request when the one before it fails at the engine level, at the
+`model` and `effort` written beside it. Every type has its own chain, so the advisory
+design and documentation levels fall back as well as the code level, and with no
+separate verifier a fallback also judges what it found. The same rules as the
+verification engine apply: built-in adapters only, and a stage that lists one engine
+and model twice is refused.
 
 The fallback exists for provider outages, not for disagreement. A provider that
 is unavailable, unauthenticated, refusing requests, timing out, or exhausting its
@@ -445,12 +460,23 @@ asking another engine for a compliant answer would weaken validation.
 Choose a fallback from a different provider than the primary, so a single
 provider incident cannot stop both:
 
-```dotenv
-REVIEW_ENGINE=kiro
-REVIEW_MODEL=claude-opus-5.5
-REVIEW_FALLBACK_ENGINE=antigravity
-REVIEW_FALLBACK_MODEL=claude-opus-5-5-high
+```json
+{
+  "types": {
+    "code": {
+      "review": {
+        "engines": [
+          {"engine": "kiro", "model": "claude-opus-5.5"},
+          {"engine": "antigravity", "model": "claude-opus-5-5-high"}
+        ]
+      }
+    }
+  }
+}
 ```
+
+`--fallback-engine` and `--fallback-model` replace each review's second engine for
+one run, and `--no-fallback` leaves each review only its first.
 
 Antigravity updates itself, and its model list moves with it: agy 1.4.6 dropped
 `claude-opus-4-6-thinking` mid-run and now names the effort tier in the ID, so a
@@ -463,39 +489,56 @@ delivered feedback names the engine that actually reviewed, so a GitHub comment
 or Slack message never credits an engine that did not produce it. A run that
 loses both engines reports both failures for that pull request.
 
-Confirm the fallback before relying on it. Point `REVIEW_ENGINE` at a deliberately
-broken command so the primary fails immediately, and watch the fallback finish
-the review:
+Confirm the fallback before relying on it. Give the custom `command` engine a
+deliberately broken command in `reviews.json`, which does nothing while no stage
+names it:
+
+```json
+{
+  "engines": {
+    "command": {"command": ["false"]}
+  }
+}
+```
+
+Then make it the primary for one run, so the primary fails immediately, and watch
+the fallback finish the review:
 
 ```sh
-REVIEW_ENGINE=command REVIEW_ENGINE_COMMAND='["false"]' \
-  python3 -m prwarden --repo owner/repository --pr 123
+python3 -m prwarden --engine command --repo owner/repository --pr 123
 ```
 
 ## Verification fallback
 
-`REVIEW_VERIFY_FALLBACK_ENGINE` verifies when the verification engine fails at the
-engine level, and `REVIEW_VERIFY_FALLBACK_MODEL` and `_EFFORT` choose its model and
-effort. It needs `REVIEW_VERIFY_ENGINE`, because without a separate verifier the
-reviewer verifies its own findings and its fallback already covers that.
+Each engine after the first in a type's `verify.engines` verifies when the one
+before it fails at the engine level, at the `model` and `effort` written beside it.
+It needs a `verify` stage, because without one the reviewer verifies its own
+findings and the review stage's fallbacks already cover that.
 
 It exists because one provider served both review and verification. While that
 provider was down the review fallback still reviewed, but every finding it raised
 went to a verifier that was down too, so nothing was delivered; a workspace the
 verifier's CLI refused cost the verification the same way. The rules match the
 review fallback's: only an engine failure hands over, a malformed answer stays with
-the engine the controller tells how to correct it, and a fallback equal to the
-verifier's engine and model counts as unconfigured. Once a pull request's verifier
+the engine the controller tells how to correct it, and a stage that lists the
+verifier's engine and model twice is refused. Once a pull request's verifier
 has handed over, the rest of that pull request is verified by the fallback, so a
 correction retry reaches the engine whose answer it corrects; the next pull request
-starts with the verifier again.
+starts with the verifier again. The code review's `verify` stage, for instance:
 
-```dotenv
-REVIEW_VERIFY_ENGINE=kiro
-REVIEW_VERIFY_MODEL=gpt-5.6-terra
-REVIEW_VERIFY_FALLBACK_ENGINE=claude
-REVIEW_VERIFY_FALLBACK_MODEL=claude-sonnet-5-5
-REVIEW_VERIFY_FALLBACK_EFFORT=xhigh
+```json
+{
+  "types": {
+    "code": {
+      "verify": {
+        "engines": [
+          {"engine": "kiro", "model": "gpt-5.6-terra"},
+          {"engine": "claude", "model": "claude-sonnet-5-5", "effort": "xhigh"}
+        ]
+      }
+    }
+  }
+}
 ```
 
 Pick a model other than the reviewer's. The controller compares engines and model
@@ -508,32 +551,47 @@ would compare nothing.
 
 ## Reasoning effort
 
-Each role may set a reasoning effort, `low`, `medium`, `high`, `xhigh`, or `max`,
-and leaving it empty runs the model at its own default:
+Each engine entry may set a reasoning effort, `low`, `medium`, `high`, `xhigh`, or
+`max`, and leaving it out runs the model at its own default. Each type's engines
+carry their own, so the code review, the one level that can approve, can run at a
+higher effort than the advisory levels:
 
-```dotenv
-REVIEW_EFFORT=xhigh
-REVIEW_CODE_EFFORT=max
-REVIEW_VERIFY_EFFORT=xhigh
-REVIEW_FALLBACK_EFFORT=
-REVIEW_CHECKS_EFFORT=medium
+```json
+{
+  "types": {
+    "design": {
+      "review": {
+        "engines": [{"engine": "kiro", "model": "claude-opus-5.5", "effort": "xhigh"}]
+      }
+    },
+    "code": {
+      "review": {
+        "engines": [{"engine": "kiro", "model": "claude-opus-5.5", "effort": "max"}]
+      },
+      "verify": {
+        "engines": [{"engine": "kiro", "model": "gpt-5.6-terra", "effort": "xhigh"}]
+      }
+    },
+    "checks": {
+      "review": {
+        "engines": [{"engine": "kiro", "model": "claude-haiku-5.5", "effort": "medium"}]
+      }
+    }
+  }
+}
 ```
 
-`REVIEW_EFFORT` applies to every level the reviewer runs, and `REVIEW_CODE_EFFORT`
-overrides it for the code level alone, the one level that can approve. With a
-reviews file neither is read: each engine a stage lists takes its own `effort`. The
-verifier and the fallback each run at their own effort on every level; neither
-inherits the code override, which was chosen for the reviewer's model. The checks
-level, which reads why a waiting review's checks failed, runs on the review engine
-at `REVIEW_CHECKS_EFFORT` and `REVIEW_CHECKS_MODEL` when set, and at the reviewer's
-otherwise, and has no verifier or fallback of its own. With a reviews file,
-`types.checks.review` names its one engine, model, and effort instead, and these
-keys are not read.
+The verifier and each fallback run at the effort written beside them, on every
+level; none inherits another engine's. The checks level, which reads why a waiting
+review's checks failed, runs on the one engine, model, and effort
+`types.checks.review` names, and has no verifier or fallback of its own. Effort has
+no command-line flag; change it in `reviews.json`.
 
 The `kiro`, `antigravity`, and `claude` adapters pass an effort to their CLI as
 `--effort`, and `codex` passes it as `--config model_reasoning_effort="…"`, because
 `codex exec` has no effort flag and its user configuration is skipped. An effort
-named for a `command` engine is refused at startup rather than silently dropped.
+named for a `command` engine is refused when the reviews file is read rather than
+silently dropped.
 Claude Code took `--effort` from 2.1.304, the version this
 was checked against. The level is checked here too, because Kiro accepts any
 string and runs the model's default when it does not recognise one. Which levels a
@@ -546,29 +604,42 @@ Startup states each role's effort beside its model.
 
 Built-in adapters use each CLI's saved authenticated session through the
 preserved home directory. Provider API keys are not configured or passed
-automatically. `REVIEW_ENGINE_ENV_ALLOWLIST` remains available for a custom
-wrapper that requires additional non-default variables, but only without a reviews
-file: with one it is not read, and `engines.<engine>.env` lists the variables each
-engine's CLI is given, the `command` engine's wrapper included. The Slack webhook is
+automatically. An engine's `env` in `reviews.json`, `engines.<engine>.env`, lists the
+variables that engine's CLI is given beyond the minimal environment every engine
+gets, for a built-in engine or a custom wrapper alike. The Slack webhook is
 never inherited unless it is explicitly allowlisted.
 
-For an unsupported provider, select `command` and configure a wrapper:
+For an unsupported provider, name the `command` engine as a review stage's first
+engine and give it a wrapper:
 
-```dotenv
-REVIEW_ENGINE=command
-REVIEW_ENGINE_COMMAND=["/absolute/path/to/review-wrapper","--structured"]
+```json
+{
+  "engines": {
+    "command": {
+      "command": ["/absolute/path/to/review-wrapper", "--structured"],
+      "env": []
+    }
+  },
+  "types": {
+    "code": {
+      "review": {"engines": [{"engine": "command"}]}
+    }
+  }
+}
 ```
 
-`REVIEW_ENGINE_COMMAND` is a JSON string array and is executed directly without
-a shell. Engine subprocesses receive a minimal environment; list any additional
-variable names explicitly with `REVIEW_ENGINE_ENV_ALLOWLIST`. Delivery secrets
-are not inherited by default. The wrapper contract is:
+`engines.command.command` is an argument list and is executed directly without a
+shell. The `command` engine takes no effort and can only be the first engine of a
+`review` stage, never a verifier or a fallback. Engine subprocesses receive a
+minimal environment; list any additional variable names explicitly in
+`engines.command.env`. Delivery secrets are not inherited by default. The wrapper
+contract is:
 
 - Working directory: the exact detached PR worktree.
 - Standard input: the complete provider-neutral review prompt and unified diff.
 - `AI_CODE_REVIEW_SCHEMA`: required output schema as compact JSON.
 - `AI_CODE_REVIEW_MAX_FINDINGS`: configured finding limit.
-- `AI_CODE_REVIEW_MODEL`: optional model ID when `REVIEW_MODEL` is set.
+- `AI_CODE_REVIEW_MODEL`: optional model ID when the engine entry names a `model`.
 - Standard output: one JSON object conforming to the supplied schema.
 - Nonzero exit: review failure; output is not treated as no findings.
 

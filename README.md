@@ -115,19 +115,21 @@ making one and hands the token you paste straight to `acli`, which keeps it. The
 it asks for the project keys your pull requests use and which repositories use
 them. `prwarden setup --jira` does this step alone later.
 
-Setup writes `.env` and `repositories.json` to `~/.config/prwarden`, then offers a
-dry-run preview of one pull request, which spends credits and posts nothing, live
-delivery, and a schedule. `prwarden doctor` checks the result at any time and
-spends nothing.
+Setup writes `.env`, `repositories.json`, and `reviews.json`, which holds the engines
+Setup writes `.env`, `repositories.json`, and `reviews.json`, which holds the engines
+it chose, to `~/.config/prwarden`, then offers a dry-run preview of one pull request,
+which spends credits and posts nothing, live delivery, and a schedule.
+`prwarden doctor` checks the result at any time and spends nothing.
 
 ### By hand, or from a clone
 
-An installed copy can also be configured from the two examples:
+An installed copy can also be configured from the three examples:
 
 ```sh
 mkdir -p ~/.config/prwarden && cd ~/.config/prwarden
 base=https://raw.githubusercontent.com/bruha/prwarden/main
 (umask 077 && curl -fsSL "$base/.env.example" -o .env)
+(umask 077 && curl -fsSL "$base/reviews.example.json" -o reviews.json)
 curl -fsSL "$base/repositories.example.json" -o repositories.json
 ```
 
@@ -138,14 +140,17 @@ To run from a clone instead, which keeps its configuration in the clone, type
 git clone https://github.com/bruha/prwarden.git
 cd prwarden
 install -m 600 .env.example .env
+install -m 600 reviews.example.json reviews.json
 cp repositories.example.json repositories.json
 ```
 
 `prwarden setup --import <clone>` later moves a clone's configuration and delivery
 records to an installed copy, so nothing is reviewed twice.
 
-1. In `.env`, set `REVIEW_ENGINE` to the AI CLI you are signed in to, such as `kiro`
-   or `claude`, and optionally `REVIEW_VERIFY_ENGINE` to a second one.
+1. In `reviews.json`, set each type's `review.engines` to the AI CLI you are signed
+   in to, such as `kiro` or `claude`, with the model you want, and its
+   `verify.engines` to a second one; remove any engine you are not signed in to. See
+   [review types in `reviews.json`](#review-types-in-reviewsjson).
 2. In `repositories.json`, list each repository's `owner/name` slug, and the path to
    a local clone of it if you have one; without a path PR Warden clones it itself.
    Add `"slack": false` to an entry if you do not use Slack.
@@ -204,11 +209,11 @@ No third-party Python packages are required.
 
 ## Setup
 
-The [quick start](#quick-start) created the two private configuration files from
+The [quick start](#quick-start) created the private configuration files from
 their examples, in `~/.config/prwarden` for an installed copy or in the clone. If
-`install` is unavailable, copy `.env.example` to `.env` and then run
-`chmod 600 .env`. Edit both files for your environment. In a clone they are
-ignored by Git.
+`install` is unavailable, copy `.env.example` to `.env` and `reviews.example.json`
+to `reviews.json`, and then run `chmod 600 .env reviews.json`. Edit the files for
+your environment. In a clone they are ignored by Git.
 
 Each `repositories.json` entry needs a GitHub `owner/repository` slug, and may name
 the `path` of a matching local Git checkout. The checkout supplies Git objects; its
@@ -254,36 +259,11 @@ Important `.env` settings:
 
 | Setting | Purpose |
 | --- | --- |
-| `REVIEW_ENGINE` | `antigravity`, `codex`, `claude`, `kiro`, or `command` |
-| `REVIEW_MODEL` | Optional explicit provider model ID |
-| `REVIEW_VERIFY_ENGINE` | Optional built-in adapter that verifies candidate findings |
-| `REVIEW_VERIFY_MODEL` | Optional model for the verification engine |
-| `REVIEW_FALLBACK_ENGINE` | Optional built-in adapter that reviews when the primary engine fails |
-| `REVIEW_FALLBACK_MODEL` | Optional model for the fallback engine |
-| `REVIEW_VERIFY_FALLBACK_ENGINE` | Optional built-in adapter that verifies when the verification engine fails; requires `REVIEW_VERIFY_ENGINE` |
-| `REVIEW_VERIFY_FALLBACK_MODEL` | Optional model for the verification fallback |
-| `REVIEW_EFFORT` | Optional reasoning effort for the reviewer: `low`, `medium`, `high`, `xhigh`, or `max` |
-| `REVIEW_CODE_EFFORT` | Optional reviewer effort for the code level only, overriding `REVIEW_EFFORT` there |
-| `REVIEW_VERIFY_EFFORT` | Optional reasoning effort for the verification engine |
-| `REVIEW_FALLBACK_EFFORT` | Optional reasoning effort for the fallback engine |
-| `REVIEW_VERIFY_FALLBACK_EFFORT` | Optional reasoning effort for the verification fallback |
-| `REVIEW_TIMEOUT_SECONDS` | Timeout for each model invocation, retries included |
-| `REVIEW_DESIGN_LEVEL` | Advisory solution-design level before the code review |
-| `MAX_DESIGN_FINDINGS` | Findings one design review may report |
-| `REVIEW_DOCS_LEVEL` | Advisory level checking the change against this repository's documentation |
-| `MAX_DOCS_FINDINGS` | Documentation updates one docs review may propose |
-| `REVIEW_CHECKS_LEVEL` | Say why failed checks failed, and a fix, in a note waiting for them; default `1` |
-| `REVIEW_CHECKS_MODEL`, `REVIEW_CHECKS_EFFORT` | Model and effort that read failed checks on `REVIEW_ENGINE`; default the reviewer's |
-| `REVIEW_VERIFY_TIMEOUT_SECONDS` | Base budget for one verification pass |
-| `REVIEW_VERIFY_TIMEOUT_PER_CANDIDATE_SECONDS` | Added to that base for each candidate verified |
-| `REVIEW_CONCURRENCY` | Pull requests reviewed at the same time, 1 to 8 |
 | `RUN_LOG_RETENTION_DAYS` | Days a run transcript is kept, 1 to 365 |
 | `REVIEW_HISTORY_RETENTION_DAYS` | Days the review history `prwarden history` reads is kept, 1 to 365; default `14` |
-| `MAX_DIFF_BYTES` | Diff one review reads; a larger change is reviewed in part |
-| `MAX_REVIEW_BUNDLES` | Reviews one oversized change may be read in, 1 to 8 |
 | `DESIGN_EXCLUDED_HEAD_BRANCHES` | Head branches whose PRs skip the design level |
 | `EXCLUDED_PR_LABELS` | Case-insensitive labels treated like draft status |
-| `IGNORED_MISSING_PATCH_PATTERNS` | Globs whose omitted patch needs no review, keeping the PR approvable; unset, a built-in list of lockfiles and other generated files |
+| `REVIEWS_FILE` | Where the reviews file is, when not `reviews.json` beside `.env`; it must exist |
 | `GITHUB_COMMENT_TEMPLATE_FILE` | Markdown layout for GitHub inline findings |
 | `GITHUB_COMMENT_TAGS_FILE` | Editable tag aliases for template values |
 | `GITHUB_REVIEWER_USERNAME` | Optional reviewer identity override that skips the GitHub user lookup |
@@ -291,21 +271,36 @@ Important `.env` settings:
 | `SLACK_WEBHOOK_URL` | Slack delivery and failure-notification webhook |
 | `AUTO_REVIEW_DRY_RUN` | First live-delivery gate; keep `1` while testing |
 
-See [.env.example](.env.example) for every setting and
+Which engines review and verify, their models, efforts, and budgets, which levels
+run, how many findings each posts, how much of a change one review reads, and how
+many pull requests run at once are set in
+[`reviews.json`](#review-types-in-reviewsjson), not in `.env`.
+
+See [.env.example](.env.example) for every `.env` setting and
 [Review engine setup](docs/review-engines.md) for provider authentication and
 adapter-specific commands.
 
 ### Review types in `reviews.json`
 
-A `reviews.json` beside `.env` takes the place of every review-engine setting in the
-table above, from `REVIEW_ENGINE` to `IGNORED_MISSING_PATCH_PATTERNS`, and `.env`'s
-are then not read; `prwarden doctor` names any it skips. Without the file a run reads
-`.env` as before. `REVIEWS_FILE` in `.env` points elsewhere, and stops the run if
-nothing is there. `prwarden setup --reviews` writes the file from your `.env`, once it
-has checked that the file plans exactly the same reviews, and lists the `.env`
-settings it replaces; deleting the file goes back to them. Or start from
-[reviews.example.json](reviews.example.json); in a clone, `reviews.json` is ignored by
-Git.
+`reviews.json`, beside `.env`, says which types of review run, in what order, and on
+which engines; a review run needs it. `REVIEWS_FILE` in `.env` points elsewhere, and
+stops the run if nothing is there. Start from
+[reviews.example.json](reviews.example.json), or let `prwarden setup` write it; in a
+clone, `reviews.json` is ignored by Git.
+
+Releases before 4.0.0 kept these settings in `.env`, from `REVIEW_ENGINE` to
+`IGNORED_MISSING_PATCH_PATTERNS`; [moving from `.env`](#moving-from-env) says where
+each one goes. A review run that finds no reviews file moves the ones `.env` declares
+into a new one, once: it first checks that the file plans exactly the same reviews,
+keeps the old `.env` beside it as `.env.before-4.0.0`, or `.env.before-4.0.0-2` and
+so on when that name is taken, writes `reviews.json` readable by you alone, and then
+removes those keys from `.env`, leaving its comments and other settings as they
+were. It refuses while one of those keys is set in the environment to a value `.env`
+does not have; unset it for that run. With no such settings in `.env` and no file, a
+review run stops and points to `prwarden setup`. `prwarden setup --reviews` makes
+the same move straight away. With the file, those `.env` keys are not read, and
+`prwarden doctor` names any left there; without one it says whether the next run
+will move them.
 
 - `types` holds `design`, `docs`, `code`, and `checks`. Only `code` is required, and
   a type left out, or set `"enabled": false`, does not run. `code` cannot be turned
@@ -329,13 +324,36 @@ Git.
   of arguments, runs the engine from another executable, for every stage that names
   it.
 - A custom wrapper is the engine `command`, run by `engines.command.command`. It
-  takes no effort and, as in `.env`, can only be the first engine of a `review`
-  stage.
+  takes no effort and can only be the first engine of a `review` stage.
 
 `--engine`, `--model`, `--verify-engine`, `--verify-model`,
 `--fallback-engine`, `--fallback-model`, `--no-fallback`, and `--concurrency` change
 the file's settings for one run, for every type: a different engine does not take the
 model or effort written for the one it replaces.
+
+#### Moving from `.env`
+
+Each review setting older releases read from `.env` has its place in the file:
+
+| `.env` key | `reviews.json` |
+| --- | --- |
+| `REVIEW_ENGINE`, `REVIEW_MODEL`, `REVIEW_EFFORT` | The first of each type's `review.engines`: `engine`, `model`, `effort` |
+| `REVIEW_CODE_EFFORT` | `types.code.review.engines[0].effort`; every type's engines carry their own effort |
+| `REVIEW_FALLBACK_ENGINE`, `_MODEL`, `_EFFORT` | The second of `review.engines`, and up to two more after it |
+| `REVIEW_VERIFY_ENGINE`, `_MODEL`, `_EFFORT` | The first of `types.<type>.verify.engines` |
+| `REVIEW_VERIFY_FALLBACK_ENGINE`, `_MODEL`, `_EFFORT` | The second of `verify.engines` |
+| `REVIEW_TIMEOUT_SECONDS` | `types.<type>.review.timeout_seconds` |
+| `REVIEW_VERIFY_TIMEOUT_SECONDS`, `REVIEW_VERIFY_TIMEOUT_PER_CANDIDATE_SECONDS` | `types.<type>.verify.timeout_seconds`, `timeout_per_candidate_seconds` |
+| `REVIEW_DESIGN_LEVEL`, `REVIEW_DOCS_LEVEL`, `REVIEW_CHECKS_LEVEL` | Whether `types.design`, `types.docs`, or `types.checks` is present and not `"enabled": false` |
+| `REVIEW_CHECKS_MODEL`, `REVIEW_CHECKS_EFFORT` | `types.checks.review.engines[0]`, its one engine |
+| `MAX_FINDINGS`, `MAX_DESIGN_FINDINGS`, `MAX_DOCS_FINDINGS` | `types.code.max_findings`, `types.design.max_findings`, `types.docs.max_findings` |
+| `MAX_DIFF_BYTES`, `MAX_REVIEW_BUNDLES` | `diff.max_bytes`, `diff.max_bundles` |
+| `IGNORED_MISSING_PATCH_PATTERNS` | `diff.ignored_missing_patch`; left out, the built-in list |
+| `REVIEW_CONCURRENCY` | `concurrency` |
+| `REVIEW_ENGINE_ENV_ALLOWLIST` | `engines.<engine>.env` |
+| `REVIEW_ENGINE_COMMAND` | `engines.<engine>.command`; with `REVIEW_ENGINE=command`, the engine `"command"` and `engines.command.command` |
+
+The rest of `.env` stays where it is.
 
 ### Where configuration and state live
 
@@ -387,13 +405,11 @@ python3 -m prwarden \
 ```
 
 A model ID belongs to the provider that publishes it, so a model flag applies to the
-engine beside it: `--engine kiro` alone drops the configured `REVIEW_MODEL` rather than
-sending one provider's model to another, and `--model` alone applies to the engine
-already configured. The same holds for `--verify-model` and `--fallback-model`, and
-for the configured effort, which a replaced engine does not keep. Effort has no flag;
-without a reviews file, set `REVIEW_EFFORT` and its siblings in the environment for
-one run. With one, those keys are not read: change the engine's `effort` in
-`reviews.json`.
+engine beside it: `--engine kiro` alone drops the model `reviews.json` gives the
+engine it replaces rather than sending one provider's model to another, and `--model`
+alone applies to the engine already configured. The same holds for `--verify-model`
+and `--fallback-model`, and for the configured effort, which a replaced engine does
+not keep. Effort has no flag: change the engine's `effort` in `reviews.json`.
 `--no-fallback` reviews with the primary alone, which is how a primary failure gets
 reported instead of covered by a second engine, and it refuses to be combined with
 `--fallback-engine` rather than guessing which was meant.
@@ -403,9 +419,9 @@ one account's limit then stops both, which looks like two independent safety net
 is one. It says so too when the reviewer and the verifier share a provider and the
 fallback does not: while that provider is down the fallback can still review and
 approve a clean change, but any finding it raises has no verifier to confirm it.
-With a reviews file, both notes are said of the code review's engine chains: every
-fallback and every verifier on one other provider, or every verifier on the
-reviewer's provider while a fallback is not.
+Both notes are said of the code review's engine chains: every fallback and every
+verifier on one other provider, or every verifier on the reviewer's provider while a
+fallback is not.
 
 Dry runs invoke the selected model and may consume quota, but they do not post
 or record terminal delivery state. The [review history](#checking-what-pr-warden-did-on-a-pull-request)
@@ -482,8 +498,8 @@ data, not instructions.
 
 ## Reviewing several pull requests at once
 
-`REVIEW_CONCURRENCY` sets how many pull requests are reviewed at the same time,
-defaulting to `2`, and `--concurrency N` overrides it for one run:
+`concurrency` in `reviews.json` sets how many pull requests are reviewed at the same
+time, defaulting to `2`, and `--concurrency N` overrides it for one run:
 
 ```sh
 python3 -m prwarden --concurrency 3
@@ -501,7 +517,7 @@ a row counting the reviews in progress. Each review's detailed report is kept
 aside and printed in full once every review has finished, in the planned order
 rather than the order they happened to complete.
 
-With `REVIEW_CONCURRENCY=1`, or a single selected pull request, the run reviews
+With a `concurrency` of `1`, or a single selected pull request, the run reviews
 one at a time and reports each step as it happens, without a board.
 
 `Ctrl+C` stops a run at any point. The review CLIs run in the same process
@@ -518,10 +534,11 @@ rejects a second live run.
 
 ## Review levels
 
-A review runs in three levels, each reviewed by `REVIEW_ENGINE` and judged by its own
-adversarial verification pass on `REVIEW_VERIFY_ENGINE`. A fourth, the checks level,
-runs only when the code level found nothing but a check failed; it is described after
-the code level.
+A review runs in three levels, each reviewed by the first engine of its type's
+`review.engines` in `reviews.json` and judged by its own adversarial verification
+pass on the first of its `verify.engines`, or on its reviewer when it has none. A
+fourth, the checks level, runs only when the code level found nothing but a check
+failed; it is described after the code level.
 
 The **solution-design level** goes first and judges the approach rather than the
 lines: where the change puts responsibility, what contracts it establishes, how
@@ -545,8 +562,9 @@ enough to be worth another full review, and re-reviewing every push earned a sec
 advisory comment saying much the same thing. Once it has settled, later runs report
 that and review only the code level; a design level that *failed* has settled
 nothing and is attempted again. Use `--force` on a named pull request to review its
-design again, for instance after a rewrite. Set `REVIEW_DESIGN_LEVEL=0` to switch
-the level off, which removes its cost entirely.
+design again, for instance after a rewrite. Leave `types.design` out of
+`reviews.json`, or set it `"enabled": false`, to switch the level off, which removes
+its cost entirely.
 
 The **documentation level** then asks whether the change leaves this repository's own
 documentation saying something untrue, for the people reading the README and `docs`
@@ -563,8 +581,9 @@ that belongs to the code level. Documentation that is merely silent about an int
 detail, or that is still true but could read better, is not reported. The exception
 is a list or table of scripts, commands, or guides that now lacks an entry the change
 added: its proposal is just the new rows or items, in the list's own format. Like the
-design level it is advisory, skips release promotions, delivers a separate
-pull-request comment, and set `REVIEW_DOCS_LEVEL=0` to switch it off.
+design level it is advisory, skips release promotions, and delivers a separate
+pull-request comment; leave `types.docs` out, or set it `"enabled": false`, to switch
+it off.
 
 It runs once per pull request, plus once more after any push that changes what the
 pull request does to its documentation, so a repository that is mostly documentation
@@ -584,10 +603,11 @@ but a check had failed by the time the review finished, including one still runn
 when it started, and on a review-policy change only once a person has signed it off.
 It reads that check's own output, its job log or its
 summary, and says why it failed and a possible fix in the note that tells the author
-PR Warden waits for the checks. It runs on `REVIEW_ENGINE` at `REVIEW_CHECKS_MODEL`
-and `REVIEW_CHECKS_EFFORT`, a cheap model being enough, with no verifier: PR Warden
+PR Warden waits for the checks. It runs on the one engine, model, and effort of
+`types.checks.review.engines`, a cheap model being enough, with no verifier: PR Warden
 itself finds every log line it quotes and every workspace line it cites, and drops a
-reading that fails, so the note is still posted without it.
+reading that fails, so the note is still posted without it. Without `types.checks`
+the note is posted alone.
 
 Beside the model, PR Warden checks every added line itself for a committed
 credential with a distinctive shape: AWS access key IDs, GitHub, Slack, npm, Stripe
@@ -667,11 +687,11 @@ rather than advisory notes nobody checked.
   a lockfile. That file is reviewed around rather than stopping the PR: the rest
   of the change is reviewed, the path is named wherever the result is reported,
   and the approval is withheld because nobody read it. A path matching
-  `IGNORED_MISSING_PATCH_PATTERNS` is said to be generated and to need no review,
-  which ignores it outright and leaves the PR approvable. Left unset, that setting
-  is a built-in list of dependency lockfiles (npm, Yarn, pnpm, Bun, Deno, Poetry,
-  uv, Pipenv, PDM, Cargo, Go, Bundler, Composer, Pub, CocoaPods, Swift Package
-  Manager, NuGet, Mix, and Nix), `*.tsbuildinfo`, and Wrangler's
+  `diff.ignored_missing_patch` in `reviews.json` is said to be generated and to need
+  no review, which ignores it outright and leaves the PR approvable. Left out, that
+  setting is a built-in list of dependency lockfiles (npm, Yarn, pnpm, Bun, Deno,
+  Poetry, uv, Pipenv, PDM, Cargo, Go, Bundler, Composer, Pub, CocoaPods, Swift
+  Package Manager, NuGet, Mix, and Nix), `*.tsbuildinfo`, and Wrangler's
   `worker-configuration.d.ts`, each at any depth; images, minified bundles, source
   maps, and test snapshots are left out because each can hold a line worth reading.
   A list of your own replaces the built-in one, and `[]` ignores nothing. Changing
@@ -693,9 +713,9 @@ rather than advisory notes nobody checked.
   review and the rest of the PR is reviewed normally.
 - A diff too large for one review is read in several. The files that did not fit the
   first bundle are reviewed in further bundles of whole files, up to
-  `MAX_REVIEW_BUNDLES`, and a change every bundle covered is a complete review that can
+  `diff.max_bundles`, and a change every bundle covered is a complete review that can
   be approved — where before it was a partial review that never could. Only an oversized
-  change is bundled, so the ordinary path is untouched, and `MAX_REVIEW_BUNDLES=1` keeps
+  change is bundled, so the ordinary path is untouched, and a `max_bundles` of `1` keeps
   the single review this tool has always done. A file is never split across bundles,
   because a reviewer that saw half a function would cite lines nobody can reproduce, so
   a file too large for the budget on its own is still named and left unread. Each bundle
@@ -705,16 +725,17 @@ rather than advisory notes nobody checked.
   for the whole pull request. This is rare — measured across 394 reviewed pull requests,
   1.8% were ever limited by size and 1.0% materially, which is why the change is
   confined to the path that fires.
-- `MAX_FINDINGS` is one limit for the whole review: every bundle and every committed
-  credential together post at most that many comments, the most severe first. Every
-  committed credential is posted, even past the limit, and counts towards it, so only
-  model findings are left over. The review says how many more it confirmed, and the
-  next head reads their files again rather than treating them as clean.
+- `types.code.max_findings` is one limit for the whole review: every bundle and every
+  committed credential together post at most that many comments, the most severe
+  first. Every committed credential is posted, even past the limit, and counts
+  towards it, so only model findings are left over. The review says how many more it
+  confirmed, and the next head reads their files again rather than treating them as
+  clean.
 - A diff too large to read completely is reviewed in part rather than skipped. The
   budget is filled largest changed file first, the deferred paths are named in the
   Slack notification and in the GitHub review body, no approval is given, and no
   finding can be raised against a file the reviewer never saw. That notification is
-  sent once per PR, not once per push. A PR where not one file fits `MAX_DIFF_BYTES`
+  sent once per PR, not once per push. A PR where not one file fits `diff.max_bytes`
   is not reviewed at all, and either way the rest of the run continues.
 - Review feedback that arrives while a review is running is measured rather than
   treated as a blanket failure. A comment that disappeared, or that only became

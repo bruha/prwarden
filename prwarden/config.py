@@ -5,7 +5,7 @@ import shutil
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
 from .comment_template import (
     DEFAULT_GITHUB_COMMENT_TAGS_FILE,
@@ -841,12 +841,24 @@ def load_settings(
     fallback_engine_override: Optional[str] = None,
     fallback_model_override: Optional[str] = None,
     fallback_disabled: bool = False,
+    move_env: bool = False,
 ) -> Settings:
+    """Return the run's settings.
+
+    ``move_env`` is a review run's: without a reviews file it moves the review
+    settings `.env` names into one first, and with none to move it stops, pointing
+    to `prwarden setup`. Every other caller reads `.env` as it is.
+    """
+
     locations = default_locations()
     # Relative settings resolve against the configuration directory, which in a
     # source checkout is the checkout root they always resolved against.
     base_directory = locations.config_directory
-    declared = load_env_file(env_file if env_file is not None else locations.env_file)
+    selected_env_file = env_file if env_file is not None else locations.env_file
+    # What the environment said before `.env` filled it in, so a move keeps only
+    # what `.env` itself says.
+    environment_before = dict(os.environ)
+    declared = load_env_file(selected_env_file)
 
     selected_repositories_file = repositories_file
     if selected_repositories_file is None:
@@ -890,6 +902,15 @@ def load_settings(
 
     reviews_path = _reviews_file(locations, base_directory)
     reviews = load_reviews_file(reviews_path)
+    if reviews is None and move_env:
+        _move_env_settings(
+            declared,
+            environment_before,
+            selected_env_file,
+            reviews_path,
+            lambda: load_settings(env_file, repositories_file, state_file),
+        )
+        reviews = load_reviews_file(reviews_path)
     if reviews is None:
         engines = _engines_from_env(
             declared,
@@ -1029,6 +1050,38 @@ def load_settings(
     if reviews is None:
         return settings
     return settings_from_reviews(settings, reviews)
+
+
+def _move_env_settings(
+    declared: "dict[str, str]",
+    environment_before: "Mapping[str, str]",
+    env_file: Path,
+    target: Path,
+    read_env: "Callable[[], Settings]",
+) -> None:
+    """Move the review settings `.env` names into ``target``, once, or refuse."""
+
+    from .reviews_file import FILE_KEYS, declared_file_keys, move_env_into_file
+
+    if not declared_file_keys(declared):
+        raise ConfigError(
+            f"No reviews file at {target}. Run `prwarden setup` to choose the "
+            "engines that review, or start one from reviews.example.json"
+        )
+    for key in FILE_KEYS:
+        outside = environment_before.get(key, "").strip()
+        if outside and outside != declared.get(key, "").strip():
+            raise ConfigError(
+                f"{key} is set in the environment, not as {env_file} says. Unset it "
+                f"for this run, so moving the review settings into {target.name} "
+                "keeps only what .env says"
+            )
+    moved, backup = move_env_into_file(read_env(), env_file, target)
+    print(
+        f"Moved {len(moved)} review settings from {env_file} into {target}, which "
+        f"PR Warden reads them from now on; the old .env is kept as {backup}. "
+        "Moved: " + ", ".join(moved)
+    )
 
 
 def _reviews_file(locations: Locations, base_directory: Path) -> Path:

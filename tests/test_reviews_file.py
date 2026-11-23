@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import tempfile
@@ -15,6 +16,7 @@ from prwarden.reviews_file import (
     apply_overrides,
     load_reviews_file,
     parse_reviews,
+    plan_summary,
     render_reviews,
     reviews_payload,
     settings_from_reviews,
@@ -626,6 +628,104 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(settings.max_diff_bytes, 5000)
 
 
+class MoveEnvTests(unittest.TestCase):
+    """A review run without a reviews file moves `.env`'s review settings into one,
+    once, keeping the old `.env` beside it, and plans the same reviews."""
+
+    ENV = (
+        "GITHUB_REVIEWER_USERNAME=reviewer\n"
+        "# The reviewer.\n"
+        "REVIEW_ENGINE=kiro\nREVIEW_MODEL=claude-sonnet-5.5\nREVIEW_EFFORT=high\n"
+        "REVIEW_FALLBACK_ENGINE=claude\nREVIEW_CONCURRENCY=3\n"
+        'EXCLUDED_PR_LABELS=["wip"]\n'
+    )
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name).resolve()
+        self.locations = Locations("user", root, root / "state", root / "checkouts")
+        self.write_env(self.ENV)
+        self.locations.repositories_file.write_text(
+            '[{"slug": "owner/repo", "path": "' + str(root) + '"}]',
+            encoding="utf-8",
+        )
+        patcher = patch.object(
+            config, "default_locations", return_value=self.locations
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def write_env(self, text: str) -> None:
+        write_private_env(self.locations.env_file, text)
+
+    def load(self, environment=None, **options):
+        """Return the settings, what loading them said, and their plan, all read in
+        the one environment, since a file's engines are found on its PATH."""
+
+        with patch.dict(os.environ, environment or {}, clear=True), patch(
+            "sys.stdout", new_callable=io.StringIO
+        ) as output:
+            settings = config.load_settings(**options)
+            plan = plan_summary(settings)
+        return settings, output.getvalue(), plan
+
+    def test_a_run_moves_env_into_the_file_and_reviews_alike(self) -> None:
+        _, _, before = self.load()
+
+        after, said, planned = self.load(move_env=True)
+
+        self.assertEqual(after.reviews.source, self.locations.reviews_file)
+        self.assertEqual(planned, before)
+        self.assertIn("Moved 5 review settings", said)
+        text = self.locations.env_file.read_text(encoding="utf-8")
+        self.assertEqual(
+            text,
+            "GITHUB_REVIEWER_USERNAME=reviewer\n# The reviewer.\n"
+            'EXCLUDED_PR_LABELS=["wip"]\n',
+        )
+        backup = self.locations.config_directory / ".env.before-4.0.0"
+        self.assertEqual(backup.read_text(encoding="utf-8"), self.ENV)
+        # Once: the next run finds the file and moves nothing.
+        _, said, planned = self.load(move_env=True)
+        self.assertEqual(said, "")
+        self.assertEqual(planned, before)
+        self.assertEqual(
+            len(list(self.locations.config_directory.glob(".env.before-*"))), 1
+        )
+
+    def test_without_settings_to_move_the_run_points_to_setup(self) -> None:
+        self.write_env("GITHUB_REVIEWER_USERNAME=reviewer\n")
+
+        with self.assertRaisesRegex(ConfigError, "prwarden setup"):
+            self.load(move_env=True)
+        self.assertFalse(self.locations.reviews_file.exists())
+        # Every other reader still reads `.env` as it is.
+        self.assertIsNone(self.load()[0].reviews)
+
+    def test_a_setting_only_the_environment_holds_is_not_moved(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "REVIEW_EFFORT is set in the"):
+            self.load({"REVIEW_EFFORT": "max"}, move_env=True)
+        self.assertFalse(self.locations.reviews_file.exists())
+        self.assertEqual(
+            self.locations.env_file.read_text(encoding="utf-8"), self.ENV
+        )
+
+    def test_an_earlier_backup_is_never_replaced(self) -> None:
+        backup = self.locations.config_directory / ".env.before-4.0.0"
+        backup.write_text("older\n", encoding="utf-8")
+
+        self.load(move_env=True)
+
+        self.assertEqual(backup.read_text(encoding="utf-8"), "older\n")
+        self.assertEqual(
+            (self.locations.config_directory / ".env.before-4.0.0-2").read_text(
+                encoding="utf-8"
+            ),
+            self.ENV,
+        )
+
+
 class DoctorTests(unittest.TestCase):
     def test_the_doctor_names_the_file_and_the_env_keys_it_replaces(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -634,12 +734,18 @@ class DoctorTests(unittest.TestCase):
             )
             with patch.dict(os.environ, {"REVIEW_ENGINE": "kiro"}, clear=True):
                 checks = doctor.check_reviews_file(settings)
-            plain = doctor.check_reviews_file(env_settings(directory))
+            with patch.dict(os.environ, {"REVIEW_ENGINE": "kiro"}, clear=True):
+                moving = doctor.check_reviews_file(env_settings(directory))
+            with patch.dict(os.environ, {}, clear=True):
+                missing = doctor.check_reviews_file(env_settings(directory))
 
         self.assertIn("names design, docs, code, checks", checks[0].message)
         self.assertEqual(checks[1].status, doctor.NOTE)
         self.assertIn("REVIEW_ENGINE", checks[1].message)
-        self.assertIn("no reviews file", plain[0].message)
+        self.assertEqual(moving[0].status, doctor.NOTE)
+        self.assertIn("next review run moves these .env", moving[0].message)
+        self.assertEqual(missing[0].status, doctor.PROBLEM)
+        self.assertIn("prwarden setup", missing[0].message)
 
     def test_the_doctor_checks_every_engine_the_file_names(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

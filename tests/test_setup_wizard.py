@@ -14,7 +14,7 @@ from prwarden.commands import CommandError
 from prwarden.config import ConfigError, load_env_file, load_repositories
 from prwarden.delivery import DeliveryError, DeliveryUncertainError
 from prwarden.paths import PACKAGE_ROOT, Locations
-from prwarden.reviews_file import plan_summary
+from prwarden.reviews_file import load_reviews_file, plan_summary
 from prwarden.setup_wizard import Prompter, SetupError
 from prwarden.tools import TOOLS_BY_KEY, ToolState
 
@@ -51,6 +51,13 @@ class WizardTests(unittest.TestCase):
         )
         self.clone = self.root / "src" / "private"
         self.clone.mkdir(parents=True)
+        # Setup reads back what it wrote, as a run would, from here alone.
+        for patcher in (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(config, "default_locations", return_value=self.locations),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
         ready = [
             ToolState(TOOLS_BY_KEY[key], f"/opt/bin/{key}", "1.0", True)
             for key in ("gh", "claude", "kiro")
@@ -119,9 +126,17 @@ class WizardTests(unittest.TestCase):
             values = load_env_file(env_file)
         self.assertEqual(values["AUTO_REVIEW_DRY_RUN"], "1")
         self.assertEqual(values["GITHUB_REVIEWER_USERNAME"], "reviewer")
-        self.assertEqual(values["REVIEW_ENGINE"], "claude")
-        self.assertEqual(values["REVIEW_VERIFY_ENGINE"], "kiro")
         self.assertNotIn("SLACK_WEBHOOK_URL", values)
+        # The engines chosen are in the reviews file, and only there.
+        self.assertNotIn("REVIEW_ENGINE", values)
+        self.assertEqual(mode(self.locations.reviews_file), 0o600)
+        reviews = load_reviews_file(self.locations.reviews_file)
+        code = reviews.get("code")
+        self.assertEqual(code.review.engines[0].engine, "claude")
+        self.assertEqual(code.verify.engines[0].engine, "kiro")
+        self.assertEqual(
+            list(self.locations.config_directory.glob(".env.before-*")), []
+        )
 
         app, private = load_repositories(
             self.locations.repositories_file, self.locations.checkouts_directory
@@ -432,11 +447,12 @@ class WriteReviewsFileTests(unittest.TestCase):
 
     def test_the_file_plans_the_reviews_env_did(self) -> None:
         before = plan_summary(self.settings())
-        said = []
 
-        self.assertEqual(
-            setup_wizard.write_reviews_file(self.locations, said.append), 0
-        )
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(
+                setup_wizard.write_reviews_file(self.locations, print), 0
+            )
+        said = [output.getvalue()]
 
         after = self.settings()
         self.assertEqual(after.reviews.source, self.locations.reviews_file)
@@ -447,6 +463,20 @@ class WriteReviewsFileTests(unittest.TestCase):
             '{"engine": "kiro", "model": "claude-sonnet-5.5", "effort": "high"}', text
         )
         self.assertIn("REVIEW_ENGINE, REVIEW_MODEL", "\n".join(said))
+        # `.env` keeps everything else, and its old self beside it.
+        with patch.dict(os.environ, {}, clear=True):
+            values = load_env_file(self.locations.env_file)
+        self.assertEqual(values, {"GITHUB_REVIEWER_USERNAME": "reviewer"})
+        backup = self.locations.config_directory / ".env.before-4.0.0"
+        self.assertEqual(backup.read_text(encoding="utf-8"), self.ENV)
+        self.assertEqual(mode(backup), 0o600)
+
+    def test_with_nothing_to_move_it_points_to_setup(self) -> None:
+        self.write_env("GITHUB_REVIEWER_USERNAME=reviewer\n")
+
+        with self.assertRaisesRegex(ConfigError, "prwarden setup"):
+            setup_wizard.write_reviews_file(self.locations, print)
+        self.assertFalse(self.locations.reviews_file.exists())
 
     def test_an_existing_file_is_never_replaced(self) -> None:
         self.locations.reviews_file.write_text("{}", encoding="utf-8")
@@ -459,10 +489,16 @@ class WriteReviewsFileTests(unittest.TestCase):
 
     def test_a_file_that_would_review_differently_is_not_written(self) -> None:
         with patch(
-            "prwarden.setup_wizard.plan_summary", side_effect=[["file"], ["env"]]
-        ), self.assertRaisesRegex(SetupError, "not plan the same reviews"):
+            "prwarden.reviews_file.plan_summary", side_effect=[["file"], ["env"]]
+        ), self.assertRaisesRegex(ConfigError, "not plan the same reviews"):
             setup_wizard.write_reviews_file(self.locations, print)
         self.assertFalse(self.locations.reviews_file.exists())
+        self.assertEqual(
+            self.locations.env_file.read_text(encoding="utf-8"), self.ENV
+        )
+        self.assertEqual(
+            list(self.locations.config_directory.glob(".env.before-*")), []
+        )
 
     def test_a_custom_command_engine_moves_with_its_wrapper(self) -> None:
         self.write_env(

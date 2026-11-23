@@ -97,8 +97,8 @@ review-engine adapter, and route confirmed correctness or security findings:
   never reach the code level, like its advisory notes. A review withheld for any other reason, such as an unresolved
   comment, already has that feedback on the pull request and gets no note.
 - The **checks level** adds to a note waiting for checks, or to the reminder beside
-  an approval, why each one failed and a
-  possible fix, when `REVIEW_CHECKS_LEVEL` is on. It runs only for a review that
+  an approval, why each one failed and a possible fix, when the reviews file
+  configures `types.checks`. It runs only for a review that
   found nothing and would approve, but for the checks that had failed by the time
   it finished or beside them, read again then when any was still running or none
   had started, with no committed credential, no policy change a person has not
@@ -108,12 +108,11 @@ review-engine adapter, and route confirmed correctness or security findings:
   failing step up to its last error and at most 120 lines, and any other check from
   its reported summary. The text has credential-shaped values replaced and reaches
   the prompt only as contained data, since the pull request's own code printed it.
-  It runs on `REVIEW_ENGINE` at `REVIEW_CHECKS_MODEL` and `REVIEW_CHECKS_EFFORT`, or
-  the reviewer's, or, with a reviews file, on the one engine its `types.checks.review`
-  names, with no verifier and no fallback: each diagnosis must name a
-  supplied check once, quote a line found in that check's text, and cite only
-  workspace lines found in the head, and a response that fails that is retried once
-  with the controller's reason. A reading that still fails, or a provider out of
+  It runs on the one engine, model, and effort the reviews file's
+  `types.checks.review` names, with no verifier and no fallback: each diagnosis
+  must name a supplied check once, quote a line found in that check's text, and cite
+  only workspace lines found in the head, and a response that fails that is retried
+  once with the controller's reason. A reading that still fails, or a provider out of
   quota, costs only the reading: the note is posted without it. The note names the
   model that read it, quotes each log line as code, and breaks up any mention in the
   model's text, so a log cannot make the comment notify anybody.
@@ -140,10 +139,11 @@ review-engine adapter, and route confirmed correctness or security findings:
 
 Private configuration remains outside Git:
 
-- `.env`: delivery gates, engine selection, Slack secret, and limits.
-- `reviews.json`, optional: which types of review run, in what order, and on which
-  engines (see [The reviews file](#the-reviews-file)). When present it takes the
-  place of `.env`'s engine selection and limits, which are then not read.
+- `.env`: delivery gates, Slack secret, GitHub identity, and file locations.
+- `reviews.json`: which types of review run, in what order, and on which engines,
+  and the limits every review shares (see [The reviews file](#the-reviews-file)). A
+  review run needs it; the engine selection and limits older releases read from
+  `.env` are moved into it once, and with it are not read.
 - `repositories.json`: GitHub slugs and, optionally, matching local Git checkout
   paths used to fetch immutable PR head commits. An entry with no path is cloned
   by PR Warden into the managed checkouts directory on first use, objects only
@@ -167,7 +167,7 @@ the installed package. Relative paths in `.env` resolve from the configuration
 directory. The default GitHub comment template ships in `prwarden/templates/`, and
 a setting that still names the pre-2.1.0 `templates/` defaults selects them.
 
-Safe templates are committed as `.env.example` and
+Safe templates are committed as `.env.example`, `reviews.example.json`, and
 `repositories.example.json`. The configured reviewer identity is the current
 authenticated GitHub CLI user, resolved once at startup from
 `GITHUB_REVIEWER_USERNAME` when set, otherwise from the REST current-user
@@ -223,17 +223,47 @@ token without it costs the level the log, and it reads the check's summary inste
 
 `reviews.json` sits in the configuration directory, or where `REVIEWS_FILE` in
 `.env` points (`prwarden/reviews_file.py`); a `REVIEWS_FILE` that names no file
-stops the run rather than review on `.env`'s engines. It is private configuration like
-`repositories.json` and is never committed; `reviews.example.json` is, and a test
-loads it with the real loader. Without the file a run takes every setting below from
-`.env`, as it always has, and `reviews_payload` writes those settings out as the file
-that plans the same reviews. `prwarden setup --reviews` writes that file, only when
-none exists and only once `plan_summary` finds the two plans equal: the same types in
-the same order, on the same engines, models, efforts and allowlists, within the same
-timeouts and limits, from the same commands. `.env`'s one command,
-`REVIEW_ENGINE_COMMAND`, moves to `engines.<engine>.command` for the reviewer's
-engine; where `.env` ran that engine from its default executable in another role,
-the plans differ and nothing is written.
+stops the run. It is private configuration like `repositories.json` and is never
+committed; `reviews.example.json` is, and a test loads it with the real loader.
+`prwarden setup` writes it, mode `0600`, from the engines the operator chose, and
+`setup --import` copies a source checkout's.
+
+Releases before 4.0.0 read these settings from `.env`, and `reviews_payload` still
+writes what `.env` declares out as the file that plans the same reviews. A review
+run moves them, once: `cli.run` alone calls `config.load_settings(move_env=True)`,
+and every other caller, `prwarden doctor`, `prwarden schedule`, and
+`prwarden.evaluate` among them, reads `.env` as it is. With `move_env` and no reviews
+file, `load_settings`, through `_move_env_settings` and
+`reviews_file.move_env_into_file`:
+
+1. stops with an error pointing to `prwarden setup`, or to starting from
+   `reviews.example.json`, when `.env` declares none of the keys the file replaces
+   (`reviews_file.FILE_KEYS`);
+2. refuses when one of those keys is set in the process environment to a value
+   `.env` does not have, naming the key, so the file keeps only what `.env` says;
+   unsetting it for that run lets the move go ahead;
+3. writes nothing unless `plan_summary` finds the moved plan equal to `.env`'s: the
+   same types in the same order, on the same engines, models, efforts and
+   allowlists, within the same timeouts and limits, from the same commands. `.env`'s
+   one command, `REVIEW_ENGINE_COMMAND`, moves to `engines.<engine>.command` for the
+   reviewer's engine; where `.env` ran that engine from its default executable in
+   another role, the plans differ and nothing is moved;
+4. copies `.env` aside as `.env.before-4.0.0`, or `.env.before-4.0.0-2`, `-3`, and
+   so on when that name is taken, mode `0600`;
+5. writes `reviews.json`, mode `0600`, atomically, before `.env` loses a line, so no
+   step leaves the settings in neither place;
+6. removes those keys' assignments from `.env`, keeping its comments and every other
+   setting, and prints `Moved N review settings from <.env> into <reviews.json>`
+   with the backup's name.
+
+The run then loads the file it wrote. `prwarden setup --reviews` makes the same
+move at once, with the same plan check and backup, and refuses when a reviews file
+already exists or PR Warden already reads one. With a reviews file, the `.env` keys
+it replaces are not read at all, as since 3.8.0, and setting one in the environment
+changes nothing; the command-line options below, or an edit to the file, change a
+run. `prwarden doctor` lists any left in `.env` as a note. Without a file it notes
+that the next review run moves the ones `.env` declares, or, with none to move,
+reports a problem pointing to `prwarden setup`.
 
 - `types` holds `design`, `docs`, `code`, and `checks`. `code` is required and
   cannot be disabled, since it alone approves; another type left out or set
@@ -270,6 +300,29 @@ stage one. `prwarden doctor` checks every engine the file names and reports any
 `.env` key it replaces as not read. An evaluation arm still overrides the run's own
 settings, so a replay reviews every type on the code review's engines.
 
+#### Moving from `.env`
+
+| `.env` key | Moved to |
+| --- | --- |
+| `REVIEW_ENGINE`, `REVIEW_MODEL`, `REVIEW_EFFORT` | Each type's `review.engines[0]`: `engine`, `model`, `effort` |
+| `REVIEW_CODE_EFFORT` | `types.code.review.engines[0].effort` |
+| `REVIEW_FALLBACK_ENGINE`, `_MODEL`, `_EFFORT` | Each type's `review.engines[1]`; up to four engines in all |
+| `REVIEW_VERIFY_ENGINE`, `_MODEL`, `_EFFORT` | Each type's `verify.engines[0]` |
+| `REVIEW_VERIFY_FALLBACK_ENGINE`, `_MODEL`, `_EFFORT` | Each type's `verify.engines[1]` |
+| `REVIEW_TIMEOUT_SECONDS` | `types.<type>.review.timeout_seconds` |
+| `REVIEW_VERIFY_TIMEOUT_SECONDS` | `types.<type>.verify.timeout_seconds` |
+| `REVIEW_VERIFY_TIMEOUT_PER_CANDIDATE_SECONDS` | `types.<type>.verify.timeout_per_candidate_seconds` |
+| `REVIEW_DESIGN_LEVEL`, `REVIEW_DOCS_LEVEL`, `REVIEW_CHECKS_LEVEL` | Whether `types.design`, `types.docs`, `types.checks` is present and enabled |
+| `REVIEW_CHECKS_MODEL`, `REVIEW_CHECKS_EFFORT` | `types.checks.review.engines[0]`, exactly one engine |
+| `MAX_FINDINGS`, `MAX_DESIGN_FINDINGS`, `MAX_DOCS_FINDINGS` | `types.code`, `types.design`, `types.docs` `.max_findings` |
+| `MAX_DIFF_BYTES`, `MAX_REVIEW_BUNDLES` | `diff.max_bytes`, `diff.max_bundles` |
+| `IGNORED_MISSING_PATCH_PATTERNS` | `diff.ignored_missing_patch` |
+| `REVIEW_CONCURRENCY` | `concurrency` |
+| `REVIEW_ENGINE_ENV_ALLOWLIST` | `engines.<engine>.env` |
+| `REVIEW_ENGINE_COMMAND` | `engines.<engine>.command`; `REVIEW_ENGINE=command` becomes the engine `command` with `engines.command.command` |
+
+Every other `.env` key stays in `.env`.
+
 ### Installation commands
 
 `prwarden setup`, `prwarden doctor`, `prwarden schedule`, and `prwarden history`
@@ -285,15 +338,17 @@ review invocation can be mistaken for one.
   to run the tool's own sign-in. It never runs `sudo`; GitHub CLI on Linux without
   Homebrew is left to its instructions. GitHub CLI and one signed-in AI CLI are
   required to continue.
-- `setup` writes `.env` and `repositories.json`, both mode `0600`, keeping any
-  files it replaces beside them. It pins `GITHUB_REVIEWER_USERNAME` to the chosen
-  account, tries each signed-in account in turn for a repository the reviewer
-  cannot read and records the first that can as that entry's `github_account`, and
-  leaves Slack off for every entry unless a webhook is connected. It writes
-  `AUTO_REVIEW_DRY_RUN=1`; a preview, going live, and a schedule are each asked
-  for. `--import` copies a source checkout's configuration with its relative paths
-  made absolute, its `reviews.json` once the loader accepts it, and its delivery
-  records, and refuses to merge into an existing installation.
+- `setup` writes `.env`, `repositories.json`, and `reviews.json`, each mode `0600`,
+  keeping any files it replaces beside them; the engines chosen go into
+  `reviews.json`, written as a move from `.env` writes it, and not into `.env`. It
+  pins `GITHUB_REVIEWER_USERNAME` to the chosen account, tries each signed-in
+  account in turn for a repository the reviewer cannot read and records the first
+  that can as that entry's `github_account`, and leaves Slack off for every entry
+  unless a webhook is connected. It writes `AUTO_REVIEW_DRY_RUN=1`; a preview, going
+  live, and a schedule are each asked for. `--import` copies a source checkout's
+  configuration with its relative paths made absolute, its `reviews.json` once the
+  loader accepts it, and its delivery records, and refuses to merge into an existing
+  installation.
 - Connecting Slack, in `setup` or alone with `setup --slack`, is asked for. Without
   a webhook it can open Slack's new-app page with a manifest filled in for an app
   whose one scope is `incoming-webhook`, and only on a desktop session: never over
@@ -335,8 +390,8 @@ Discovery completes for every configured repository before the first review
 starts, so the run reports the whole plan up front and draws work from all
 repositories rather than emptying one at a time.
 
-`REVIEW_CONCURRENCY`, overridable with `--concurrency`, bounds how many pull
-requests are reviewed at the same time between 1 and 8, defaulting to 2. The
+The reviews file's `concurrency`, overridable with `--concurrency`, bounds how many
+pull requests are reviewed at the same time between 1 and 8, defaulting to 2. The
 bound exists because capacity, not local CPU, limits a run.
 
 Concurrency changes scheduling only. Every guarantee elsewhere in this
@@ -357,7 +412,7 @@ specification continues to hold per pull request:
 
 Reviews running together record their own output instead of writing to the
 terminal, and the recordings print in the planned order after the last review
-finishes. A run with a single review, or `REVIEW_CONCURRENCY=1`, reports each
+finishes. A run with a single review, or a `concurrency` of 1, reports each
 step as it happens.
 
 The board is drawn by moving the cursor over the rows it already wrote, so no
@@ -449,7 +504,7 @@ duplicate, intent, and counterevidence context but does not itself block
 approval. A delivered GitHub approval remains terminal, while a delivered
 comment review is reconsidered after all of its inline findings are resolved.
 `skipped_oversized` means not one changed file fitted
-`MAX_DIFF_BYTES`, so nothing could be reviewed, and a manual-review Slack
+`diff.max_bytes`, so nothing could be reviewed, and a manual-review Slack
 notification was confirmed; it does not fail the run and requires `--force` to
 reconsider the same head after configuration or implementation changes. The request
 for a human is recorded separately under a pull-request-scoped `oversized` key as
@@ -510,11 +565,11 @@ large pull request is mostly one-line edits. A file that cannot fit the remainin
 budget is skipped rather than ending the fill, so one very large file does not defer
 everything smaller than itself.
 
-A change over the budget is first read in bundles, up to `MAX_REVIEW_BUNDLES`. Each
+A change over the budget is first read in bundles, up to `diff.max_bundles`. Each
 bundle is a complete review of whole files that fit the budget, and the files no bundle
 had room for stay deferred exactly as a single review would have left them. Bundling is
 confined to the oversized path: a change within the budget produces one bundle, which is
-byte for byte the material a single review received, and `MAX_REVIEW_BUNDLES=1` disables
+byte for byte the material a single review received, and a `max_bundles` of 1 disables
 bundling entirely. This matters for about one pull request in a hundred, measured across
 394, which is the reason it changes nothing outside that path.
 
@@ -536,11 +591,12 @@ approval, but no bundle may grant one, because an approval speaks for the whole 
 request. A change every bundle covered is a complete review and may be approved; a
 change with anything left over remains a partial review under the rules below.
 
-One limit holds across the whole review. Each bundle's response is capped at
-`MAX_FINDINGS` on its own, and committed credentials are found apart from any model, so
-together they could post several times that. Once every bundle is verified and the
-credentials are added, `review.select_findings` posts at most `MAX_FINDINGS` of them,
-the most severe first, with findings of one severity in the order they were confirmed.
+One limit holds across the whole review. Each bundle's response is capped at the
+code type's `max_findings` on its own, and committed credentials are found apart from
+any model, so together they could post several times that. Once every bundle is
+verified and the credentials are added, `review.select_findings` posts at most
+`max_findings` of them, the most severe first, with findings of one severity in the
+order they were confirmed.
 Every finding that tells the author about a committed credential is posted, even past
 the limit, and counts towards it: a credential's own finding, ahead of a model finding
 of its severity, and a model finding that kept the only line a credential is on. A key
@@ -598,32 +654,27 @@ adversarial verifier invocation, and the levels run sequentially. The code level
 always runs last: its approval is what a person or an agent merges on, so the
 advisory notes are on the pull request before it. The checks level, described with
 the waiting note under Objective, is the exception: one invocation with no verifier,
-made only after a code review that found nothing but for a failed check. Without a
-reviews file, every other level is reviewed by `REVIEW_ENGINE` at `REVIEW_MODEL` and
-verified by `REVIEW_VERIFY_ENGINE` at `REVIEW_VERIFY_MODEL`, so a level is defined by
-its prompt, response schema, validation, and delivery route, not by its own provider
-settings. With a reviews file, each type names its own review and verify engines, in
-order, and those keys are not read (see [The reviews file](#the-reviews-file)).
-Reasoning effort is the one setting a level may have of its own:
-`REVIEW_CODE_EFFORT` overrides `REVIEW_EFFORT` for the code level, which alone can
-approve, and the verifier and fallback each run at their own effort on every level.
-The checks level, below, is the exception: it reads failed checks rather than the
-change, on `REVIEW_ENGINE` at `REVIEW_CHECKS_MODEL` and `REVIEW_CHECKS_EFFORT`, or
-the engine a reviews file names for it, with no verifier and no fallback.
+made only after a code review that found nothing but for a failed check. Each type
+in the reviews file names its own review and verify engines, in order, each with its
+own model and effort (see [The reviews file](#the-reviews-file)), so a level is
+defined by its prompt, response schema, validation, and delivery route, while which
+provider reads it is configuration. The checks level, below, is the exception: it
+reads failed checks rather than the change, on the one engine `types.checks.review`
+names, with no verifier and no fallback.
 The adapters are unaware of levels: the level travels on the review
 material they are handed, and prompt, schema, and effort selection stays in the
 provider-neutral core.
 
-The **solution-design level** runs first when `REVIEW_DESIGN_LEVEL` is enabled. It
-judges the approach: where the change puts responsibility, what contracts it
-establishes, how state and data flow, which failure modes the structure gives no
-place to handle, and whether this workspace already provides what the change
+The **solution-design level** runs first when the reviews file configures
+`types.design`. It judges the approach: where the change puts responsibility, what
+contracts it establishes, how state and data flow, which failure modes the structure
+gives no place to handle, and whether this workspace already provides what the change
 re-implements, or still lacks what it was asked to deliver. A design finding must
 name a consequence that is reachable in this workspace and a cost that does not
 depend on taste, and it must cite the line that shows the structure. It carries no
 anchor line, which is what lets it describe a whole change and also why it can never
-become an inline comment. At most `MAX_DESIGN_FINDINGS` are reported, deliberately
-fewer than the code level allows.
+become an inline comment. At most `types.design.max_findings` are reported,
+deliberately fewer than the code level allows.
 
 The level runs on a pull request whose diff was too large to read completely, since
 the shape of a change is what nobody can read all of, and it does not run at all on a
@@ -719,11 +770,11 @@ too. Delivery revalidates the mutable pull request first, and happens as soon as
 the level completes rather than with the code-level result, so notes survive a
 later code-level failure.
 
-The **documentation level** runs next when `REVIEW_DOCS_LEVEL` is enabled. It asks
-one question: does a document in this repository now say something the change made
-untrue, and what should it say instead. Both audiences count, the README and the
-docs directory that people read, and the agent instruction files that coding agents
-read, which are the ones nobody notices going stale.
+The **documentation level** runs next when the reviews file configures `types.docs`.
+It asks one question: does a document in this repository now say something the
+change made untrue, and what should it say instead. Both audiences count, the README
+and the docs directory that people read, and the agent instruction files that coding
+agents read, which are the ones nobody notices going stale.
 
 The documents are discovered in the reviewed head rather than configured, so a
 repository needs no setting to be checked and a repository with no documentation
@@ -771,7 +822,7 @@ prompt rule that loosened
 silence for every candidate was tried twice and each time passed a neighbouring
 proposal, a clarification of a sentence that was still true and then a whole new
 section, which is why the exception is held to a shape the controller can check. At
-most `MAX_DOCS_FINDINGS` are reported.
+most `types.docs.max_findings` are reported.
 
 Everything else matches the design level, and for the same reasons: keyed by pull
 request, skipped on a release
@@ -1482,54 +1533,51 @@ session as an adversarial verifier. The verifier may only confirm or reject the
 supplied candidates and must actively test them against dependency versions,
 targeted tests, check results, project patterns, and prior discussion. It cannot
 introduce new finding locations, and only confirmed candidates can be delivered.
-`REVIEW_VERIFY_ENGINE` and `REVIEW_VERIFY_MODEL` optionally run that pass on a
-different authenticated adapter or model, so a candidate produced from one
-model's priors is judged by another. A verification engine that matches the
-primary engine and model is treated as unconfigured. All controller validation,
+The first engine of a type's `verify.engines` runs that pass, optionally on a
+different authenticated adapter or model from the reviewer, so a candidate produced
+from one model's priors is judged by another. A verification engine that matches the
+reviewer's engine and model judges in a separate pass with the reviewer's priors, as
+a type with no `verify` stage does. All controller validation,
 routing, state, and delivery rules apply identically regardless of which engine
 verified.
 
-`REVIEW_EFFORT`, `REVIEW_CODE_EFFORT`, `REVIEW_VERIFY_EFFORT`,
-`REVIEW_FALLBACK_EFFORT`, `REVIEW_VERIFY_FALLBACK_EFFORT`, and
-`REVIEW_CHECKS_EFFORT` optionally set a reasoning effort of `low`, `medium`, `high`,
-`xhigh`, or `max` for the reviewer, the reviewer's code level, the verifier, the
-fallback, the verifier's fallback, and the checks level, which runs on the review
-engine at `REVIEW_CHECKS_MODEL` when set. With a reviews file, those keys are not
-read: each engine entry's own `effort` sets it, and the code level has no override
-of its own.
-Startup refuses an unknown level, an effort without its engine, and an effort for
-an adapter that cannot pass one, because each would otherwise run at a level nobody
-chose without saying so. An engine replaced on the command line does not keep the
+Each engine entry's optional `effort` sets a reasoning effort of `low`, `medium`,
+`high`, `xhigh`, or `max` for that engine in that stage of that type: the reviewer,
+each fallback, the verifier, the verifier's fallbacks, and the checks reading alike.
+Each type's engines carry their own, so the code level needs no override of its own.
+The reviews file refuses an unknown level and an effort for the `command` engine,
+which cannot pass one, because each would otherwise run at a level nobody chose
+without saying so. An engine replaced on the command line does not keep the
 configured effort.
 
-`REVIEW_FALLBACK_ENGINE` and `REVIEW_FALLBACK_MODEL` optionally review a pull
-request when the primary engine fails at the engine level, which covers an
-unavailable, unauthenticated, or refusing provider, an exhausted adapter retry
-budget, and a timeout. Every level hands over the same way: the design and
+The engines after the first in a type's `review.engines`, up to three of them,
+review a pull request, in order, when the one before fails at the engine level, which
+covers an unavailable, unauthenticated, or refusing provider, an exhausted adapter
+retry budget, and a timeout. Every level hands over the same way: the design and
 documentation levels as well as the code level, each at most once per pull request.
-The advisory levels stay advisory when the fallback carries them, and a failure of
-both engines at an advisory level remains contained to that level. A fallback
-engine matching the primary engine and model is treated as unconfigured
-because repeating the same provider call cannot recover from that provider being
-unavailable. A controller validation failure never hands over: the review phase
-already retries it with the exact diagnostic, and trying a second engine for a
-compliant answer would weaken validation rather than recover from an outage. Only
-the primary engine's refusals are recorded as the primary's spent quota.
+The advisory levels stay advisory when a fallback carries them, and a failure of
+every engine at an advisory level remains contained to that level. A stage that lists
+one engine and model twice is refused, because repeating the same provider call
+cannot recover from that provider being unavailable. A controller validation failure
+never hands over: the review phase already retries it with the exact diagnostic, and
+trying a second engine for a compliant answer would weaken validation rather than
+recover from an outage. Only the primary engine's refusals are recorded as the
+primary's spent quota.
 
 The fallback reviewer is a reviewer, not an exception to any rule. Its response
 passes through identical schema, evidence, added-line, dependency, and build
 validation, its candidates go through the same adversarial verification, and
 delivered feedback names the engine that actually reviewed instead of the
-configured primary. When no separate verification engine is configured, the
-verification pass runs on the engine that produced the candidates, because the
-primary engine is the one that just failed. When both engines fail, the reported
-error names both so the outage is not mistaken for a single provider's fault.
+configured primary. When a type has no `verify` stage, the verification pass runs on
+the engine that produced the candidates, because the primary engine is the one that
+just failed. When every engine fails, the reported error names each failure so the
+outage is not mistaken for a single provider's fault.
 
-`REVIEW_VERIFY_FALLBACK_ENGINE`, `_MODEL`, and `_EFFORT` optionally name a verifier
-that judges when the verification engine fails at the engine level, under the same
-rules: an engine failure hands over and a validation failure does not, a fallback
-matching the verifier's engine and model is unconfigured, and a failure of both is
-reported naming both. It requires `REVIEW_VERIFY_ENGINE`. The hand-over is made per
+The engines after the first in a type's `verify.engines` judge, in order, when the
+one before fails at the engine level, under the same rules: an engine failure hands
+over and a validation failure does not, no engine and model may be listed twice, and
+a failure of all of them is reported naming each. They need a `verify` stage, since
+without one the reviewer verifies. The hand-over is made per
 pull request and holds for the rest of it, so a correction retry reaches the engine
 whose answer it corrects, and the next pull request starts with the verifier again.
 Delivered feedback names the verifier that actually judged, each advisory note and
@@ -1771,17 +1819,17 @@ mask or replace the original command failure.
   readable diff never exceeded anything.
 - A withheld approval that the controller forced this way is not reconsidered
   while nothing about it can change. The record names the unread paths and
-  fingerprints `MAX_DIFF_BYTES` and `IGNORED_MISSING_PATCH_PATTERNS`, the only
+  fingerprints `diff.max_bytes` and `diff.ignored_missing_patch`, the only
   settings that decide what goes unread for an immutable head, and a later run
   skips while both still match. A new head, either setting changing, or `--force`
   reopens it. Reconsideration stays for a withholding the engine chose without
   validated blocking comment IDs, where another attempt can genuinely answer
   differently; a rule the controller applied itself cannot, so re-reviewing only
   spends a model invocation to record the same result.
-- `IGNORED_MISSING_PATCH_PATTERNS` therefore no longer decides whether a pull
-  request is reviewed at all. It states that a matching path is generated and
+- The reviews file's `diff.ignored_missing_patch` therefore no longer decides whether
+  a pull request is reviewed at all. It states that a matching path is generated and
   needs no review, which ignores the file outright and leaves the change
-  approvable. Unset or empty, it is `DEFAULT_IGNORED_MISSING_PATCH_PATTERNS`:
+  approvable. Left out, it is `DEFAULT_IGNORED_MISSING_PATCH_PATTERNS`:
   dependency lockfiles, `*.tsbuildinfo`, and Wrangler's
   `worker-configuration.d.ts`, each by name at the root and in its `*/` form. An
   image, a minified bundle, a source map, a test snapshot, and other generators'
