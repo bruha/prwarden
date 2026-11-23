@@ -97,6 +97,7 @@ from .github import (
     policy_signoff,
     validate_object_name,
     waiting_items,
+    why_not_listed,
 )
 from .check_logs import read_check_logs, validate_check_diagnoses
 from .github_status import describe_github_incident
@@ -4962,6 +4963,19 @@ def _discover_review_tasks(
         if requested_pr is not None:
             pull_requests = [pr for pr in pull_requests if pr.number == requested_pr]
             if not pull_requests:
+                reason = why_not_listed(
+                    repository, requested_pr, settings.excluded_pr_labels
+                )
+                if reason is not None:
+                    # Nothing to review is not a failure: the run did what it was
+                    # asked, and says why it reviewed nothing.
+                    print(
+                        _repository_header(
+                            f"Checking {repository.name}: PR #{requested_pr} "
+                            f"{reason}; nothing to review"
+                        )
+                    )
+                    continue
                 errors.append(
                     f"{repository.slug}#{requested_pr}: pull request is not open "
                     "or is excluded from review"

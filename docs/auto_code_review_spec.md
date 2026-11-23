@@ -477,7 +477,15 @@ Losing that lock to another live run is a safe skip reported on the terminal wit
 exit code `0` and no failure notification. The lock did its job, the run holding it
 covers the same work, and an operator who started a manual run does not need to be
 told their scheduled run stood down for it. Every other way the state file can fail
-remains an error.
+remains an error. One that cannot be written at all, as from a sandbox that lets a
+run read and reach the network but not write the state directory, says so and that
+the run belongs outside the sandbox, before anything is reviewed.
+
+A run asked for one pull request by `--repo` and `--pr` that GitHub reports merged,
+closed, a draft, or carrying an excluded label says which and reviews nothing, with
+no error and no failure notification, since nothing was asked of it that it did not
+do (`github.why_not_listed`). A number GitHub cannot describe, or an open pull
+request missing from the list, remains an error.
 
 ### Changes too large to review completely
 

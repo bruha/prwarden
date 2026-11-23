@@ -45,8 +45,18 @@ class FileLock:
         self.handle: Optional[Any] = None
 
     def __enter__(self) -> "FileLock":
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.handle = self.path.open("a+b")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.handle = self.path.open("a+b")
+        except OSError as error:
+            # Typically a sandbox that lets the run read and reach the network but
+            # not write here. Said plainly, since the cure is where it runs.
+            raise StateError(
+                f"Cannot write the review state in {self.path.parent} "
+                f"({error.strerror or error}). A live run must record what it "
+                "posts, so run it where that directory is writable, outside any "
+                "sandbox"
+            ) from error
         try:
             if os.name == "nt":
                 import msvcrt

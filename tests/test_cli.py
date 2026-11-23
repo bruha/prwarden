@@ -957,6 +957,43 @@ class OrchestrationTests(unittest.TestCase):
         self.assertNotIn("Falls back to", header)
         self.assertNotIn("Verification by", header)
 
+    def discover_requested(self, reason):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            errors: "list[str]" = []
+            with patch("prwarden.cli.list_open_prs", return_value=[]), patch(
+                "prwarden.cli.why_not_listed", return_value=reason
+            ), patch("sys.stdout", new_callable=StringIO) as output:
+                tasks = cli._discover_review_tasks(
+                    self.settings(directory, repository),
+                    [repository],
+                    requested_pr=7,
+                    errors=errors,
+                    incident_notice=Mock(),
+                )
+        return tasks, errors, output.getvalue()
+
+    def test_a_requested_pull_request_with_nothing_to_review_is_no_error(
+        self,
+    ) -> None:
+        """A merged pull request asked for by number once failed the run and sent
+        a Slack alert, though there was nothing to review."""
+
+        tasks, errors, output = self.discover_requested("is merged")
+
+        self.assertEqual((tasks, errors), ([], []))
+        self.assertIn("PR #7 is merged; nothing to review", output)
+
+    def test_a_requested_pull_request_nothing_explains_is_still_an_error(
+        self,
+    ) -> None:
+        tasks, errors, _ = self.discover_requested(None)
+
+        self.assertEqual(tasks, [])
+        self.assertEqual(
+            errors, ["owner/app#7: pull request is not open or is excluded from review"]
+        )
+
     def test_failure_notification_names_the_reviewing_engines(self) -> None:
         message = cli._format_failure_notification(
             ["owner/app#1: gh exited with 1: HTTP 503"],
