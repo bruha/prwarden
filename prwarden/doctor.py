@@ -429,11 +429,18 @@ def check_reviews_file(settings: Settings) -> List[Check]:
                 "`prwarden setup --reviews` does it now: " + ", ".join(moving),
             )
         ]
+    rules = settings.reviews.rules
     checks = [
         Check(
             OK,
             f"reviews: {_home_relative(settings.reviews.source)} names "
-            + ", ".join(review_type.name for review_type in settings.reviews.types),
+            + ", ".join(review_type.name for review_type in settings.reviews.types)
+            + (
+                f", and {len(rules)} rule{'s' if len(rules) != 1 else ''} for the "
+                "pull requests they match"
+                if rules
+                else ""
+            ),
         )
     ]
     unread = [key for key in FILE_KEYS if os.environ.get(key, "").strip()]

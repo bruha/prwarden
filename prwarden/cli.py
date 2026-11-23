@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import (
     Any,
     Callable,
+    Iterable,
     Mapping,
     NamedTuple,
     Optional,
@@ -186,7 +187,15 @@ from .reviewer_identity import (
     format_shared_providers,
     format_type_engines,
 )
-from .reviews_file import TYPE_NOUNS
+from .reviews_file import (
+    ORDERED_TYPES,
+    TYPE_NOUNS,
+    ReviewRule,
+    describe_rule,
+    for_pull_request,
+    select_types,
+    settings_from_reviews,
+)
 from .secret_scan import (
     CredentialMatch,
     find_credentials,
@@ -824,6 +833,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--pr", type=int, help="review only one pull-request number")
     parser.add_argument(
+        "--types",
+        metavar="TYPES",
+        help=(
+            "do only these types of review this run, a comma-separated list of "
+            "design, docs, and code, which must include code: it is the one that "
+            "approves, and the checks reading still runs when it needs one"
+        ),
+    )
+    parser.add_argument(
         "--live",
         action="store_true",
         help="enable delivery; also requires AUTO_REVIEW_DRY_RUN=0",
@@ -1154,18 +1172,20 @@ def _shared(
     return value
 
 
-def _create_review_stages(plan: ReviewPlan) -> "dict[str, ReviewStages]":
+def _create_review_stages(
+    plan: ReviewPlan,
+    shared: "Optional[tuple[list[tuple[Any, Any]], ...]]" = None,
+) -> "dict[str, ReviewStages]":
     """Create the engines of every type in the plan, in the order the types run.
 
     Types configured alike share one engine, verifier, and fallback rather than each
     getting its own. A verifier that failed and handed over is down for every type of
     that pull request, and asking it again for each type would spend a refusal to
-    learn what the first one already said.
+    learn what the first one already said. ``shared`` holds what was made for other
+    plans of the same run, to share with them too.
     """
 
-    engines: "list[tuple[Any, Any]]" = []
-    verifications: "list[tuple[Any, Any]]" = []
-    fallbacks: "list[tuple[Any, Any]]" = []
+    engines, verifications, fallbacks = shared if shared is not None else ([], [], [])
     stages: "dict[str, ReviewStages]" = {}
     for review_type in plan.types:
         type_settings = review_type.settings
@@ -1189,6 +1209,85 @@ def _create_review_stages(plan: ReviewPlan) -> "dict[str, ReviewStages]":
             fallback=fallback,
         )
     return stages
+
+
+@dataclass(frozen=True)
+class _ChosenStages:
+    """What the rules a pull request matched have it reviewed with."""
+
+    stages: "Mapping[str, ReviewStages]"
+    plan: ReviewPlan
+    rules: "tuple[ReviewRule, ...]"
+
+
+_StageChooser = Callable[
+    [PullRequest, "Iterable[str]", "Sequence[Mapping[str, Any]]"],
+    Optional[_ChosenStages],
+]
+
+
+class _ReviewRouter:
+    """Each pull request's types and engines, from the rules of the reviews file.
+
+    Made once per run. A pull request no rule matches is reviewed with the run's own
+    stages; the stages of each other plan are made the first time a pull request
+    needs them, and shared by every later one, as the run's own are.
+    """
+
+    def __init__(self, settings: Settings, plan: ReviewPlan) -> None:
+        self.settings = settings
+        self._shared: "tuple[list[tuple[Any, Any]], ...]" = ([], [], [])
+        self.stages = _create_review_stages(plan, self._shared)
+        self._made: "dict[Any, _ChosenStages]" = {}
+        self._guard = threading.Lock()
+
+    def choose(
+        self,
+        repository: Repository,
+        pull_request: PullRequest,
+        labels: "Iterable[str]",
+        files: "Sequence[Mapping[str, Any]]",
+    ) -> Optional[_ChosenStages]:
+        reviews = self.settings.reviews
+        if reviews is None or not reviews.rules:
+            return None
+        paths = sorted(
+            {
+                path
+                for file_data in files
+                for path in (
+                    file_data.get("filename"),
+                    file_data.get("previous_filename"),
+                )
+                if isinstance(path, str) and path
+            }
+        )
+        resolved, matched = for_pull_request(
+            reviews,
+            repository=(repository.slug, repository.name),
+            author=pull_request.author,
+            labels=tuple(labels),
+            paths=paths,
+        )
+        if not matched:
+            return None
+        with self._guard:
+            known = self._made.get(resolved.types)
+            if known is None:
+                plan = review_plan(settings_from_reviews(self.settings, resolved))
+                known = _ChosenStages(
+                    _create_review_stages(plan, self._shared), plan, ()
+                )
+                self._made[resolved.types] = known
+        return replace(known, rules=matched)
+
+
+def _report_chosen_stages(chosen: _ChosenStages) -> None:
+    numbers = ", ".join(str(rule.number) for rule in chosen.rules)
+    plural = "s" if len(chosen.rules) != 1 else ""
+    print(f"      -> Following rule{plural} {numbers} of the reviews file:")
+    for line in _describe_plan(chosen.plan):
+        print(f"         {line}")
 
 
 def _shared_stages(
@@ -3092,11 +3191,14 @@ def _process_pull_request(
     fallback: Optional[FallbackReviewer] = None,
     history_record: Optional[ReviewRecord] = None,
     stages: "Optional[Mapping[str, ReviewStages]]" = None,
+    choose_stages: "Optional[_StageChooser]" = None,
 ) -> None:
     """Review one pull request at one head with every type of review it gets.
 
     ``stages`` names each type's engines, in the order the types run. Without it
     every type reviews with ``engine``, ``verification``, and ``fallback``.
+    ``choose_stages`` replaces them for a pull request the reviews file's rules
+    match, once its labels and changed files are known.
     """
 
     if stages is None:
@@ -3436,6 +3538,19 @@ def _process_pull_request(
             pull_request,
             initial_snapshot.changed_files,
         )
+        # Chosen before anything reads which engine reviews, and chosen again at a
+        # new head, whose changed files may match other rules.
+        chosen = (
+            choose_stages(pull_request, initial_snapshot.labels, files)
+            if choose_stages is not None
+            else None
+        )
+        if chosen is not None:
+            stages = chosen.stages
+            code = stages[CODE_LEVEL]
+            reviewer_engine = code.settings.review_engine
+            reviewer_model = code.settings.review_model
+            _report_chosen_stages(chosen)
         # Found once, before any level runs, so no level's output can repeat one.
         credentials = find_credentials(files)
         generated_marks = _read_generated_marks(
@@ -4740,11 +4855,13 @@ def _process_pull_request_with_head_restarts(
     metrics: Optional[ReviewMetrics] = None,
     history: Optional[ReviewHistory] = None,
     stages: "Optional[Mapping[str, ReviewStages]]" = None,
+    router: "Optional[_ReviewRouter]" = None,
 ) -> None:
     """Review one pull request, restarting at a newer head, and measure its spend.
 
     ``stages`` names each type's engines; without it every type reviews with
-    ``engine``, ``verification``, and ``fallback``.
+    ``engine``, ``verification``, and ``fallback``. ``router`` picks other stages
+    for a pull request the reviews file's rules match.
     """
 
     if stages is None:
@@ -4766,6 +4883,23 @@ def _process_pull_request_with_head_restarts(
         )
 
     measured_stages = _measured_stages(stages, measured)
+    # Wrapped once per plan, so a verification hand-over holds across restarts.
+    measured_choices: "dict[int, Mapping[str, ReviewStages]]" = {}
+
+    def choose_stages(
+        current: PullRequest,
+        labels: "Iterable[str]",
+        files: "Sequence[Mapping[str, Any]]",
+    ) -> Optional[_ChosenStages]:
+        assert router is not None
+        chosen = router.choose(repository, current, labels, files)
+        if chosen is None:
+            return None
+        key = id(chosen.stages)
+        if key not in measured_choices:
+            measured_choices[key] = _measured_stages(chosen.stages, measured)
+        return replace(chosen, stages=measured_choices[key])
+
     history_record = (
         ReviewRecord(
             repository,
@@ -4797,6 +4931,7 @@ def _process_pull_request_with_head_restarts(
             stages=measured_stages,
             verification_activity=verification_activity,
             history_record=history_record,
+            choose_stages=choose_stages if router is not None else None,
         )
     except KeyboardInterrupt:
         if history_record is not None:
@@ -4890,6 +5025,7 @@ def _review_with_head_restarts(
     stages: "Mapping[str, ReviewStages]",
     verification_activity: Optional[_VerificationActivity] = None,
     history_record: Optional[ReviewRecord] = None,
+    choose_stages: "Optional[_StageChooser]" = None,
 ) -> None:
     current_pull_request = pull_request
     for restart_count in range(MAX_HEAD_CHANGE_RESTARTS + 1):
@@ -4904,6 +5040,7 @@ def _review_with_head_restarts(
                 verification_activity=verification_activity,
                 history_record=history_record,
                 stages=stages,
+                choose_stages=choose_stages,
             )
             return
         except PullRequestHeadChangedError as error:
@@ -5041,6 +5178,7 @@ def _execute_review_tasks(
     usage: Optional["_ModelUsage"] = None,
     metrics: Optional[ReviewMetrics] = None,
     history: Optional[ReviewHistory] = None,
+    router: "Optional[_ReviewRouter]" = None,
 ) -> "list[str]":
     """Review the selected pull requests and return their failure details.
 
@@ -5064,6 +5202,7 @@ def _execute_review_tasks(
             usage=usage,
             metrics=metrics,
             history=history,
+            router=router,
         )
 
     errors: "dict[str, str]" = {}
@@ -5102,6 +5241,7 @@ def _execute_review_tasks(
                             metrics=metrics,
                             history=history,
                             stages=stages,
+                            router=router,
                         )
                     except REVIEW_FAILURES as error:
                         key = (
@@ -5158,6 +5298,7 @@ def _review_tasks_in_sequence(
     usage: Optional["_ModelUsage"] = None,
     metrics: Optional[ReviewMetrics] = None,
     history: Optional[ReviewHistory] = None,
+    router: "Optional[_ReviewRouter]" = None,
 ) -> "list[str]":
     """Review one pull request at a time, reporting each step as it happens."""
     errors: "list[str]" = []
@@ -5178,6 +5319,7 @@ def _review_tasks_in_sequence(
                 metrics=metrics,
                 history=history,
                 stages=stages,
+                router=router,
             )
         except REVIEW_FAILURES as error:
             errors.append(
@@ -6341,6 +6483,7 @@ def run(args: argparse.Namespace) -> int:
         raise ConfigError(
             "--pr requires --repo to avoid matching multiple repositories"
         )
+    settings = _with_selected_types(settings, getattr(args, "types", None))
     if args.live and settings.dry_run:
         raise ConfigError(
             "Live delivery requires AUTO_REVIEW_DRY_RUN=0 in addition to --live"
@@ -6373,6 +6516,35 @@ def run(args: argparse.Namespace) -> int:
                 history_directory / f"run-{started}-{os.getpid()}.jsonl"
             ),
         )
+
+
+def _with_selected_types(settings: Settings, requested: Optional[str]) -> Settings:
+    """Return the run's settings kept to the types `--types` names, if it names any."""
+
+    if requested is None:
+        return settings
+    names = [name.strip().lower() for name in requested.split(",") if name.strip()]
+    if CHECKS_LEVEL in names:
+        raise ConfigError(
+            "--types cannot name checks: the checks reading runs when the code "
+            "review needs one"
+        )
+    unknown = [name for name in names if name not in ORDERED_TYPES]
+    if unknown or not names:
+        raise ConfigError(
+            f"--types {requested!r}: the types are " + ", ".join(ORDERED_TYPES)
+        )
+    if CODE_LEVEL not in names:
+        raise ConfigError(
+            "--types must include code: the code review is the one that approves"
+        )
+    if settings.reviews is None:
+        return replace(
+            settings,
+            design_level=settings.design_level and DESIGN_LEVEL in names,
+            docs_level=settings.docs_level and DOCS_LEVEL in names,
+        )
+    return settings_from_reviews(settings, select_types(settings.reviews, names))
 
 
 def _describe_plan(plan: ReviewPlan) -> "tuple[str, ...]":
@@ -6441,6 +6613,17 @@ def _run_reviews(
         print(f"Review types from {settings.reviews.source}:")
         for line in _describe_plan(plan):
             print(f"  {line}")
+        if settings.reviews.rules:
+            print(
+                "Rules, applied first to last to the pull requests they match, a "
+                "later one's change standing:"
+            )
+            for rule in settings.reviews.rules:
+                print(f"  {describe_rule(rule)}")
+        if settings.reviews.selected_types is not None:
+            print(
+                f"Only {', '.join(settings.reviews.selected_types)} this run (--types)"
+            )
     else:
         standby_engine, standby_model, standby_effort = _verify_fallback_identity(
             settings
@@ -6476,7 +6659,8 @@ def _run_reviews(
         print(f"Run log: {transcript_path}")
 
     repositories = _selected_repositories(settings.repositories, args.repo)
-    stages = _create_review_stages(plan)
+    router = _ReviewRouter(settings, plan)
+    stages = router.stages
     errors: list[str] = []
     incident_notice = _GithubIncidentNotice()
     verification_activity = _VerificationActivity()
@@ -6507,6 +6691,7 @@ def _run_reviews(
                 usage=usage,
                 metrics=metrics,
                 history=history,
+                router=router,
             )
         )
     run_spend = usage.describe()

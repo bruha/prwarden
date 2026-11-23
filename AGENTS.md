@@ -31,7 +31,7 @@ this; see [development workflow](docs/development-workflow.md#public-safety).
 - `prwarden/cli.py`: orchestration, retry boundaries, and terminal behavior.
 - `prwarden/config.py`: dotenv and repository configuration validation.
 - `prwarden/reviews_file.py`: `reviews.json`, each review type's engines, order, and
-  limits.
+  limits, and the rules that change them per pull request.
 - `prwarden/engine.py`: provider-neutral prompt, schemas, and adapter registry.
 - `prwarden/engine_*.py`: authenticated review-engine adapters.
 - `prwarden/github.py`: GitHub discovery, feedback, checks, and delivery.

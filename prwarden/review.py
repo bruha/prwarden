@@ -1200,6 +1200,26 @@ def _glob_matches(parts: "Sequence[str]", pattern: "Sequence[str]") -> bool:
     )
 
 
+def path_matches_pattern(path: str, pattern: str) -> bool:
+    """Return whether a repository path matches a glob, as `.gitignore` reads one.
+
+    `**` spans any depth. A pattern with no slash matches a name in any directory,
+    `*.md` any Markdown file; one with a slash is read from the repository root, and
+    one ending in a slash, `docs/`, matches everything below it.
+    """
+
+    text = pattern.strip()
+    if text.endswith("/"):
+        text += "**"
+    if "/" not in text:
+        text = "**/" + text
+    segments = tuple(
+        part for part in PurePosixPath(text.lstrip("/")).parts if part != "."
+    )
+    parts = tuple(part for part in PurePosixPath(path).parts if part not in ("", "."))
+    return bool(parts) and _glob_matches(parts, segments)
+
+
 def is_documentation_path(path: str) -> bool:
     """Return whether a repository path is documentation the docs level reads.
 

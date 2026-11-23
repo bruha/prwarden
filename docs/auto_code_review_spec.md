@@ -287,6 +287,20 @@ reports a problem pointing to `prwarden setup`.
   and `engines.<engine>` apply to the whole run; each engine's CLI is given the
   variables its own `env` names, beyond the few every engine gets, and runs from
   its `command`, an argument list, when one is named, in every role.
+- `rules` lists, in order, changes for the pull requests each one matches
+  (`ReviewRule`). A rule's `match` names one or more of `repositories` (slug or
+  name), `authors`, and `labels`, each matched without regard to case by any one
+  of its entries, and `files`, matched when every file the pull request changes,
+  under its old name and its new, matches one of its patterns
+  (`review.path_matches_pattern`, read as `.gitignore` reads one); every condition
+  named must hold. Its `order` replaces the order, among the types the file or the
+  rule configures, ending with `code`, and never listing `checks`. Its `types`
+  change a type's `review` or `verify` stage, each part given replacing the same
+  part, or its `max_findings`; a type or stage the file does not configure must be
+  given its `engines` whole. Matching rules apply first to last, so a later rule's
+  change stands. Each rule is checked alone against the file's own types when the
+  file is read, which keeps every combination of matching rules one the file can
+  review with.
 
 An unknown key, a value out of range, or a misplaced `command` engine is refused with
 the setting's path in the file. The run's own settings, which name its reviewer in
@@ -294,6 +308,21 @@ the run's reports, are the code review's. The command-line engine and model opti
 change the file's first engine of every type's matching stage for one run, a
 different engine taking none of the model or effort written for the one it
 replaces; `--engine` moves the checks reading too, and `--model` alone does not.
+They are made again after a pull request's rules, so they have the last word, and
+each rule is tried with them before any review, so a flag no rule's types can take
+stops the run. `--types` keeps one run to the types it lists among `design`, `docs`,
+and `code`, which it must include; the checks reading still runs when the code
+review needs it, and a pull request's rules cannot add a type back.
+
+A run prints the file's rules after its plan. A pull request's rules are matched in
+`_process_pull_request` once its labels and changed files are read, before anything
+reads which engine reviews it, and again at each new head (`cli._ReviewRouter`).
+A pull request a rule matches is reviewed with that plan's stages, made the first
+time a pull request needs them and shared by every later one, and the review
+prints which rules it follows and the plan they give. State is unchanged: the code
+level's record is still keyed by head and the advisory levels' by pull request, and
+an earlier head's carried-over files are read again when a rule changes the code
+review's engine, model, or effort, as `_review_basis` already compares.
 `--fallback-engine` replaces each review's second engine, `--no-fallback` leaves
 each review only its first, and a `--verify-engine` gives a type without a verify
 stage one. `prwarden doctor` checks every engine the file names and reports any

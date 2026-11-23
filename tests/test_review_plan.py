@@ -19,6 +19,7 @@ from prwarden.engine import (
 )
 from prwarden.models import PullRequest, Repository, ReviewMaterial
 from prwarden.review_plan import ReviewPlan, ReviewType, review_plan
+from prwarden.reviews_file import ReviewRule, RuleMatch
 from prwarden.state import JsonStateStore
 from tests.test_cli import READY_SNAPSHOT
 from tests.test_review_rules import without_review_rules
@@ -373,7 +374,76 @@ class ReviewTypeRoutingTests(unittest.TestCase):
                 stage.engine.review.assert_not_called()
         submit_approval.assert_called_once()
 
-    def test_a_run_gives_each_type_the_engines_its_plan_names(self) -> None:
+    def test_a_pull_request_a_rule_matches_reviews_with_the_rules_stages(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = settings(directory)
+            repository = base.repositories[0]
+            pull_request = PullRequest(1, "Title", "", "author", "head", "url")
+            stages = {
+                name: cli.ReviewStages(
+                    settings=base,
+                    engine=Mock(name=f"{name} engine"),
+                    verification=Mock(name=f"{name} verification"),
+                    fallback=None,
+                )
+                for name in (DESIGN_LEVEL, DOCS_LEVEL, CODE_LEVEL)
+            }
+            chosen_engine = Mock(name="chosen engine")
+            chosen_engine.review.return_value = {
+                "verdict": "approve",
+                "approval_reason": "No qualifying defects remain.",
+                "findings": [],
+            }
+            chosen = cli._ChosenStages(
+                {
+                    CODE_LEVEL: cli.ReviewStages(
+                        settings=replace(base, review_model="cheap-model"),
+                        engine=chosen_engine,
+                    )
+                },
+                ReviewPlan(
+                    (ReviewType(CODE_LEVEL, replace(base, review_model="cheap-model")),)
+                ),
+                (ReviewRule(2, RuleMatch(files=("*.md",)), (CODE_LEVEL,)),),
+            )
+            seen = []
+
+            def choose(current, labels, files):
+                seen.append((current.head_sha, set(labels), files))
+                return chosen
+
+            files = [{"filename": "README.md", "patch": "@@ -0,0 +1 @@\n+Hello"}]
+            with patch("prwarden.cli.has_current_review", return_value=False), patch(
+                "prwarden.cli.list_prior_review_comments", return_value=()
+            ), patch("prwarden.cli.list_changed_files", return_value=files), patch(
+                "prwarden.cli.get_pull_request_snapshot",
+                side_effect=[READY_SNAPSHOT, READY_SNAPSHOT],
+            ), patch("prwarden.cli.review_workspace") as workspace, patch(
+                "prwarden.cli._run_design_level"
+            ) as design, patch("prwarden.cli._run_docs_level") as docs, patch(
+                "prwarden.cli.submit_approval", return_value="approval-9"
+            ) as submit_approval, patch("sys.stdout", new_callable=StringIO) as out:
+                (Path(directory) / "README.md").write_text("Hello\n")
+                workspace.return_value.__enter__.return_value = repository
+                with JsonStateStore(base.state_file) as store:
+                    cli._process_pull_request(
+                        base,
+                        repository,
+                        pull_request,
+                        store,
+                        live=True,
+                        force=False,
+                        stages=stages,
+                        choose_stages=choose,
+                    )
+
+        self.assertEqual(seen, [("head", set(READY_SNAPSHOT.labels), files)])
+        design.assert_not_called()
+        docs.assert_not_called()
+        chosen_engine.review.assert_called_once()
+        stages[CODE_LEVEL].engine.review.assert_not_called()
+        submit_approval.assert_called_once()
+        self.assertIn("Following rule 2 of the reviews file:", out.getvalue())
         with tempfile.TemporaryDirectory() as directory:
             base = settings(directory)
             pull_request = PullRequest(1, "Title", "", "author", "head", "url")

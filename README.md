@@ -325,11 +325,39 @@ will move them.
   it.
 - A custom wrapper is the engine `command`, run by `engines.command.command`. It
   takes no effort and can only be the first engine of a `review` stage.
+- `rules` changes the plan for the pull requests each rule `match`es, applied first
+  to last, a later rule's change standing. `match` names `repositories`, `authors`,
+  `labels`, or `files`, and all it names must hold: a pull request matches a list of
+  repositories, authors, or labels when it has one of them, and `files` when every
+  file it changes matches one of the patterns. A pattern reads as in `.gitignore`:
+  `*.md` is a Markdown file in any directory, `docs/` everything under `docs`. A
+  rule's `order` says which types run, ending with `code`, and its `types` change a
+  type's stages or `max_findings`, keeping what they leave out. The example's rule
+  gives a change to documentation alone a documentation review and a cheaper code
+  review:
+
+  ```json
+  "rules": [
+    {
+      "match": {"files": ["*.md", "docs/"]},
+      "order": ["docs", "code"],
+      "types": {"code": {"review": {"engines": [
+        {"engine": "kiro", "model": "claude-haiku-5.5", "effort": "max"}]}}}
+    },
+    {"match": {"labels": ["dependencies"]}, "order": ["code"]}
+  ]
+  ```
+
+  A rule cannot turn the code review off, and a type or stage the file does not
+  configure must be given its engines whole. The run lists its rules after its plan,
+  and each review says which ones it follows; `prwarden doctor` counts them.
 
 `--engine`, `--model`, `--verify-engine`, `--verify-model`,
 `--fallback-engine`, `--fallback-model`, `--no-fallback`, and `--concurrency` change
-the file's settings for one run, for every type: a different engine does not take the
-model or effort written for the one it replaces.
+the file's settings for one run, for every type, after any rules: a different engine
+does not take the model or effort written for the one it replaces. `--types
+code,docs` does only those types of review in one run; it must include `code`, and
+the checks reading still runs when the code review needs it.
 
 #### Moving from `.env`
 

@@ -18,8 +18,9 @@ Use these module responsibilities:
 
 - `config`: parse and validate untrusted local configuration.
 - `reviews_file`: read `reviews.json`, which names each type of review's engines,
-  their order, and the limits every review shares, and move the settings older
-  releases kept in `.env` into one.
+  their order, the limits every review shares, and the rules that change them for
+  the pull requests they match, and move the settings older releases kept in `.env`
+  into one.
 - `paths`: decide where configuration and state live, for a checkout or an
   installed copy, before any of it is read.
 - `commands`: execute subprocesses and preserve failure output.

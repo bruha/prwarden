@@ -3,22 +3,28 @@ import json
 import os
 import tempfile
 import unittest
+from argparse import Namespace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from prwarden import cli, config, doctor
 from prwarden.config import ConfigError
 from prwarden.engine import CHECKS_LEVEL, CODE_LEVEL, DESIGN_LEVEL, DOCS_LEVEL
+from prwarden.models import PullRequest
 from prwarden.paths import PACKAGE_ROOT, Locations
+from prwarden.review import path_matches_pattern
 from prwarden.review_plan import review_plan
 from prwarden.reviews_file import (
     EngineChoice,
     apply_overrides,
+    describe_rule,
+    for_pull_request,
     load_reviews_file,
     parse_reviews,
     plan_summary,
     render_reviews,
     reviews_payload,
+    select_types,
     settings_from_reviews,
 )
 from tests.test_config import write_private_env
@@ -106,6 +112,8 @@ class ParseTests(unittest.TestCase):
         payload = example()
         payload["types"]["docs"]["enabled"] = False
         payload["order"] = ["design", "code"]
+        # The example's rule runs docs, which this file no longer configures.
+        payload.pop("rules")
         reviews = parse_reviews(payload, SOURCE)
         self.assertEqual(
             [review_type.name for review_type in reviews.types],
@@ -422,6 +430,491 @@ class PlanTests(unittest.TestCase):
             stages[DESIGN_LEVEL].verification, stages[CODE_LEVEL].verification
         )
         self.assertIsNone(stages[CHECKS_LEVEL].fallback)
+
+
+DOCS_ONLY_RULE = {
+    "match": {"files": ["*.md", "docs/"]},
+    "order": ["docs", "code"],
+    "types": {
+        "code": {
+            "review": {
+                "engines": [
+                    {"engine": "kiro", "model": "claude-haiku-5.5", "effort": "max"}
+                ]
+            }
+        }
+    },
+}
+
+
+def with_rules(*rules: dict, payload: "dict | None" = None) -> dict:
+    payload = example() if payload is None else json.loads(json.dumps(payload))
+    payload["rules"] = list(rules)
+    return payload
+
+
+def resolve(reviews, *, paths=("src/app.py",), author="someone", labels=(), slug=None):
+    return for_pull_request(
+        reviews,
+        repository=(slug or "owner/app", "app"),
+        author=author,
+        labels=labels,
+        paths=paths,
+    )
+
+
+class RuleTests(unittest.TestCase):
+    def test_the_example_rule_reviews_a_documentation_change_cheaply(self) -> None:
+        reviews = load_reviews_file(EXAMPLE)
+
+        resolved, matched = resolve(reviews, paths=("README.md", "docs/setup/a.png"))
+
+        self.assertEqual([rule.number for rule in matched], [1])
+        self.assertEqual(
+            [review_type.name for review_type in resolved.types],
+            [DOCS_LEVEL, CODE_LEVEL, CHECKS_LEVEL],
+        )
+        code = resolved.get(CODE_LEVEL)
+        self.assertEqual(
+            code.review.engines, (EngineChoice("kiro", "claude-haiku-5.5", "max"),)
+        )
+        # What the rule does not change is the file's.
+        self.assertEqual(code.review.timeout_seconds, 1800)
+        self.assertEqual(code.verify, reviews.get(CODE_LEVEL).verify)
+        self.assertEqual(code.max_findings, 10)
+
+    def test_a_change_with_one_file_outside_the_patterns_is_not_matched(self) -> None:
+        reviews = load_reviews_file(EXAMPLE)
+
+        for paths in (("README.md", "src/app.py"), ("docs/a.md", "docs.py"), ()):
+            with self.subTest(paths=paths):
+                resolved, matched = resolve(reviews, paths=paths)
+                self.assertEqual(matched, ())
+                self.assertIs(resolved, reviews)
+
+    def test_patterns_read_as_gitignore_does(self) -> None:
+        for path, pattern, expected in (
+            ("README.md", "*.md", True),
+            ("docs/deep/guide.md", "*.md", True),
+            ("docs/deep/image.png", "docs/", True),
+            ("src/docs/image.png", "docs/", False),
+            ("src/docs/image.png", "**/docs/**", True),
+            ("docs/a.md", "/docs/*.md", True),
+            ("docs/deep/a.md", "docs/*.md", False),
+            ("Docs/a.md", "docs/", False),
+        ):
+            with self.subTest(path=path, pattern=pattern):
+                self.assertIs(path_matches_pattern(path, pattern), expected)
+
+    def test_names_compare_without_case_and_every_condition_must_hold(self) -> None:
+        rule = {
+            "match": {
+                "repositories": ["Owner/App"],
+                "authors": ["app/Example-Bot"],
+                "labels": ["Dependencies"],
+            },
+            "order": ["code"],
+        }
+        reviews = parse_reviews(with_rules(rule), SOURCE)
+
+        _, matched = resolve(
+            reviews, author="app/example-bot", labels=("dependencies", "ci")
+        )
+        self.assertEqual(len(matched), 1)
+        for changed in (
+            {"author": "someone", "labels": ("dependencies",)},
+            {"author": "app/example-bot", "labels": ()},
+            {"author": "app/example-bot", "labels": ("dependencies",), "slug": "o/x"},
+        ):
+            with self.subTest(**changed):
+                self.assertEqual(resolve(reviews, **changed)[1], ())
+        # A repository is matched by its name too.
+        by_name = parse_reviews(
+            with_rules({"match": {"repositories": ["app"]}, "order": ["code"]}),
+            SOURCE,
+        )
+        self.assertEqual(len(resolve(by_name)[1]), 1)
+
+    def test_rules_apply_first_to_last_and_a_later_change_stands(self) -> None:
+        first = {
+            "match": {"authors": ["someone"]},
+            "order": ["docs", "code"],
+            "types": {
+                "code": {
+                    "review": {
+                        "engines": [{"engine": "codex"}],
+                        "timeout_seconds": 600,
+                    },
+                    "max_findings": 3,
+                }
+            },
+        }
+        second = {
+            "match": {"files": ["src/"]},
+            "types": {"code": {"review": {"engines": [{"engine": "claude"}]}}},
+        }
+        reviews = parse_reviews(with_rules(first, second), SOURCE)
+
+        resolved, matched = resolve(reviews)
+
+        self.assertEqual([rule.number for rule in matched], [1, 2])
+        code = resolved.get(CODE_LEVEL)
+        self.assertEqual(code.review.engines, (EngineChoice("claude"),))
+        self.assertEqual(code.review.timeout_seconds, 600)
+        self.assertEqual(code.max_findings, 3)
+        self.assertEqual(
+            [review_type.name for review_type in resolved.types],
+            [DOCS_LEVEL, CODE_LEVEL, CHECKS_LEVEL],
+        )
+
+    def test_a_rule_may_add_a_type_the_file_leaves_out_when_it_names_it_whole(
+        self,
+    ) -> None:
+        payload = example()
+        del payload["types"]["design"]
+        payload["order"] = ["docs", "code"]
+        rule = {
+            "match": {"labels": ["architecture"]},
+            "order": ["design", "code"],
+            "types": {
+                "design": {
+                    "review": {"engines": [{"engine": "claude", "model": "opus"}]},
+                    "verify": {"engines": [{"engine": "codex"}]},
+                }
+            },
+        }
+        reviews = parse_reviews(with_rules(rule, payload=payload), SOURCE)
+
+        resolved, _ = resolve(reviews, labels=("architecture",))
+
+        design = resolved.get(DESIGN_LEVEL)
+        self.assertEqual(
+            [review_type.name for review_type in resolved.types],
+            [DESIGN_LEVEL, CODE_LEVEL, CHECKS_LEVEL],
+        )
+        self.assertEqual(design.review.timeout_seconds, 300)
+        self.assertEqual(design.verify.timeout_per_candidate_seconds, 180)
+        self.assertEqual(design.max_findings, 4)
+        self.assertIsNone(resolved.get(DOCS_LEVEL))
+
+    def test_the_command_line_has_the_last_word_over_rules(self) -> None:
+        reviews = apply_overrides(
+            parse_reviews(with_rules(DOCS_ONLY_RULE), SOURCE),
+            engine="codex",
+            model="gpt-6.1",
+        )
+
+        resolved, matched = resolve(reviews, paths=("README.md",))
+
+        self.assertEqual(len(matched), 1)
+        self.assertEqual(
+            resolved.get(CODE_LEVEL).review.engines, (EngineChoice("codex", "gpt-6.1"),)
+        )
+
+    def test_a_flag_a_rule_cannot_take_stops_the_run_before_any_review(
+        self,
+    ) -> None:
+        payload = example()
+        for name in (DESIGN_LEVEL, DOCS_LEVEL, CODE_LEVEL):
+            payload["types"][name].pop("verify")
+        payload["types"][CODE_LEVEL]["verify"] = {"engines": [{"engine": "codex"}]}
+        del payload["types"]["design"]
+        del payload["types"]["docs"]
+        del payload["order"]
+        rule = {
+            "match": {"labels": ["architecture"]},
+            "order": ["design", "code"],
+            "types": {"design": {"review": {"engines": [{"engine": "claude"}]}}},
+        }
+        reviews = parse_reviews(with_rules(rule, payload=payload), SOURCE)
+
+        with self.assertRaisesRegex(ConfigError, "--verify-model needs"):
+            apply_overrides(reviews, verify_model="gpt-6.1")
+
+    def test_types_keeps_a_run_to_the_types_it_names(self) -> None:
+        reviews = select_types(
+            parse_reviews(with_rules(DOCS_ONLY_RULE), SOURCE), (CODE_LEVEL,)
+        )
+
+        self.assertEqual(
+            [review_type.name for review_type in reviews.types],
+            [CODE_LEVEL, CHECKS_LEVEL],
+        )
+        resolved, matched = resolve(reviews, paths=("README.md",))
+        self.assertEqual(len(matched), 1)
+        self.assertEqual(
+            [review_type.name for review_type in resolved.types],
+            [CODE_LEVEL, CHECKS_LEVEL],
+        )
+        self.assertEqual(
+            resolved.get(CODE_LEVEL).review.engines[0].model, "claude-haiku-5.5"
+        )
+
+    def test_a_rule_that_could_not_be_reviewed_with_is_refused(self) -> None:
+        no_design = example()
+        del no_design["types"]["design"]
+        no_design["order"] = ["docs", "code"]
+        no_verify = example()
+        no_verify["types"]["docs"].pop("verify")
+        code_engines = {"review": {"engines": [{"engine": "codex"}]}}
+        for payload, problem in (
+            (with_rules({"order": ["code"]}), "rule 1 match is required"),
+            (with_rules({"match": {}, "order": ["code"]}), "names no condition"),
+            (
+                with_rules({"match": {"files": []}, "order": ["code"]}),
+                "rule 1 match.files is empty",
+            ),
+            (
+                with_rules({"match": {"branch": ["x"]}, "order": ["code"]}),
+                "unknown key 'branch'",
+            ),
+            (with_rules({"match": {"labels": ["x"]}}), "changes nothing"),
+            (
+                with_rules({"match": {"labels": ["x"]}, "order": ["code", "docs"]}),
+                "must end with code",
+            ),
+            (
+                with_rules({"match": {"labels": ["x"]}, "order": ["checks", "code"]}),
+                "cannot list checks",
+            ),
+            (
+                with_rules(
+                    {"match": {"labels": ["x"]}, "order": ["design", "code"]},
+                    payload=no_design,
+                ),
+                "lists design, which neither",
+            ),
+            (
+                with_rules(
+                    {
+                        "match": {"labels": ["x"]},
+                        "types": {"design": {"max_findings": 2}},
+                    },
+                    payload=no_design,
+                ),
+                "rule 1 types.design.review is required",
+            ),
+            (
+                with_rules(
+                    {
+                        "match": {"labels": ["x"]},
+                        "types": {"docs": {"verify": {"timeout_seconds": 60}}},
+                    },
+                    payload=no_verify,
+                ),
+                "rule 1 types.docs.verify.engines is required",
+            ),
+            (
+                with_rules(
+                    {
+                        "match": {"labels": ["x"]},
+                        "types": {
+                            "checks": {
+                                "review": {
+                                    "engines": [{"engine": "kiro"}, {"engine": "codex"}]
+                                }
+                            }
+                        },
+                    }
+                ),
+                "rule 1 types.checks.review.engines",
+            ),
+            (
+                with_rules(
+                    {
+                        "match": {"labels": ["x"]},
+                        "types": {
+                            "code": {"review": {"engines": [{"engine": "command"}]}}
+                        },
+                    }
+                ),
+                "engines.command.command is required",
+            ),
+            (
+                with_rules({"match": {"labels": ["x"]}, "types": {"code": {}}}),
+                "changes nothing",
+            ),
+            ({**example(), "rules": {"match": {}}}, "rules must be a list"),
+            (
+                with_rules(
+                    {
+                        "match": {"labels": ["x"]},
+                        "types": {"code": code_engines},
+                        "x": 1,
+                    }
+                ),
+                "unknown key 'x'",
+            ),
+        ):
+            with self.subTest(problem=problem):
+                with self.assertRaisesRegex(ConfigError, problem):
+                    parse_reviews(payload, SOURCE)
+
+    def test_each_rule_is_described_in_one_line(self) -> None:
+        reviews = parse_reviews(with_rules(DOCS_ONLY_RULE), SOURCE)
+
+        self.assertEqual(
+            describe_rule(reviews.rules[0]),
+            "1. files *.md, docs/: runs docs, code; changes the code review",
+        )
+
+
+class RouterTests(unittest.TestCase):
+    def router(self, directory: str, payload: dict):
+        settings = settings_from_reviews(
+            env_settings(directory), parse_reviews(payload, SOURCE)
+        )
+        with patch(
+            "prwarden.cli.create_review_engine",
+            side_effect=lambda made: Mock(name=made.review_model),
+        ):
+            router = cli._ReviewRouter(settings, review_plan(settings))
+        return settings, router
+
+    def choose(self, router, settings, files, labels=()):
+        with patch(
+            "prwarden.cli.create_review_engine",
+            side_effect=lambda made: Mock(name=made.review_model),
+        ):
+            return router.choose(
+                settings.repositories[0],
+                PullRequest(1, "Title", "", "author", "head", "url"),
+                labels,
+                files,
+            )
+
+    def test_a_pull_request_a_rule_matches_gets_that_plans_engines(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings, router = self.router(directory, example())
+            chosen = self.choose(router, settings, [{"filename": "docs/a.md"}])
+            again = self.choose(router, settings, [{"filename": "README.md"}])
+
+        self.assertEqual(list(chosen.stages), [DOCS_LEVEL, CODE_LEVEL, CHECKS_LEVEL])
+        code = chosen.stages[CODE_LEVEL]
+        self.assertEqual(
+            (code.settings.review_model, code.settings.review_effort),
+            ("claude-haiku-5.5", "max"),
+        )
+        self.assertIsNone(code.fallback)
+        self.assertIsNotNone(code.verification)
+        self.assertEqual([rule.number for rule in chosen.rules], [1])
+        # The plan's stages are made once and shared by every pull request it fits.
+        self.assertIs(again.stages, chosen.stages)
+        self.assertIsNot(chosen.stages, router.stages)
+
+    def test_a_file_moved_out_of_code_is_not_a_documentation_change(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings, router = self.router(directory, example())
+            moved = self.choose(
+                router,
+                settings,
+                [{"filename": "docs/old.md", "previous_filename": "src/old.py"}],
+            )
+            without_rules = {**example(), "rules": []}
+            plain_settings, plain = self.router(directory, without_rules)
+            none = self.choose(plain, plain_settings, [{"filename": "docs/a.md"}])
+
+        self.assertIsNone(moved)
+        self.assertIsNone(none)
+
+    def test_each_pull_request_measures_the_stages_its_rules_chose(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings, router = self.router(directory, example())
+            received = []
+            with patch(
+                "prwarden.cli._review_with_head_restarts",
+                side_effect=lambda *args, **kwargs: received.append(kwargs),
+            ), patch(
+                "prwarden.cli.create_review_engine",
+                side_effect=lambda made: Mock(name=made.review_model),
+            ):
+                cli._process_pull_request_with_head_restarts(
+                    settings,
+                    settings.repositories[0],
+                    PullRequest(1, "Title", "", "author", "head", "url"),
+                    Mock(),
+                    live=False,
+                    force=False,
+                    stages=router.stages,
+                    router=router,
+                )
+                (kwargs,) = received
+                choose = kwargs["choose_stages"]
+                pull_request = PullRequest(1, "Title", "", "author", "next", "url")
+                first = choose(pull_request, (), [{"filename": "README.md"}])
+                restarted = choose(pull_request, (), [{"filename": "README.md"}])
+                code_change = choose(pull_request, (), [{"filename": "app.py"}])
+
+        self.assertEqual(first.stages[CODE_LEVEL].engine._role, "review")
+        # A restart keeps the wrappers, so a hand-over made at the first head holds.
+        self.assertIs(restarted.stages[CODE_LEVEL], first.stages[CODE_LEVEL])
+        self.assertIsNone(code_change)
+
+
+class TypesFlagTests(unittest.TestCase):
+    def test_types_keeps_the_run_to_the_types_it_names(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings = settings_from_reviews(
+                env_settings(directory), parse_reviews(example(), SOURCE)
+            )
+            selected = cli._with_selected_types(settings, " Code, docs ")
+            legacy = cli._with_selected_types(env_settings(directory), "code")
+
+        self.assertEqual(
+            review_plan(selected).names, (DOCS_LEVEL, CODE_LEVEL, CHECKS_LEVEL)
+        )
+        self.assertEqual(selected.reviews.selected_types, (DOCS_LEVEL, CODE_LEVEL))
+        self.assertFalse(selected.design_level)
+        self.assertEqual(review_plan(legacy).names[-1], CODE_LEVEL)
+        self.assertNotIn(DESIGN_LEVEL, review_plan(legacy).names)
+        self.assertNotIn(DOCS_LEVEL, review_plan(legacy).names)
+
+    def test_types_must_name_known_types_and_the_code_review(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings = settings_from_reviews(
+                env_settings(directory), parse_reviews(example(), SOURCE)
+            )
+            for requested, problem in (
+                ("docs", "must include code"),
+                ("code,checks", "cannot name checks"),
+                ("code,lint", "the types are design, docs, code"),
+                (",", "the types are"),
+            ):
+                with self.subTest(requested=requested):
+                    with self.assertRaisesRegex(ConfigError, problem):
+                        cli._with_selected_types(settings, requested)
+
+    def test_the_run_names_its_rules_and_the_types_it_is_kept_to(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings = settings_from_reviews(
+                env_settings(directory), parse_reviews(example(), SOURCE)
+            )
+            args = Namespace(
+                env_file=Path(directory) / ".env",
+                repositories_file=None,
+                state_file=None,
+                repo=[],
+                pr=None,
+                live=False,
+                force=False,
+                engine=None,
+                concurrency=1,
+                types="code,docs",
+            )
+            with patch("prwarden.cli.load_settings", return_value=settings), patch(
+                "prwarden.cli.create_review_engine",
+                side_effect=lambda made: Mock(),
+            ), patch("prwarden.cli.list_open_prs", return_value=[]), patch(
+                "prwarden.cli.pin_github_account"
+            ), patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(cli.run(args), 0)
+
+        text = output.getvalue()
+        self.assertIn(
+            "  1. files *.md, docs/: runs docs, code; changes the code review\n", text
+        )
+        self.assertIn("Only docs, code this run (--types)\n", text)
+        self.assertNotIn("solution-design review", text)
 
 
 class OverrideTests(unittest.TestCase):
@@ -755,6 +1248,7 @@ class DoctorTests(unittest.TestCase):
                 missing = doctor.check_reviews_file(env_settings(directory))
 
         self.assertIn("names design, docs, code, checks", checks[0].message)
+        self.assertIn("and 1 rule for the pull requests they match", checks[0].message)
         self.assertEqual(checks[1].status, doctor.NOTE)
         self.assertIn("REVIEW_ENGINE", checks[1].message)
         self.assertEqual(moving[0].status, doctor.NOTE)

@@ -71,5 +71,20 @@
         "timeout_seconds": 300
       }
     }
-  }
+  },
+  "rules": [
+    {
+      "match": {"files": ["*.md", "docs/"]},
+      "order": ["docs", "code"],
+      "types": {
+        "code": {
+          "review": {
+            "engines": [
+              {"engine": "kiro", "model": "claude-haiku-5.5", "effort": "max"}
+            ]
+          }
+        }
+      }
+    }
+  ]
 }

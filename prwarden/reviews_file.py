@@ -34,6 +34,7 @@ from .config import (
     parse_command,
 )
 from .engine import CHECKS_LEVEL, CODE_LEVEL, DESIGN_LEVEL, DOCS_LEVEL
+from .review import path_matches_pattern
 
 REVIEWS_FILE_NAME = "reviews.json"
 # The `.env` keys a reviews file takes the place of: with the file, none is read.
@@ -139,6 +140,81 @@ class ReviewTypeConfig:
 
 
 @dataclass(frozen=True)
+class RuleMatch:
+    """Which pull requests a rule is for: every condition it names must hold.
+
+    A pull request matches a list of repositories, authors, or labels when it has
+    one of them, and the list of files when every file it changes, under its old
+    name and its new, matches one of the patterns.
+    """
+
+    repositories: "tuple[str, ...]" = ()
+    authors: "tuple[str, ...]" = ()
+    labels: "tuple[str, ...]" = ()
+    files: "tuple[str, ...]" = ()
+
+    def matches(
+        self,
+        repository: "Sequence[str]",
+        author: str,
+        labels: "Sequence[str]",
+        paths: "Sequence[str]",
+    ) -> bool:
+        def among(wanted: "tuple[str, ...]", values: "Sequence[str]") -> bool:
+            folded = {value.strip().casefold() for value in values}
+            return any(item.casefold() in folded for item in wanted)
+
+        if self.repositories and not among(self.repositories, repository):
+            return False
+        if self.authors and not among(self.authors, (author,)):
+            return False
+        if self.labels and not among(self.labels, labels):
+            return False
+        if self.files and not (
+            paths
+            and all(
+                any(path_matches_pattern(path, pattern) for pattern in self.files)
+                for path in paths
+            )
+        ):
+            return False
+        return True
+
+
+@dataclass(frozen=True)
+class StageChange:
+    """What a rule changes in one stage; None leaves that part as it was."""
+
+    engines: "Optional[tuple[EngineChoice, ...]]" = None
+    timeout_seconds: Optional[int] = None
+    timeout_per_candidate_seconds: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class TypeChange:
+    """What a rule changes in one type of review."""
+
+    name: str
+    review: Optional[StageChange] = None
+    verify: Optional[StageChange] = None
+    max_findings: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class ReviewRule:
+    """For the pull requests it matches, which types run and on which engines.
+
+    ``number`` counts from 1, in the file's order, which is the order rules apply in:
+    where two matching rules change one thing, the later one's change stands.
+    """
+
+    number: int
+    match: RuleMatch
+    order: "Optional[tuple[str, ...]]" = None
+    types: "tuple[TypeChange, ...]" = ()
+
+
+@dataclass(frozen=True)
 class ReviewsFile:
     """What a reviews file says, checked, with the file it came from."""
 
@@ -154,6 +230,14 @@ class ReviewsFile:
     engine_env: "tuple[tuple[str, tuple[str, ...]], ...]" = ()
     # The executable an engine runs in place of its built-in one, as an argument list.
     engine_command: "tuple[tuple[str, tuple[str, ...]], ...]" = ()
+    rules: "tuple[ReviewRule, ...]" = ()
+    # What a pull request a rule matches starts from: the types as the file names
+    # them, before this run's command line changed them, and those changes, made
+    # again after the rules so that the command line still has the last word.
+    file_types: "tuple[ReviewTypeConfig, ...]" = ()
+    overrides: "tuple[tuple[str, Any], ...]" = ()
+    # The types `--types` keeps this run to, when it names any.
+    selected_types: "Optional[tuple[str, ...]]" = None
 
     def get(self, name: str) -> Optional[ReviewTypeConfig]:
         for review_type in self.types:
@@ -352,6 +436,299 @@ def _review_type(
     )
 
 
+def _stage_change(
+    value: Any,
+    source: object,
+    where: str,
+    *,
+    verify: bool,
+    most: int,
+    needs_engines: bool,
+) -> StageChange:
+    """Return what a rule changes in a stage; ``needs_engines`` when it has none."""
+
+    keys = ("engines", "timeout_seconds") + (
+        ("timeout_per_candidate_seconds",) if verify else ()
+    )
+    payload = _object(value, source, where, keys)
+    if not payload:
+        raise _refuse(source, where, "changes nothing; name what it changes")
+    if needs_engines and "engines" not in payload:
+        raise _refuse(
+            source,
+            f"{where}.engines",
+            "is required: there is no such stage in the file's types for the rule "
+            "to change",
+        )
+    engines = (
+        _stage(
+            {"engines": payload["engines"]}, source, where, verify=verify, most=most
+        ).engines
+        if "engines" in payload
+        else None
+    )
+    timeout_limits = VERIFY_TIMEOUT if verify else REVIEW_TIMEOUT
+    return StageChange(
+        engines,
+        _integer(
+            payload["timeout_seconds"],
+            source,
+            f"{where}.timeout_seconds",
+            timeout_limits,
+        )
+        if payload.get("timeout_seconds") is not None
+        else None,
+        _integer(
+            payload["timeout_per_candidate_seconds"],
+            source,
+            f"{where}.timeout_per_candidate_seconds",
+            VERIFY_TIMEOUT_PER_CANDIDATE,
+        )
+        if payload.get("timeout_per_candidate_seconds") is not None
+        else None,
+    )
+
+
+def _type_change(
+    name: str,
+    value: Any,
+    source: object,
+    where: str,
+    configured: Optional[ReviewTypeConfig],
+) -> TypeChange:
+    """Return what a rule changes in one type, against the type the file names.
+
+    A type the file has no stage for must be given its engines whole, so that any
+    combination of matching rules still names every stage it runs.
+    """
+
+    checks = name == CHECKS_LEVEL
+    keys = ("review",) + (() if checks else ("verify", "max_findings"))
+    payload = _object(value, source, where, keys)
+    if not payload:
+        raise _refuse(source, where, "changes nothing; name what it changes")
+    if configured is None and "review" not in payload:
+        raise _refuse(
+            source,
+            f"{where}.review",
+            f"is required: the file's types have no {name} review for the rule "
+            "to change",
+        )
+    review = (
+        _stage_change(
+            payload["review"],
+            source,
+            f"{where}.review",
+            verify=False,
+            most=1 if checks else MAX_STAGE_ENGINES,
+            needs_engines=configured is None,
+        )
+        if "review" in payload
+        else None
+    )
+    verify = (
+        _stage_change(
+            payload["verify"],
+            source,
+            f"{where}.verify",
+            verify=True,
+            most=MAX_STAGE_ENGINES,
+            needs_engines=configured is None or configured.verify is None,
+        )
+        if "verify" in payload
+        else None
+    )
+    max_findings = (
+        _integer(
+            payload["max_findings"],
+            source,
+            f"{where}.max_findings",
+            (DEFAULT_MAX_FINDINGS[name], 1, MAX_FINDINGS_LIMIT),
+        )
+        if payload.get("max_findings") is not None
+        else None
+    )
+    return TypeChange(name, review, verify, max_findings)
+
+
+def _rule(
+    value: Any,
+    source: object,
+    number: int,
+    configured: "Mapping[str, ReviewTypeConfig]",
+) -> ReviewRule:
+    """Return one rule, checked against the types the file itself configures.
+
+    Each rule is checked on its own, and what it may say is what keeps every
+    combination of rules sound: it changes only the types the file names or names
+    whole, and its order lists only those.
+    """
+
+    where = f"rule {number}"
+    payload = _object(value, source, where, ("match", "order", "types"))
+    if "match" not in payload:
+        raise _refuse(source, f"{where} match", "is required")
+    match_payload = _object(
+        payload["match"],
+        source,
+        f"{where} match",
+        ("repositories", "authors", "labels", "files"),
+    )
+    if not match_payload:
+        raise _refuse(
+            source,
+            f"{where} match",
+            "names no condition; a rule for every pull request belongs in types",
+        )
+    empty = [
+        key
+        for key, item in match_payload.items()
+        if isinstance(item, list) and not item
+    ]
+    if empty:
+        raise _refuse(
+            source, f"{where} match.{empty[0]}", "is empty; name at least one"
+        )
+    match = RuleMatch(
+        **{
+            key: _names(item, source, f"{where} match.{key}")
+            for key, item in match_payload.items()
+        }
+    )
+    if "order" not in payload and "types" not in payload:
+        raise _refuse(source, where, "changes nothing; give it an order or types")
+    types_payload = _object(
+        payload.get("types", {}), source, f"{where} types", TYPES
+    )
+    changes = tuple(
+        _type_change(
+            name,
+            types_payload[name],
+            source,
+            f"{where} types.{name}",
+            configured.get(name),
+        )
+        for name in TYPES
+        if name in types_payload
+    )
+    order: "Optional[tuple[str, ...]]" = None
+    if "order" in payload:
+        listed = _names(payload["order"], source, f"{where} order")
+        available = set(configured) | {change.name for change in changes}
+        for name in listed:
+            if name == CHECKS_LEVEL:
+                raise _refuse(
+                    source,
+                    f"{where} order",
+                    "cannot list checks: the checks reading runs when the code "
+                    "review needs it",
+                )
+            if name not in ORDERED_TYPES:
+                raise _refuse(
+                    source,
+                    f"{where} order",
+                    f"names {name!r}; the types are " + ", ".join(ORDERED_TYPES),
+                )
+            if name not in available:
+                raise _refuse(
+                    source,
+                    f"{where} order",
+                    f"lists {name}, which neither the file's types nor this rule's "
+                    "configure",
+                )
+        if len(set(listed)) != len(listed):
+            raise _refuse(source, f"{where} order", "lists a type twice")
+        if not listed or listed[-1] != CODE_LEVEL:
+            raise _refuse(
+                source,
+                f"{where} order",
+                "must end with code: the code review is the one that approves",
+            )
+        order = listed
+    return ReviewRule(number, match, order, changes)
+
+
+def _changed_stage(
+    stage: Optional[Stage], change: Optional[StageChange], *, verify: bool
+) -> Optional[Stage]:
+    if change is None:
+        return stage
+    if stage is None:
+        assert change.engines is not None
+        limits = VERIFY_TIMEOUT if verify else REVIEW_TIMEOUT
+        return Stage(
+            change.engines,
+            change.timeout_seconds or limits[0],
+            (
+                change.timeout_per_candidate_seconds
+                if change.timeout_per_candidate_seconds is not None
+                else VERIFY_TIMEOUT_PER_CANDIDATE[0]
+            )
+            if verify
+            else 0,
+        )
+    return Stage(
+        change.engines if change.engines is not None else stage.engines,
+        change.timeout_seconds or stage.timeout_seconds,
+        change.timeout_per_candidate_seconds
+        if change.timeout_per_candidate_seconds is not None
+        else stage.timeout_per_candidate_seconds,
+    )
+
+
+def _changed_type(
+    configured: Optional[ReviewTypeConfig], change: TypeChange
+) -> ReviewTypeConfig:
+    review = _changed_stage(
+        configured.review if configured is not None else None,
+        change.review,
+        verify=False,
+    )
+    assert review is not None
+    checks = change.name == CHECKS_LEVEL
+    return ReviewTypeConfig(
+        change.name,
+        review,
+        _changed_stage(
+            configured.verify if configured is not None else None,
+            change.verify,
+            verify=True,
+        ),
+        None
+        if checks
+        else change.max_findings
+        or (
+            configured.max_findings
+            if configured is not None
+            else DEFAULT_MAX_FINDINGS[change.name]
+        ),
+    )
+
+
+def apply_rules(
+    types: "Sequence[ReviewTypeConfig]", rules: "Sequence[ReviewRule]"
+) -> "tuple[ReviewTypeConfig, ...]":
+    """Return the types a pull request gets from the rules it matches, in order.
+
+    Rules apply first to last. A rule's order replaces the one before it, and a
+    type it changes keeps what it does not change, so a later rule's change stands
+    over an earlier one's and over the file's.
+    """
+
+    configs = {review_type.name: review_type for review_type in types}
+    order = [
+        review_type.name for review_type in types if review_type.name != CHECKS_LEVEL
+    ]
+    for rule in rules:
+        for change in rule.types:
+            configs[change.name] = _changed_type(configs.get(change.name), change)
+        if rule.order is not None:
+            order = list(rule.order)
+    return tuple(configs[name] for name in order) + tuple(
+        configs[name] for name in (CHECKS_LEVEL,) if name in configs
+    )
+
+
 def parse_reviews(payload: Any, source: Path) -> ReviewsFile:
     """Return what a reviews file says, or refuse it, naming the setting at fault."""
 
@@ -359,7 +736,7 @@ def parse_reviews(payload: Any, source: Path) -> ReviewsFile:
         payload,
         source,
         "the file",
-        ("concurrency", "diff", "engines", "order", "types"),
+        ("concurrency", "diff", "engines", "order", "rules", "types"),
     )
     types_payload = top.get("types")
     if types_payload is None:
@@ -437,9 +814,23 @@ def parse_reviews(payload: Any, source: Path) -> ReviewsFile:
                     ),
                 )
             )
+    rules_payload = top.get("rules", [])
+    if not isinstance(rules_payload, list):
+        raise _refuse(source, "rules", "must be a list of rules")
+    rules = tuple(
+        _rule(item, source, number, configured)
+        for number, item in enumerate(rules_payload, 1)
+    )
     named = {
         choice.engine
-        for review_type in types
+        for review_type in (
+            *types,
+            *(
+                _changed_type(configured.get(change.name), change)
+                for rule in rules
+                for change in rule.types
+            ),
+        )
         for stage in (review_type.review, review_type.verify)
         if stage is not None
         for choice in stage.engines
@@ -475,6 +866,8 @@ def parse_reviews(payload: Any, source: Path) -> ReviewsFile:
         ),
         engine_env=tuple(engine_env),
         engine_command=tuple(engine_command),
+        rules=rules,
+        file_types=types,
     )
 
 
@@ -492,7 +885,7 @@ def load_reviews_file(path: Path) -> Optional[ReviewsFile]:
     return parse_reviews(payload, path)
 
 
-def apply_overrides(
+def _overridden(
     reviews: ReviewsFile,
     *,
     engine: Optional[str] = None,
@@ -621,6 +1014,128 @@ def apply_overrides(
             )
         )
     return replace(reviews, types=tuple(types))
+
+
+def apply_overrides(
+    reviews: ReviewsFile,
+    *,
+    engine: Optional[str] = None,
+    model: Optional[str] = None,
+    verify_engine: Optional[str] = None,
+    verify_model: Optional[str] = None,
+    fallback_engine: Optional[str] = None,
+    fallback_model: Optional[str] = None,
+    no_fallback: bool = False,
+) -> ReviewsFile:
+    """Return the file as this run's command line changes it, rules included.
+
+    The command line has the last word for every pull request, so it is kept and
+    made again after a pull request's rules. Each rule is tried with it here, so a
+    flag no rule's types can take stops the run before any review rather than one
+    pull request into it.
+    """
+
+    flags: "dict[str, Any]" = {
+        "engine": engine,
+        "model": model,
+        "verify_engine": verify_engine,
+        "verify_model": verify_model,
+        "fallback_engine": fallback_engine,
+        "fallback_model": fallback_model,
+        "no_fallback": no_fallback,
+    }
+    base = reviews.file_types or reviews.types
+    for rule in reviews.rules:
+        _overridden(replace(reviews, types=apply_rules(base, (rule,))), **flags)
+    return replace(
+        _overridden(reviews, **flags),
+        file_types=base,
+        overrides=tuple(sorted(flags.items())),
+    )
+
+
+def select_types(reviews: ReviewsFile, names: "Sequence[str]") -> ReviewsFile:
+    """Return the file kept to the types ``names`` lists, for one run.
+
+    The code review stays: it is the one that approves, and the checks reading
+    runs when it needs one. The caller checks the names.
+    """
+
+    selected = tuple(name for name in ORDERED_TYPES if name in names)
+    return replace(
+        reviews,
+        types=_selected(reviews.types, selected),
+        selected_types=selected,
+    )
+
+
+def _selected(
+    types: "Sequence[ReviewTypeConfig]", selected: "Optional[Sequence[str]]"
+) -> "tuple[ReviewTypeConfig, ...]":
+    if selected is None:
+        return tuple(types)
+    return tuple(
+        review_type
+        for review_type in types
+        if review_type.name in selected or review_type.name == CHECKS_LEVEL
+    )
+
+
+def for_pull_request(
+    reviews: ReviewsFile,
+    *,
+    repository: "Sequence[str]",
+    author: str,
+    labels: "Sequence[str]",
+    paths: "Sequence[str]",
+) -> "tuple[ReviewsFile, tuple[ReviewRule, ...]]":
+    """Return what one pull request is reviewed with, and the rules it matched.
+
+    The file's own types, changed by each matching rule in turn, then by this run's
+    command line and `--types`, which have the last word. With no rule matching,
+    the file is returned as it is.
+    """
+
+    matched = tuple(
+        rule
+        for rule in reviews.rules
+        if rule.match.matches(repository, author, labels, paths)
+    )
+    if not matched:
+        return reviews, ()
+    resolved = replace(
+        reviews, types=apply_rules(reviews.file_types or reviews.types, matched)
+    )
+    if reviews.overrides:
+        resolved = _overridden(resolved, **dict(reviews.overrides))
+    return (
+        replace(resolved, types=_selected(resolved.types, reviews.selected_types)),
+        matched,
+    )
+
+
+def describe_rule(rule: ReviewRule) -> str:
+    """Say in one line which pull requests a rule is for and what it changes."""
+
+    conditions = [
+        f"{key} {', '.join(values)}"
+        for key, values in (
+            ("repositories", rule.match.repositories),
+            ("authors", rule.match.authors),
+            ("labels", rule.match.labels),
+            ("files", rule.match.files),
+        )
+        if values
+    ]
+    effects = []
+    if rule.order is not None:
+        effects.append("runs " + ", ".join(rule.order))
+    if rule.types:
+        effects.append(
+            "changes the "
+            + ", ".join(TYPE_NOUNS[change.name] for change in rule.types)
+        )
+    return f"{rule.number}. {'; '.join(conditions)}: {'; '.join(effects)}"
 
 
 def engine_commands(
