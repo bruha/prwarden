@@ -22,6 +22,7 @@ from prwarden.reviews_file import (
     load_reviews_file,
     parse_reviews,
     plan_summary,
+    recommended_rules,
     render_reviews,
     reviews_payload,
     select_types,
@@ -750,6 +751,43 @@ class RuleTests(unittest.TestCase):
                 with self.assertRaisesRegex(ConfigError, problem):
                     parse_reviews(payload, SOURCE)
 
+    def test_the_recommended_rules_suit_whichever_engine_reviews(self) -> None:
+        def lighter(first: dict, *, docs: bool = True) -> tuple:
+            payload = example()
+            payload.pop("rules")
+            payload["types"]["code"]["review"]["engines"] = [
+                first,
+                {"engine": "claude", "model": "claude-opus-5-5"},
+            ]
+            if not docs:
+                payload["types"]["docs"]["enabled"] = False
+                payload["order"] = ["design", "code"]
+            if first["engine"] == "command":
+                payload["engines"]["command"] = {"command": ["/opt/review"]}
+            payload["rules"] = recommended_rules(payload)
+            reviews = parse_reviews(payload, SOURCE)
+            documentation = reviews.rules[0]
+            return documentation.order, documentation.types[0].review.engines
+
+        for first, effort in (
+            (
+                {"engine": "kiro", "model": "claude-sonnet-5.5", "effort": "xhigh"},
+                "medium",
+            ),
+            ({"engine": "codex", "effort": "low"}, "low"),
+            ({"engine": "claude"}, "medium"),
+            ({"engine": "command"}, None),
+        ):
+            with self.subTest(first=first):
+                order, engines = lighter(first)
+                self.assertEqual(order, (DOCS_LEVEL, CODE_LEVEL))
+                self.assertEqual(
+                    engines,
+                    (EngineChoice(first["engine"], first.get("model"), effort),),
+                )
+        order, _ = lighter({"engine": "kiro"}, docs=False)
+        self.assertEqual(order, (CODE_LEVEL,))
+
     def test_each_rule_is_described_in_one_line(self) -> None:
         reviews = parse_reviews(with_rules(DOCS_ONLY_RULE), SOURCE)
 
@@ -1248,7 +1286,7 @@ class DoctorTests(unittest.TestCase):
                 missing = doctor.check_reviews_file(env_settings(directory))
 
         self.assertIn("names design, docs, code, checks", checks[0].message)
-        self.assertIn("and 1 rule for the pull requests they match", checks[0].message)
+        self.assertIn("and 2 rules for the pull requests they match", checks[0].message)
         self.assertEqual(checks[1].status, doctor.NOTE)
         self.assertIn("REVIEW_ENGINE", checks[1].message)
         self.assertEqual(moving[0].status, doctor.NOTE)

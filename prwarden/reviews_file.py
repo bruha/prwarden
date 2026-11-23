@@ -97,6 +97,10 @@ VERIFY_TIMEOUT_PER_CANDIDATE = (180, 0, 600)
 DEFAULT_CONCURRENCY = 2
 MAX_DIFF_BYTES = (200000, 1000, 500000)
 DEFAULT_REVIEW_BUNDLES = 4
+# What the rules `prwarden setup` recommends read as documentation, and the most
+# effort their lighter code review of it takes.
+DOCUMENTATION_FILE_PATTERNS = ("*.md", "docs/")
+RECOMMENDED_CODE_EFFORT = "medium"
 
 
 @dataclass(frozen=True)
@@ -1140,6 +1144,35 @@ def for_pull_request(
         replace(resolved, types=_selected(resolved.types, reviews.selected_types)),
         matched,
     )
+
+
+def recommended_rules(payload: "Mapping[str, Any]") -> "list[dict[str, Any]]":
+    """Return the rules `prwarden setup` offers, for the file ``payload`` describes.
+
+    A change to documentation alone gets its documentation review and a lighter code
+    review, and a pull request labelled `dependencies`, as Dependabot and Renovate
+    label theirs, gets the code review alone. Neither names a model: a model belongs
+    to one provider, so the lighter review is the file's own first code engine at no
+    more than medium effort, with no fallback.
+    """
+
+    types = payload["types"]
+    lighter = dict(types[CODE_LEVEL]["review"]["engines"][0])
+    if lighter["engine"] != CUSTOM_ENGINE:
+        effort = lighter.get("effort")
+        ceiling = EFFORT_LEVELS.index(RECOMMENDED_CODE_EFFORT)
+        if effort not in EFFORT_LEVELS or EFFORT_LEVELS.index(effort) > ceiling:
+            lighter["effort"] = RECOMMENDED_CODE_EFFORT
+    docs = types.get(DOCS_LEVEL)
+    has_docs = isinstance(docs, dict) and docs.get("enabled", True) is not False
+    return [
+        {
+            "match": {"files": list(DOCUMENTATION_FILE_PATTERNS)},
+            "order": [DOCS_LEVEL, CODE_LEVEL] if has_docs else [CODE_LEVEL],
+            "types": {CODE_LEVEL: {"review": {"engines": [lighter]}}},
+        },
+        {"match": {"labels": ["dependencies"]}, "order": [CODE_LEVEL]},
+    ]
 
 
 def describe_rule(rule: ReviewRule) -> str:

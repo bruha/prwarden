@@ -44,7 +44,15 @@ from .config import (
 )
 from .models import Repository
 from .paths import Locations
-from .reviews_file import FILE_KEYS, load_reviews_file, move_env_into_file
+from .reviews_file import (
+    FILE_KEYS,
+    describe_rule,
+    load_reviews_file,
+    move_env_into_file,
+    parse_reviews,
+    recommended_rules,
+    render_reviews,
+)
 
 
 ENV_REFERENCE = "https://github.com/bruha/prwarden/blob/main/.env.example"
@@ -343,6 +351,8 @@ def write_configuration(
     env_values: "dict[str, str]",
     entries: "List[dict]",
     say: Callable[[str], None],
+    *,
+    with_rules: bool = False,
 ) -> None:
     for path in (
         locations.env_file,
@@ -374,10 +384,34 @@ def write_configuration(
     move_env_into_file(
         chosen, locations.env_file, locations.reviews_file, backup=False
     )
+    if with_rules:
+        add_recommended_rules(locations.reviews_file, say)
     say(
         f"Wrote {locations.env_file}, {locations.repositories_file}, and "
         f"{locations.reviews_file}"
     )
+
+
+def add_recommended_rules(reviews_file: Path, say: Callable[[str], None]) -> None:
+    """Add the recommended rules to the reviews file setup has just written."""
+
+    payload = json.loads(reviews_file.read_text(encoding="utf-8"))
+    payload["rules"] = recommended_rules(payload)
+    # Checked as a run reads it before it replaces the file that works.
+    rules = parse_reviews(payload, reviews_file).rules
+    _write_private(reviews_file, render_reviews(payload))
+    say(f"Added {len(rules)} recommended rules to {reviews_file.name}:")
+    for rule in rules:
+        say(f"  {describe_rule(rule)}")
+
+
+def ask_recommended_rules(prompter: Prompter) -> bool:
+    prompter.say(
+        "Recommended rules: a change to documentation alone gets its documentation "
+        "review and a lighter code review, and a pull request labelled dependencies "
+        "gets the code review alone. Change or remove them in reviews.json."
+    )
+    return prompter.confirm("Add the recommended rules?", default=True)
 
 
 # The questions -----------------------------------------------------------------
@@ -974,7 +1008,10 @@ def interactive(prompter: Prompter, locations: Locations) -> int:
         apply_jira(entries, *jira)
     else:
         prompter.say("Jira is off. Connect it later with: prwarden setup --jira")
-    write_configuration(locations, env_values, entries, prompter.say)
+    with_rules = ask_recommended_rules(prompter)
+    write_configuration(
+        locations, env_values, entries, prompter.say, with_rules=with_rules
+    )
     preview(prompter, locations)
     go_live(prompter, locations)
     prompter.say("Check everything at any time with: prwarden doctor")

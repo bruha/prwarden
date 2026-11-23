@@ -116,9 +116,12 @@ it asks for the project keys your pull requests use and which repositories use
 them. `prwarden setup --jira` does this step alone later.
 
 Setup writes `.env`, `repositories.json`, and `reviews.json`, which holds the engines
-Setup writes `.env`, `repositories.json`, and `reviews.json`, which holds the engines
-it chose, to `~/.config/prwarden`, then offers a dry-run preview of one pull request,
-which spends credits and posts nothing, live delivery, and a schedule.
+it chose and, unless you decline them, two recommended
+[rules](#review-types-in-reviewsjson): a change to documentation alone gets its
+documentation review and a lighter code review, on the engine you chose at no more
+than medium effort, and a pull request labelled `dependencies` gets the code review
+alone. It writes them to `~/.config/prwarden`, then offers a dry-run preview of one
+pull request, which spends credits and posts nothing, live delivery, and a schedule.
 `prwarden doctor` checks the result at any time and spends nothing.
 
 ### By hand, or from a clone
@@ -332,9 +335,9 @@ will move them.
   file it changes matches one of the patterns. A pattern reads as in `.gitignore`:
   `*.md` is a Markdown file in any directory, `docs/` everything under `docs`. A
   rule's `order` says which types run, ending with `code`, and its `types` change a
-  type's stages or `max_findings`, keeping what they leave out. The example's rule
-  gives a change to documentation alone a documentation review and a cheaper code
-  review:
+  type's stages or `max_findings`, keeping what they leave out. The example's rules
+  give a change to documentation alone a documentation review and a cheaper code
+  review, and a dependency update the code review alone:
 
   ```json
   "rules": [

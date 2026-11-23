@@ -369,7 +369,12 @@ review invocation can be mistaken for one.
   required to continue.
 - `setup` writes `.env`, `repositories.json`, and `reviews.json`, each mode `0600`,
   keeping any files it replaces beside them; the engines chosen go into
-  `reviews.json`, written as a move from `.env` writes it, and not into `.env`. It
+  `reviews.json`, written as a move from `.env` writes it, and not into `.env`.
+  Unless declined, it adds `reviews_file.recommended_rules`: files `*.md` and
+  `docs/` run docs then code, the code review on the file's first code engine at no
+  more than medium effort with no fallback, and the label `dependencies` runs code
+  alone; neither names a model, which belongs to one provider. `setup --reviews`
+  adds none, since it only moves settings. It
   pins `GITHUB_REVIEWER_USERNAME` to the chosen account, tries each signed-in
   account in turn for a repository the reviewer cannot read and records the first
   that can as that entry's `github_account`, and leaves Slack off for every entry

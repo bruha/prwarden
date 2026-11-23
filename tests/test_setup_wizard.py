@@ -104,6 +104,7 @@ class WizardTests(unittest.TestCase):
         None,  # owner/private: the clone, filled in by the test
         "",  # no Slack
         "",  # no Jira
+        "",  # the recommended rules
         "n",  # no preview
         "n",  # stay dry
     ]
@@ -150,6 +151,19 @@ class WizardTests(unittest.TestCase):
         self.assertEqual(
             list(self.locations.config_directory.glob(".env.before-*")), []
         )
+        # The recommended rules, on the engine chosen, naming no model.
+        documentation, dependencies = reviews.rules
+        self.assertEqual(documentation.match.files, ("*.md", "docs/"))
+        self.assertEqual(documentation.order, ("docs", "code"))
+        (lighter,) = documentation.types[0].review.engines
+        self.assertEqual(
+            (lighter.engine, lighter.model, lighter.effort), ("claude", None, "medium")
+        )
+        self.assertEqual(dependencies.match.labels, ("dependencies",))
+        self.assertEqual(dependencies.order, ("code",))
+        self.assertIn(
+            "Added 2 recommended rules to reviews.json:", "\n".join(prompter.transcript)
+        )
 
         app, private = load_repositories(
             self.locations.repositories_file, self.locations.checkouts_directory
@@ -165,6 +179,11 @@ class WizardTests(unittest.TestCase):
         managed = self.locations.checkouts_directory / "acme" / "app"
         self.assertIn(str(managed), question)
         self.assertIn("about 2 MB", question)
+
+    def test_declining_the_recommended_rules_writes_none(self) -> None:
+        self.run_wizard(self.answers(a8="n"))
+
+        self.assertEqual(load_reviews_file(self.locations.reviews_file).rules, ())
 
     def test_an_existing_configuration_is_kept_unless_replacing_it_is_confirmed(
         self,
@@ -184,7 +203,7 @@ class WizardTests(unittest.TestCase):
 
     def test_going_live_opens_the_gate_and_offers_the_schedule(self) -> None:
         with patch("prwarden.setup_wizard.schedule.install", return_value=0) as install:
-            self.run_wizard(self.answers(a9="y") + ["y"])
+            self.run_wizard(self.answers(a10="y") + ["y"])
 
         with patch.dict(os.environ, {}, clear=True):
             values = load_env_file(self.locations.env_file)
