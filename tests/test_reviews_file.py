@@ -181,6 +181,9 @@ class ParseTests(unittest.TestCase):
             "engines.kiro.command must be a list of arguments": changed(
                 lambda p: p["engines"]["kiro"].update({"command": "kiro-cli"})
             ),
+            "engines.kiro.command must be a list of non-empty strings": changed(
+                lambda p: p["engines"]["kiro"].update({"command": ["kiro-cli", ""]})
+            ),
             "types.checks.review.engines must list one engine": changed(
                 lambda p: p["types"]["checks"]["review"]["engines"].append(
                     {"engine": "claude"}

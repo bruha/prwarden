@@ -429,7 +429,12 @@ def parse_reviews(payload: Any, source: Path) -> ReviewsFile:
                     source, f"{where}.command", "must be a list of arguments"
                 )
             engine_command.append(
-                (engine, parse_command(json.dumps(_names(command, source, where))))
+                (
+                    engine,
+                    parse_command(
+                        json.dumps(_names(command, source, f"{where}.command"))
+                    ),
+                )
             )
     named = {
         choice.engine

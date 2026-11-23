@@ -133,6 +133,10 @@ def _executable_directories(settings: Settings) -> "list[str]":
         settings.fallback_engine_command,
         settings.verify_fallback_engine_command,
     ]
+    if settings.reviews is not None:
+        # The role fields name only the code review's first engines; an engine the
+        # file runs from its own executable may serve another type or a later slot.
+        commands += [command for _, command in settings.reviews.engine_command]
     found = []
     for name in ("gh", "git"):
         resolved = shutil.which(name)

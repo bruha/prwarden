@@ -8,6 +8,7 @@ from argparse import Namespace
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from prwarden import schedule
@@ -303,6 +304,23 @@ class RunCommandTests(unittest.TestCase):
         self.assertIn("/home/someone/.local/bin", path)
         self.assertEqual(environment["PRWARDEN_HOME"], "/srv/prwarden")
         self.assertNotIn("PYTHONPATH", environment)
+
+    def test_the_environment_finds_every_cli_the_reviews_file_runs(self) -> None:
+        """The code review's role fields were all it read, so a wrapper serving only
+        another type was missing from a scheduled run's PATH."""
+
+        settings = replace(
+            settings_for("/tmp", Repository("app", "owner/app")),
+            reviews=SimpleNamespace(
+                engine_command=(("command", ("/opt/wrapper/bin/review",)),)
+            ),
+        )
+        with patch("prwarden.schedule.is_source_checkout", return_value=False), patch(
+            "prwarden.schedule.shutil.which", return_value=None
+        ):
+            environment = schedule.run_environment(settings, Path("/home/someone"))
+
+        self.assertIn("/opt/wrapper/bin", environment["PATH"].split(os.pathsep))
 
 
 class RemoveTests(unittest.TestCase):

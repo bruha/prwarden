@@ -549,7 +549,7 @@ preserved home directory. Provider API keys are not configured or passed
 automatically. `REVIEW_ENGINE_ENV_ALLOWLIST` remains available for a custom
 wrapper that requires additional non-default variables, but only without a reviews
 file: with one it is not read, and `engines.<engine>.env` lists the variables each
-built-in engine's CLI is given. The Slack webhook is
+engine's CLI is given, the `command` engine's wrapper included. The Slack webhook is
 never inherited unless it is explicitly allowlisted.
 
 For an unsupported provider, select `command` and configure a wrapper:
