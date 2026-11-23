@@ -5,10 +5,16 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
-from typing import Callable, Optional, Sequence, Type
+from typing import Callable, Iterable, Optional, Sequence, Type
+
+try:
+    import fcntl
+except ImportError:  # Windows, where leftover folders are told apart by age alone.
+    fcntl = None  # type: ignore[assignment]
 
 from .commands import CommandError, run_cmd
 from .github import run_git_for
@@ -599,6 +605,186 @@ def read_generated_marks(
     return {path: marks.get(path) for path in paths}
 
 
+# Beside each review folder, the file its review holds locked while the folder is in
+# use. The operating system drops the lock when the process ends, however it ends.
+WORKSPACE_LOCK_SUFFIX = ".lock"
+# A folder without a lock file was made by a version that took none, and a review
+# that started this long ago is no longer running.
+UNLOCKED_WORKSPACE_AGE_SECONDS = 24 * 60 * 60
+# `worktree add` locks the worktree it is making until it finishes, so one stopped
+# partway stays locked, and only a second --force removes a locked worktree.
+_FORCE_REMOVE = ("worktree", "remove", "--force", "--force")
+
+
+def _lock_now(descriptor: int) -> bool:
+    """Lock an open file exclusively, without waiting; False if another holds it."""
+    if fcntl is None:
+        return True
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    return True
+
+
+def _lock_path(path: Path) -> Path:
+    return path.with_name(path.name + WORKSPACE_LOCK_SUFFIX)
+
+
+def _claim_workspace(root: Path, prefix: str) -> "tuple[Path, int]":
+    """Reserve a fresh review folder name, locked before anything is made there.
+
+    The lock file is created first and the folder's name is taken from it, so a run
+    clearing leftovers never sees a folder of a live review without its lock.
+    """
+    while True:
+        descriptor, name = tempfile.mkstemp(
+            prefix=prefix, suffix=WORKSPACE_LOCK_SUFFIX, dir=root
+        )
+        lock = Path(name)
+        path = lock.with_name(lock.name[: -len(WORKSPACE_LOCK_SUFFIX)])
+        try:
+            # A run clearing leftovers may have locked and removed the new file
+            # between its creation and this lock; then it is no longer this one's.
+            if (
+                _lock_now(descriptor)
+                and os.fstat(descriptor).st_ino == lock.stat().st_ino
+                and not os.path.lexists(path)
+            ):
+                return path, descriptor
+        except OSError:
+            pass
+        os.close(descriptor)
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+
+
+def _registered_workspaces(checkout: Path, root: Path) -> "list[Path]":
+    """Return the worktrees a checkout has registered inside the review folder."""
+    try:
+        listing = run_cmd(
+            ["git", "-C", str(checkout), "worktree", "list", "--porcelain"]
+        )
+    except CommandError:
+        return []
+    registered = []
+    for line in listing.splitlines():
+        if not line.startswith("worktree "):
+            continue
+        path = Path(line[len("worktree ") :])
+        if path.parent == root:
+            registered.append(path)
+    return registered
+
+
+def _unregister(checkout: Path, path: Path) -> Optional[str]:
+    """Drop a checkout's record of a removed worktree; the problem, if any."""
+    with _checkout_lock(checkout):
+        try:
+            run_cmd(["git", "-C", str(checkout), *_FORCE_REMOVE, str(path)])
+            return None
+        except CommandError:
+            pass
+        try:
+            run_cmd(["git", "-C", str(checkout), "worktree", "prune"])
+        except CommandError as error:
+            return f"Cannot unregister {path.name} from {checkout}: {error}"
+    return None
+
+
+def remove_leftover_workspaces(
+    workspace_root: Path,
+    checkouts: Iterable[Path],
+    *,
+    now: Optional[float] = None,
+) -> "tuple[list[str], list[str]]":
+    """Remove review folders no running review uses, and Git's records of them.
+
+    A review removes its own folder when it ends, so a folder left is from a run
+    that was killed or whose Git command was stopped partway. Nothing reads such a
+    folder again. One whose lock no process holds is removed, and so is one made
+    before folders had locks, once it is a day old. A checkout's record of a
+    worktree in this folder that is gone is dropped too, since a locked record is
+    never pruned by Git itself.
+
+    Returns the names removed and the problems met; a problem never stops a run.
+    """
+    current = time.time() if now is None else now
+    try:
+        root = workspace_root.resolve()
+    except OSError:
+        root = workspace_root
+    candidates: "dict[Path, list[Path]]" = {}
+    try:
+        entries = list(os.scandir(root))
+    except OSError:
+        entries = []
+    for entry in entries:
+        path = Path(entry.path)
+        if entry.name.endswith(WORKSPACE_LOCK_SUFFIX) and entry.is_file(
+            follow_symlinks=False
+        ):
+            candidates.setdefault(
+                path.with_name(entry.name[: -len(WORKSPACE_LOCK_SUFFIX)]), []
+            )
+        elif entry.is_dir(follow_symlinks=False):
+            candidates.setdefault(path, [])
+    for checkout in checkouts:
+        if not checkout.is_dir():
+            continue
+        for path in _registered_workspaces(checkout, root):
+            candidates.setdefault(path, []).append(checkout)
+
+    removed: "list[str]" = []
+    problems: "list[str]" = []
+    for path, registered_in in sorted(candidates.items()):
+        lock = _lock_path(path)
+        descriptor: Optional[int] = None
+        try:
+            if os.path.lexists(lock):
+                try:
+                    descriptor = os.open(lock, os.O_RDWR)
+                except OSError:
+                    continue
+                if fcntl is None:
+                    age = current - os.fstat(descriptor).st_mtime
+                    if age < UNLOCKED_WORKSPACE_AGE_SECONDS:
+                        continue
+                elif not _lock_now(descriptor):
+                    continue
+            elif os.path.lexists(path):
+                try:
+                    age = current - path.lstat().st_mtime
+                except OSError:
+                    continue
+                if age < UNLOCKED_WORKSPACE_AGE_SECONDS:
+                    continue
+            existed = os.path.lexists(path)
+            if existed:
+                try:
+                    shutil.rmtree(path)
+                except OSError as error:
+                    problems.append(f"Cannot remove {path.name}: {error}")
+                    continue
+            for checkout in registered_in:
+                problem = _unregister(checkout, path)
+                if problem is not None:
+                    problems.append(problem)
+            if descriptor is not None:
+                try:
+                    lock.unlink()
+                except OSError:
+                    pass
+            if existed:
+                removed.append(path.name)
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+    return removed, problems
+
+
 class ReviewWorkspace:
     def __init__(
         self,
@@ -610,6 +796,7 @@ class ReviewWorkspace:
         self.pull_request = pull_request
         self.workspace_root = workspace_root
         self.path: Optional[Path] = None
+        self._lock_descriptor: Optional[int] = None
         self.dependency_links: tuple[DependencyLink, ...] = ()
         self.dependency_notes: tuple[str, ...] = ()
 
@@ -619,10 +806,27 @@ class ReviewWorkspace:
             raise WorkspaceError(
                 f"Repository {self.repository.slug} needs a local checkout path"
             )
-        with _checkout_lock(checkout):
-            if self.repository.managed_checkout:
-                ensure_managed_checkout(self.repository)
-            return self._create(checkout)
+        try:
+            with _checkout_lock(checkout):
+                if self.repository.managed_checkout:
+                    ensure_managed_checkout(self.repository)
+                return self._create(checkout)
+        except BaseException:
+            self._release()
+            raise
+
+    def _release(self) -> None:
+        """Give up the folder's lock, and its lock file once the folder is gone."""
+        if self._lock_descriptor is None:
+            return
+        try:
+            if self.path is not None and not os.path.lexists(self.path):
+                _lock_path(self.path).unlink()
+        except OSError:
+            pass
+        finally:
+            os.close(self._lock_descriptor)
+            self._lock_descriptor = None
 
     def _create(self, checkout: Path) -> Repository:
         """Fetch the exact head and add its detached worktree."""
@@ -654,8 +858,7 @@ class ReviewWorkspace:
             f"{safe_slug}-pr-{self.pull_request.number}-"
             f"{self.pull_request.head_sha[:12]}-"
         )
-        self.path = Path(tempfile.mkdtemp(prefix=prefix, dir=self.workspace_root))
-        self.path.rmdir()
+        self.path, self._lock_descriptor = _claim_workspace(self.workspace_root, prefix)
 
         fetch = [
             "-C",
@@ -800,19 +1003,19 @@ class ReviewWorkspace:
         return linked
 
     def _cleanup_failed_setup(self) -> None:
-        if self.path is None or not self.path.exists():
+        # Checked even when the folder is missing: a `worktree add` stopped partway
+        # may have registered it already.
+        if self.path is None:
+            return
+        if not os.path.lexists(self.path) and self.path.resolve() not in (
+            _registered_workspaces(
+                self.repository.path, self.workspace_root.resolve()
+            )
+        ):
             return
         try:
             run_cmd(
-                [
-                    "git",
-                    "-C",
-                    str(self.repository.path),
-                    "worktree",
-                    "remove",
-                    "--force",
-                    str(self.path),
-                ]
+                ["git", "-C", str(self.repository.path), *_FORCE_REMOVE, str(self.path)]
             )
         except CommandError:
             self._remove_orphaned_path()
@@ -831,18 +1034,10 @@ class ReviewWorkspace:
             except OSError as error:
                 cleanup_error = error
 
-        try:
-            run_cmd(
-                [
-                    "git",
-                    "-C",
-                    str(self.repository.path),
-                    "worktree",
-                    "prune",
-                ]
-            )
-        except CommandError as error:
-            cleanup_error = error
+        if self.repository.path is not None:
+            problem = _unregister(self.repository.path, self.path)
+            if problem is not None:
+                cleanup_error = CommandError(problem)
 
         if self.path.exists() and cleanup_error is None:
             cleanup_error = OSError(f"temporary path still exists: {self.path}")
@@ -863,9 +1058,7 @@ class ReviewWorkspace:
                         "git",
                         "-C",
                         str(self.repository.path),
-                        "worktree",
-                        "remove",
-                        "--force",
+                        *_FORCE_REMOVE,
                         str(self.path),
                     ],
                     timeout_seconds=120,
@@ -880,6 +1073,7 @@ class ReviewWorkspace:
             if exc_type is None:
                 return
         finally:
+            self._release()
             try:
                 self.workspace_root.rmdir()
             except OSError:

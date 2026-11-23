@@ -71,7 +71,8 @@ The expected review flow is:
 9. Restart against a newer head, up to the configured controller limit, or
    deliver only if the reviewed snapshot is still valid.
 10. Record state only after a confirmed outcome.
-11. Clean the temporary worktree on success and failure.
+11. Clean the temporary worktree on success and failure, and at the start of each
+    run any an earlier, interrupted run left.
 12. Append what the review did to the run's review history, whatever its outcome.
 
 Each level is one reviewer invocation and one verifier invocation, sequentially, in

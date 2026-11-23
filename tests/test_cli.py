@@ -782,6 +782,31 @@ class OrchestrationTests(unittest.TestCase):
             design_level=design_level,
         )
 
+    def test_a_run_clears_folders_earlier_runs_left_and_reports_problems(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = Path(directory) / "checkout"
+            repository = Repository("app", "owner/app", checkout)
+            settings = self.settings(directory, repository)
+            settings = replace(
+                settings,
+                repositories=[
+                    *settings.repositories,
+                    Repository("other", "owner/other", None),
+                ],
+            )
+            with patch(
+                "prwarden.cli.remove_leftover_workspaces",
+                return_value=(["a", "b"], ["Cannot remove c: busy"]),
+            ) as remove, patch("sys.stdout", new_callable=StringIO) as out:
+                cli._remove_leftover_workspaces(settings)
+
+        remove.assert_called_once_with(Path(directory) / "worktrees", [checkout])
+        self.assertEqual(
+            out.getvalue(),
+            "Removed 2 review folders earlier runs left behind\n"
+            "Warning: leftover review folder not removed. Cannot remove c: busy\n",
+        )
+
     def test_github_incident_notice_reports_once_for_github_failures(self) -> None:
         notice = cli._GithubIncidentNotice()
         failure = CommandError("gh exited with 1: HTTP 503", command="gh")

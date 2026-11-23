@@ -2,14 +2,25 @@ import json
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Optional
 from unittest.mock import Mock, patch
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
+
 from prwarden.commands import CommandError
 from prwarden.models import DependencyLink, PullRequest, Repository
-from prwarden.workspace import WorkspaceError, read_base_files, review_workspace
+from prwarden.workspace import (
+    WorkspaceError,
+    read_base_files,
+    remove_leftover_workspaces,
+    review_workspace,
+)
 
 
 class ReviewWorkspaceTests(unittest.TestCase):
@@ -560,6 +571,186 @@ class DependencyLinkTests(unittest.TestCase):
                 with workspace as exact_repository:
                     self.assertFalse((exact_repository.path / "node_modules").exists())
                     self.assertEqual(workspace.dependency_links, ())
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ["git", *args], capture_output=True, text=True, check=True
+    ).stdout
+
+
+@unittest.skipIf(shutil.which("git") is None, "needs Git")
+class LeftoverWorkspaceTests(unittest.TestCase):
+    """Folders earlier runs left behind, against a real Git repository."""
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        base = Path(directory.name).resolve()
+        self.checkout = base / "checkout"
+        _git("init", "-q", str(self.checkout))
+        _git(
+            "-C", str(self.checkout),
+            "-c", "user.name=Test", "-c", "user.email=test@example.com",
+            "commit", "-q", "--allow-empty", "-m", "init",
+        )
+        self.root = base / "worktrees"
+        self.root.mkdir()
+
+    def add(self, name: str, *, locked_by_git: bool = False) -> Path:
+        path = self.root / name
+        _git("-C", str(self.checkout), "worktree", "add", "-q", "--detach", str(path))
+        if locked_by_git:
+            # What a `worktree add` stopped partway leaves.
+            _git(
+                "-C", str(self.checkout), "worktree", "lock",
+                "--reason", "initializing", str(path),
+            )
+        return path
+
+    def registered(self) -> list[str]:
+        listing = _git("-C", str(self.checkout), "worktree", "list", "--porcelain")
+        return [
+            Path(line.split(" ", 1)[1]).name
+            for line in listing.splitlines()
+            if line.startswith("worktree ") and str(self.root) in line
+        ]
+
+    def test_a_folder_no_review_holds_is_removed_with_its_locked_record(self) -> None:
+        path = self.add("owner-app-pr-7-aaaa-x1", locked_by_git=True)
+        (self.root / "owner-app-pr-7-aaaa-x1.lock").write_text("")
+
+        removed, problems = remove_leftover_workspaces(self.root, [self.checkout])
+
+        self.assertEqual((removed, problems), (["owner-app-pr-7-aaaa-x1"], []))
+        self.assertFalse(path.exists())
+        self.assertFalse((self.root / "owner-app-pr-7-aaaa-x1.lock").exists())
+        self.assertEqual(self.registered(), [])
+
+    def test_a_record_whose_folder_is_gone_is_dropped(self) -> None:
+        path = self.add("owner-app-pr-8-bbbb-x2", locked_by_git=True)
+        shutil.rmtree(path)
+
+        removed, problems = remove_leftover_workspaces(self.root, [self.checkout])
+
+        self.assertEqual((removed, problems), ([], []))
+        self.assertEqual(self.registered(), [])
+
+    @unittest.skipIf(fcntl is None, "needs file locks")
+    def test_a_folder_a_running_review_holds_is_kept(self) -> None:
+        path = self.add("owner-app-pr-9-cccc-x3")
+        lock = self.root / "owner-app-pr-9-cccc-x3.lock"
+        with lock.open("w") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            removed, problems = remove_leftover_workspaces(self.root, [self.checkout])
+
+        self.assertEqual((removed, problems), ([], []))
+        self.assertTrue(path.is_dir())
+        self.assertTrue(lock.exists())
+        self.assertEqual(self.registered(), ["owner-app-pr-9-cccc-x3"])
+
+    def test_a_folder_without_a_lock_file_is_removed_only_once_a_day_old(self) -> None:
+        path = self.add("owner-app-pr-10-dddd-x4")
+
+        young = remove_leftover_workspaces(self.root, [self.checkout])
+        self.assertEqual(young, ([], []))
+        self.assertTrue(path.is_dir())
+
+        later = time.time() + 2 * 24 * 60 * 60
+        old = remove_leftover_workspaces(self.root, [self.checkout], now=later)
+        self.assertEqual(old, (["owner-app-pr-10-dddd-x4"], []))
+        self.assertFalse(path.exists())
+        self.assertEqual(self.registered(), [])
+
+    def test_a_half_made_folder_git_does_not_know_is_removed(self) -> None:
+        path = self.root / "owner-app-pr-11-eeee-x5"
+        (path / "src").mkdir(parents=True)
+        (path / "src" / "index.ts").write_text("partial")
+        (self.root / "owner-app-pr-11-eeee-x5.lock").write_text("")
+        outside = self.root.parent / "kept"
+        outside.mkdir()
+        (self.root / "not-a-folder.txt").write_text("kept")
+
+        removed, problems = remove_leftover_workspaces(self.root, [self.checkout])
+
+        self.assertEqual((removed, problems), (["owner-app-pr-11-eeee-x5"], []))
+        self.assertFalse(path.exists())
+        self.assertTrue(outside.is_dir())
+        self.assertTrue((self.root / "not-a-folder.txt").exists())
+
+    def test_a_missing_folder_and_checkout_are_nothing_to_do(self) -> None:
+        self.assertEqual(
+            remove_leftover_workspaces(
+                self.root / "absent", [self.root.parent / "no-checkout"]
+            ),
+            ([], []),
+        )
+
+
+class WorkspaceLockTests(unittest.TestCase):
+    def input(self, directory: str):
+        checkout = Path(directory) / "checkout"
+        checkout.mkdir()
+        repository = Repository("app", "owner/app", checkout)
+        pull_request = PullRequest(7, "Title", "", "author", "a" * 40, "url")
+        return repository, pull_request
+
+    def run_git(self, *, add_fails: bool = False):
+        calls: list[list[str]] = []
+
+        def run(args, **kwargs):
+            command = list(args)
+            calls.append(command)
+            if command[-2:] == ["rev-parse", "--is-inside-work-tree"]:
+                return "true"
+            if command[-3:] == ["remote", "get-url", "origin"]:
+                return "git@github.com:owner/app.git"
+            if "worktree" in command and "add" in command:
+                Path(command[-2]).mkdir(parents=True)
+                if add_fails:
+                    raise CommandError("Command timed out after 180s: git")
+            if "worktree" in command and "remove" in command:
+                shutil.rmtree(command[-1], ignore_errors=True)
+            return ""
+
+        return calls, run
+
+    @unittest.skipIf(fcntl is None, "needs file locks")
+    def test_a_review_holds_its_folder_locked_until_it_is_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository, pull_request = self.input(directory)
+            root = Path(directory) / "worktrees"
+            calls, run = self.run_git()
+
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
+                with review_workspace(repository, pull_request, root) as exact:
+                    lock = exact.path.with_name(exact.path.name + ".lock")
+                    with lock.open("r+") as other:
+                        with self.assertRaises(OSError):
+                            fcntl.flock(
+                                other.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
+                            )
+
+            self.assertFalse(lock.exists())
+            self.assertFalse(exact.path.exists())
+            removal = next(command for command in calls if "remove" in command)
+            self.assertEqual(removal[-4:-1], ["remove", "--force", "--force"])
+
+    def test_a_stopped_worktree_add_is_removed_with_double_force(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository, pull_request = self.input(directory)
+            root = Path(directory) / "worktrees"
+            calls, run = self.run_git(add_fails=True)
+
+            with patch("prwarden.workspace.run_cmd", side_effect=run):
+                with self.assertRaisesRegex(WorkspaceError, "timed out"):
+                    with review_workspace(repository, pull_request, root):
+                        pass
+
+            removal = next(command for command in calls if "remove" in command)
+            self.assertEqual(removal[-4:-1], ["remove", "--force", "--force"])
+            self.assertEqual(list(root.iterdir()) if root.exists() else [], [])
 
 
 if __name__ == "__main__":

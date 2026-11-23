@@ -1641,6 +1641,17 @@ and its code review rules are read from Git's objects, never checked out. Cleanu
 engine calls. The configured checkout's branch, index, and working files are
 not changed.
 
+Each worktree has a lock file beside it, which its review holds for as long as
+the worktree exists; the operating system releases it when the process ends,
+however it ends. A run that was killed, or a `git worktree add` stopped by its
+timeout, can still leave a worktree behind, so every run, dry runs included,
+starts by removing each worktree whose lock no process holds, and each worktree
+without a lock file, which an earlier version made, once it is a day old. It also
+drops a configured checkout's record of any such worktree, since Git keeps a
+half-made worktree locked and never prunes it on its own. Removal uses a double
+`--force` for the same reason. A problem in this cleanup is printed as a warning
+and never fails the run.
+
 Installed dependencies are not tracked by Git, so the controller links the
 configured checkout's dependency directories into the temporary worktree. The
 whole directory is linked when, and only when, every known lockfile declared by

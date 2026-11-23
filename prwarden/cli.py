@@ -201,6 +201,7 @@ from .workspace import (
     read_base_files,
     read_file_history,
     read_generated_marks,
+    remove_leftover_workspaces,
     review_workspace,
 )
 
@@ -6403,6 +6404,27 @@ def _describe_plan(plan: ReviewPlan) -> "tuple[str, ...]":
     )
 
 
+def _remove_leftover_workspaces(settings: Settings) -> None:
+    """Clear review folders earlier runs left, which only cost disk space.
+
+    A cleanup problem is reported and the run goes on: the folders hold nothing a
+    review reads, and the next run tries again.
+    """
+    removed, problems = remove_leftover_workspaces(
+        settings.state_file.parent / "worktrees",
+        [
+            repository.path
+            for repository in settings.repositories
+            if repository.path is not None
+        ],
+    )
+    if removed:
+        plural = "" if len(removed) == 1 else "s"
+        print(f"Removed {len(removed)} review folder{plural} earlier runs left behind")
+    for problem in problems:
+        print(f"Warning: leftover review folder not removed. {problem}")
+
+
 def _run_reviews(
     args: argparse.Namespace,
     settings: Settings,
@@ -6462,6 +6484,7 @@ def _run_reviews(
     metrics = ReviewMetrics()
 
     with JsonStateStore(settings.state_file, lock_enabled=live) as store:
+        _remove_leftover_workspaces(settings)
         tasks = _discover_review_tasks(
             settings,
             repositories,
