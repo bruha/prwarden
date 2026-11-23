@@ -70,17 +70,10 @@ def check_engines(
         state.tool.engine: state for state in states if state.tool.engine
     }
     if settings.reviews is not None:
-        # Every engine the file names, once, whichever stages name it.
+        # Every engine the file names, once, whichever stages name it, the stages a
+        # rule gives included.
         commands = engine_commands(settings.reviews)
-        named = sorted(
-            {
-                choice.engine
-                for review_type in settings.reviews.types
-                for stage in (review_type.review, review_type.verify)
-                if stage is not None
-                for choice in stage.engines
-            }
-        )
+        named = settings.reviews.named_engines()
         roles: "tuple[tuple[str, Optional[str], tuple[str, ...]], ...]" = tuple(
             ("reviews file", engine, commands[engine]) for engine in named
         )

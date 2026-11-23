@@ -77,9 +77,13 @@ The expected review flow is:
 12. Append what the review did to the run's review history, whatever its outcome.
 
 Each level is one reviewer invocation and one verifier invocation, sequentially, in
-the order of the run's review plan, which always ends with the code level: its
-approval is what a pull request is merged on, so the advisory notes are posted
-before it. The checks level is the exception on both counts: one invocation with no
+the order of the pull request's review plan, which always ends with the code level:
+its approval is what a pull request is merged on, so the advisory notes are posted
+before it. The plan is the run's, from `reviews.json`, unless the file's `rules`
+match the pull request, by repository, author, label, or changed files; then those
+rules, applied first to last, change which types run and on which engines, and the
+command line's engine options change the result again. The checks level is the
+exception on both counts: one invocation with no
 verifier, outside that order, made only after a code review that found nothing and
 would approve, either but for a failed check or beside failed checks GitHub does not
 require. Each level carries its own engines in that plan, so a level is defined by

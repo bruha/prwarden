@@ -1277,6 +1277,22 @@ class DoctorTests(unittest.TestCase):
             ],
         )
 
+    def test_the_doctor_checks_an_engine_only_a_rule_names(self) -> None:
+        rule = {
+            "match": {"labels": ["x"]},
+            "types": {"code": {"review": {"engines": [{"engine": "antigravity"}]}}},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            settings = settings_from_reviews(
+                env_settings(directory), parse_reviews(with_rules(rule), SOURCE)
+            )
+            with patch("prwarden.doctor.shutil.which", return_value=None):
+                checks = doctor.check_engines(settings)
+
+        self.assertIn(
+            "reviews file engine antigravity", [c.message.split(":")[0] for c in checks]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

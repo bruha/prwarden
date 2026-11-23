@@ -251,6 +251,34 @@ class ReviewsFile:
     def command_for(self, engine: str) -> "Optional[tuple[str, ...]]":
         return dict(self.engine_command).get(engine)
 
+    def named_engines(self) -> "tuple[str, ...]":
+        """Return every engine a stage names, a rule's included, once each, sorted.
+
+        An engine only a rule names reviews only the pull requests the rule matches,
+        and must still be there and signed in when the first one comes.
+        """
+
+        stages = [
+            stage
+            for review_type in self.types
+            for stage in (review_type.review, review_type.verify)
+        ] + [
+            stage
+            for rule in self.rules
+            for change in rule.types
+            for stage in (change.review, change.verify)
+        ]
+        return tuple(
+            sorted(
+                {
+                    choice.engine
+                    for stage in stages
+                    if stage is not None and stage.engines is not None
+                    for choice in stage.engines
+                }
+            )
+        )
+
 
 def _refuse(source: object, where: str, problem: str) -> ConfigError:
     return ConfigError(f"{source}: {where} {problem}")
