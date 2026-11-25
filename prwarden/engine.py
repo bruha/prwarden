@@ -383,7 +383,10 @@ Whether the list already holds the new entry's siblings decides it, not whether 
 document says the list is complete. The controller accepts this category only when
 `documentation` cites an existing entry of that list, the one the new entry belongs
 after, and `proposed_update` holds nothing but the new entries, formatted exactly
-like the cited one: no heading, no new table, and no sentence around them."""
+like the cited one: no heading, no new table, and no sentence around them. A command
+or path listed one per line in a fenced code block is such an entry; then
+`proposed_update` holds only the new lines, at the cited line's indent, without the
+fence, and with a trailing comment when the cited line has one."""
 
 # A provider refusing for the rest of a quota period, as opposed to refusing under
 # momentary load. The two arrive as the same error class from some providers, and only

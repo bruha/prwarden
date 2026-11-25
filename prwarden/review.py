@@ -1739,6 +1739,50 @@ def _changed_paths(material: ReviewMaterial) -> "frozenset[str]":
 _UNESCAPED_PIPE = re.compile(r"(?<!\\)\|")
 _TABLE_RULE_CELL = re.compile(r"\s*:?-{3,}:?\s*")
 _LIST_ITEM = re.compile(r"( *)([-*+]|\d+[.)])[ \t]+\S")
+# Documentation for agents lists commands and paths one per line inside a fenced
+# code block, often with a trailing `# what it does`: all seven missing-entry
+# proposals refused in two weeks cited such a line. A line that is only a comment
+# heads a group rather than being an entry of one.
+_CODE_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
+_TRAILING_COMMENT = re.compile(r"\S\s+(#|//)\s")
+_COMMENT_LINE = re.compile(r"\s*(#|//)")
+
+
+def _code_block_lines(lines: "list[str]") -> "frozenset[int]":
+    """Return the indexes of the lines inside a fenced code block, fences excluded."""
+
+    inside: "set[int]" = set()
+    opener: Optional[str] = None
+    for index, line in enumerate(lines):
+        fence = _CODE_FENCE.match(line)
+        if opener is None:
+            if fence and not (fence.group(1)[0] == "`" and "`" in fence.group(2)):
+                opener = fence.group(1)
+            continue
+        if (
+            fence
+            and fence.group(1)[0] == opener[0]
+            and len(fence.group(1)) >= len(opener)
+            and not fence.group(2).strip()
+        ):
+            opener = None
+            continue
+        inside.add(index)
+    return frozenset(inside)
+
+
+def _code_entry_kind(line: str) -> "Optional[tuple[Any, ...]]":
+    """Return the kind of one line of a code block that lists entries, or None.
+
+    Two such lines are entries of one list when they share an indent and both carry
+    a trailing comment or neither does.
+    """
+
+    line = line.replace("\t", "    ")
+    if not line.strip() or _CODE_FENCE.match(line) or _COMMENT_LINE.match(line):
+        return None
+    indent = len(line) - len(line.lstrip(" "))
+    return ("code", indent, bool(_TRAILING_COMMENT.search(line)))
 
 
 def _list_entry_kind(line: str) -> "Optional[tuple[Any, ...]]":
@@ -1765,6 +1809,12 @@ def _list_entry_kind(line: str) -> "Optional[tuple[Any, ...]]":
 def _describe_entry_kind(kind: "tuple[Any, ...]") -> str:
     if kind[0] == "row":
         return f"a table row of {kind[1]} cells"
+    if kind[0] == "code":
+        comment = "with" if kind[2] else "without"
+        return (
+            f"a line of its code block at indent {kind[1]}, {comment} a trailing "
+            "comment, and no fence"
+        )
     style = kind[2]
     marker = f"a number and {style[1]!r}" if style.startswith("n") else repr(style)
     return f"a list item marked {marker} at indent {kind[1]}"
@@ -1796,16 +1846,19 @@ def _check_list_entry_shape(
             f"{error}"
         ) from error
     line = lines[cited.line - 1] if cited.line <= len(lines) else ""
-    kind = _list_entry_kind(line)
+    in_code = cited.line - 1 in _code_block_lines(lines)
+    entry_kind = _code_entry_kind if in_code else _list_entry_kind
+    kind = entry_kind(line)
     if kind is None:
         raise ReviewError(
-            "A missing_list_entry proposal must cite an existing list item or table "
-            f"row, the entry the new one belongs after; {cited.path}:{cited.line} is "
-            f"{_quote_line(line)}. Cite that entry, or use another category."
+            "A missing_list_entry proposal must cite an existing list item, table "
+            "row, or line of a code block that lists entries, the entry the new one "
+            f"belongs after; {cited.path}:{cited.line} is {_quote_line(line)}. Cite "
+            "that entry, or use another category."
         )
     in_item = False
     for number, text in enumerate(proposed_update.strip("\n").splitlines(), start=1):
-        entry = _list_entry_kind(text)
+        entry = entry_kind(text)
         if entry == kind:
             in_item = kind[0] == "item"
             continue

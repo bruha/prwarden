@@ -436,6 +436,16 @@ LISTS_README = """# App
 - [Deploy](docs/deploy.md) explains releases
 
 The reviewer reads at most two files per run.
+
+```sh
+npm run dev   # Start the dev server
+# Checks
+npm test      # Run the unit suite
+```
+
+```text
+yarn ios
+```
 """
 
 
@@ -501,11 +511,36 @@ class MissingListEntryShapeTests(unittest.TestCase):
 
         self.assertEqual(findings[0].proposed_update, proposed)
 
+    def test_new_lines_for_a_code_block_that_lists_commands_are_accepted(
+        self,
+    ) -> None:
+        """Agent instructions list commands one per line in a fenced block, and
+        every refused missing-entry proposal in two weeks cited such a line."""
+
+        for line, excerpt, proposed in (
+            (13, "npm run dev", "npm run e2e   # Run the end-to-end suite"),
+            (15, "npm test", "npm run e2e  # Run it\nnpm run lint  # Lint it"),
+            (19, "yarn ios", "yarn android"),
+        ):
+            with self.subTest(proposed=proposed):
+                findings = self.validate(line, excerpt, proposed)
+
+                self.assertEqual(findings[0].proposed_update, proposed)
+                self.assertTrue(findings[0].adds_list_entries)
+
     def test_the_cited_line_must_be_an_entry_of_the_list(self) -> None:
-        for line, excerpt in ((10, "at most two files"), (4, "| --- | --- |")):
+        for line, excerpt in (
+            (10, "at most two files"),
+            (4, "| --- | --- |"),
+            (12, "```sh"),
+            (14, "# Checks"),
+            (16, "```"),
+        ):
             with self.subTest(line=line):
                 with self.assertRaisesRegex(
-                    ReviewError, "must cite an existing list item or table row"
+                    ReviewError,
+                    "must cite an existing list item, table row, or line of a code "
+                    "block",
                 ):
                     self.validate(line, excerpt, "| `npm run e2e` | Run it |")
 
@@ -531,6 +566,31 @@ class MissingListEntryShapeTests(unittest.TestCase):
                 8,
                 "[Deploy]",
                 "Testing is described in docs/testing.md.",
+            ),
+            "a code line without the trailing comment": (
+                13,
+                "npm run dev",
+                "npm run e2e",
+            ),
+            "a code line wrapped in its own fence": (
+                13,
+                "npm run dev",
+                "```sh\nnpm run e2e  # Run it\n```",
+            ),
+            "a code line at another indent": (
+                13,
+                "npm run dev",
+                "npm run e2e  # Run it\n  npm run lint  # Lint it",
+            ),
+            "a comment heading a new group": (
+                13,
+                "npm run dev",
+                "# E2E\nnpm run e2e  # Run it",
+            ),
+            "a sentence instead of a code line": (
+                13,
+                "npm run dev",
+                "Add the e2e script after the dev one.",
             ),
         }
         for name, (line, excerpt, proposed) in cases.items():

@@ -847,7 +847,10 @@ adds. That is reported in its own category, `missing_list_entry`, which the cont
 accepts only in one shape: `documentation` cites an existing entry of that list, and
 `proposed_update` holds nothing but new entries formatted like it, table rows with
 the same number of cells or items with the same marker at the same indent, with no
-heading, new table, or sentence around them. For that category alone the verifier
+heading, new table, or sentence around them. A line of a fenced code block that lists
+commands or paths one per line is an entry too, and a comment-only line is not: new
+lines for it share its indent, carry a trailing comment when it does, and include no
+fence. For that category alone the verifier
 treats the missing entry as incomplete rather than silent, and decides it by whether
 the list already holds the new entry's siblings, not by whether the list claims to be
 complete; every other candidate is judged as before. Its delivered note names the
