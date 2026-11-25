@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -50,6 +50,10 @@ class PullRequest:
     url: str
     head_ref: str = ""
     base_ref: str = ""
+    # The label names as listed, so a pinned case can say which rules it matched. A
+    # review reads labels from its snapshot instead, so they never tell two pull
+    # requests apart.
+    labels: "tuple[str, ...]" = field(default=(), compare=False)
 
 
 @dataclass(frozen=True)

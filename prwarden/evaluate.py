@@ -38,7 +38,7 @@ import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
@@ -52,13 +52,27 @@ from .config import (
     load_settings,
     parse_effort,
 )
-from .engine import DESIGN_LEVEL, DOCS_LEVEL, EngineError, is_exhausted_quota
+from .engine import (
+    CODE_LEVEL,
+    DESIGN_LEVEL,
+    DOCS_LEVEL,
+    EngineError,
+    is_exhausted_quota,
+)
 from .github import list_open_prs, pin_github_account, reviewer_account
 from . import progress
 from .cli import RUN_LOG_DIRECTORY_NAME
 from .metrics import ReviewMetrics
 from .models import Finding, FindingEvidence, PullRequest, Repository
 from .review import ReviewError, build_review_material, select_findings
+from .review_plan import review_plan
+from .reviews_file import (
+    ReviewRule,
+    ReviewsFile,
+    apply_overrides,
+    load_reviews_file,
+    settings_from_reviews,
+)
 from .secret_scan import (
     find_credentials,
     redact_credentials,
@@ -127,6 +141,11 @@ class ReplayCase:
     # What the author wrote, which a live review reads and which states intent: a
     # replay without it confirmed a regression the description named as the change.
     body: str = ""
+    # Who opened the pull request and its labels, which a reviews file's rules match
+    # on. Empty and None say the case was pinned without them, before they were
+    # recorded, which is not the same as a pull request that had no labels.
+    author: str = ""
+    labels: "Optional[tuple[str, ...]]" = None
 
     @property
     def label(self) -> str:
@@ -147,16 +166,27 @@ class ReplayCase:
 
 @dataclass(frozen=True)
 class ReplayArm:
-    """A named set of settings one replay runs under."""
+    """A named set of settings one replay runs under.
+
+    An arm either overrides some of the run's settings, or names a reviews file
+    whose types, order, engines, limits, and rules the replay runs under instead,
+    as a live run would.
+    """
 
     name: str
     engine: Optional[str] = None
     overrides: "dict[str, Any]" = None  # type: ignore[assignment]
+    reviews: Optional[Path] = None
+    reviews_fingerprint: str = ""
+    reviews_file: "Optional[ReviewsFile]" = field(default=None, compare=False)
 
     def applied_to(self, settings: Settings) -> Settings:
-        # An arm overrides the settings' own fields, which name one set of engines
-        # for every type; a reviews file's per-type engines are not an arm's to
-        # change yet, so a replay runs every type on the code review's engines.
+        if self.reviews_file is not None:
+            # The file says every setting an arm could, so it is all the arm says.
+            return settings_from_reviews(settings, self.reviews_file)
+        # An arm that names no reviews file overrides the settings' own fields,
+        # which name one set of engines for every type, so a replay runs every type
+        # on the code review's engines, as every measurement before such arms did.
         if isinstance(settings, Settings) and settings.reviews is not None:
             settings = replace(settings, reviews=None)
         overrides = dict(self.overrides or {})
@@ -178,10 +208,15 @@ class ReplayArm:
         return replace(settings, **overrides) if overrides else settings
 
     def describe(self) -> "dict[str, Any]":
-        described = {"name": self.name}
+        described: "dict[str, Any]" = {"name": self.name}
         if self.engine:
             described["engine"] = self.engine
         described.update(self.overrides or {})
+        if self.reviews is not None:
+            # The path says which file, and the fingerprint which version of it, so
+            # a comparison can tell two runs of one edited file apart.
+            described["reviews"] = str(self.reviews)
+            described["reviews_fingerprint"] = self.reviews_fingerprint
         return described
 
 
@@ -428,9 +463,51 @@ def load_cases(path: Path) -> "tuple[ReplayCase, ...]":
                 base_ref=str(raw_case.get("base_ref") or ""),
                 captured=str(raw_case.get("captured") or ""),
                 body=str(raw_case.get("body") or ""),
+                author=str(raw_case.get("author") or ""),
+                labels=_case_labels(raw_case.get("labels"), subject),
             )
         )
     return tuple(cases)
+
+
+def _case_labels(value: Any, subject: str) -> "Optional[tuple[str, ...]]":
+    """Return a case's recorded labels, None when it was pinned without them."""
+
+    if value is None:
+        return None
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ConfigError(f"{subject} has labels that are not a list of names")
+    return tuple(item.strip() for item in value if item.strip())
+
+
+def _labels_of(value: Any) -> "Optional[tuple[str, ...]]":
+    """Return the label names GitHub listed, or None when it listed none usable."""
+
+    if not isinstance(value, list):
+        return None
+    return tuple(
+        item.strip() for item in value if isinstance(item, str) and item.strip()
+    )
+
+
+def _case_document(case: ReplayCase) -> "dict[str, Any]":
+    """Return one case as the case set records it."""
+
+    document: "dict[str, Any]" = {
+        "slug": case.slug,
+        "number": case.number,
+        "head": case.head,
+        "base": case.base,
+        "title": case.title,
+        "head_ref": case.head_ref,
+        "base_ref": case.base_ref,
+        "captured": case.captured,
+        "body": case.body,
+        "author": case.author,
+    }
+    if case.labels is not None:
+        document["labels"] = list(case.labels)
+    return document
 
 
 def cases_fingerprint(cases: "Sequence[ReplayCase]") -> str:
@@ -442,10 +519,23 @@ def cases_fingerprint(cases: "Sequence[ReplayCase]") -> str:
 
     import hashlib
 
-    payload = json.dumps(
-        sorted(f"{case.slug}#{case.number}@{case.head}:{case.base}" for case in cases)
-    )
+    payload = json.dumps(sorted(_case_identity(case) for case in cases))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _case_identity(case: ReplayCase) -> str:
+    """Return what a case replays: its commits and, once recorded, what routes it.
+
+    The author and labels pick which reviews-file rules a case matches, so two sets
+    that differ in them are different work. A case that records neither keeps the
+    identity it had before they were recorded, so earlier fingerprints still match.
+    """
+
+    identity = f"{case.slug}#{case.number}@{case.head}:{case.base}"
+    if case.author or case.labels is not None:
+        labels = sorted(case.labels) if case.labels is not None else None
+        identity += " " + json.dumps([case.author, labels])
+    return identity
 
 
 def load_arm(path: Path, name: str) -> ReplayArm:
@@ -469,8 +559,16 @@ def load_arm(path: Path, name: str) -> ReplayArm:
         overrides = {
             key: value
             for key, value in raw_arm.items()
-            if key not in ("name", "engine")
+            if key not in ("name", "engine", "reviews")
         }
+        if "reviews" in raw_arm:
+            others = sorted(key for key in raw_arm if key not in ("name", "reviews"))
+            if others:
+                raise ConfigError(
+                    f"Arm {name!r} names a reviews file, which says every setting "
+                    f"an arm can, so it may set nothing else: {', '.join(others)}"
+                )
+            return _reviews_arm(path, name, raw_arm["reviews"])
         unknown = sorted(set(overrides) - OVERRIDABLE_SETTINGS)
         if unknown:
             raise ConfigError(
@@ -485,6 +583,40 @@ def load_arm(path: Path, name: str) -> ReplayArm:
     if name == BASELINE_ARM.name:
         return BASELINE_ARM
     raise ConfigError(f"{path} has no arm named {name!r}")
+
+
+def _reviews_arm(arms_path: Path, name: str, value: Any) -> ReplayArm:
+    """Return an arm that replays under the reviews file ``value`` names.
+
+    A relative path is read from the arm set's folder. The file is checked here, as
+    the loader checks a live one, so a mistake stops the replay before any review.
+    """
+
+    import hashlib
+
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"Arm {name!r} must name its reviews file as a path")
+    reviews_path = Path(value.strip()).expanduser()
+    if not reviews_path.is_absolute():
+        reviews_path = Path(os.path.normpath(arms_path.parent / reviews_path))
+    try:
+        content = reviews_path.read_bytes()
+    except OSError as error:
+        raise ConfigError(
+            f"Arm {name!r} names {reviews_path}, which cannot be read: {error}"
+        ) from error
+    reviews_file = load_reviews_file(reviews_path)
+    if reviews_file is None:
+        raise ConfigError(f"Arm {name!r} names {reviews_path}, which does not exist")
+    # Made as a live run makes its file, with no command-line flag: each rule is
+    # tried, so one the file cannot apply is refused now, not one case in.
+    reviews_file = apply_overrides(reviews_file)
+    return ReplayArm(
+        name=name,
+        reviews=reviews_path,
+        reviews_fingerprint=hashlib.sha256(content).hexdigest()[:16],
+        reviews_file=reviews_file,
+    )
 
 
 def measured_engine(
@@ -582,6 +714,8 @@ def capture(
                     base_ref=pull_request.base_ref,
                     captured=today,
                     body=pull_request.body,
+                    author=pull_request.author,
+                    labels=pull_request.labels,
                 )
             )
             print(
@@ -595,20 +729,7 @@ def capture(
         json.dumps(
             {
                 "captured": today,
-                "cases": [
-                    {
-                        "slug": case.slug,
-                        "number": case.number,
-                        "head": case.head,
-                        "base": case.base,
-                        "title": case.title,
-                        "head_ref": case.head_ref,
-                        "base_ref": case.base_ref,
-                        "captured": case.captured,
-                        "body": case.body,
-                    }
-                    for case in cases
-                ],
+                "cases": [_case_document(case) for case in cases],
             },
             indent=2,
         )
@@ -907,6 +1028,7 @@ def mine_controls(
             continue
         if base == head:
             continue
+        listed = _labels_of(refs.get("labels"))
         mined.append(
             (
                 {
@@ -918,6 +1040,10 @@ def mine_controls(
                     "base_ref": str(refs.get("base_ref") or ""),
                     "captured": "mined",
                     "body": str(refs.get("body") or ""),
+                    "author": str(refs.get("author") or ""),
+                    **(
+                        {"labels": list(listed)} if listed is not None else {}
+                    ),
                 },
                 {
                     "slug": slug,
@@ -1442,6 +1568,91 @@ def _prepared_case(
         )
 
 
+def _reviews_of(settings: Settings) -> "Optional[ReviewsFile]":
+    """Return the reviews file a replay runs under, or None for the run's engines."""
+
+    reviews = getattr(settings, "reviews", None)
+    return reviews if isinstance(reviews, ReviewsFile) else None
+
+
+def _replay_stages(
+    settings: Settings,
+    case: ReplayCase,
+    repository: Repository,
+    files: "Sequence[dict[str, Any]]",
+) -> "dict[str, Any]":
+    """Return the engines each type of review replays one case with, in order.
+
+    Without a reviews file every type shares the run's engines, as every replay did
+    before arms could name one. With one, the case gets the types its rules give it,
+    matched on what the case recorded, as a live run's pull request would.
+    """
+
+    from . import cli
+
+    reviews = _reviews_of(settings)
+    if reviews is None:
+        engine = cli.create_review_engine(settings)
+        shared = cli.ReviewStages(
+            settings=settings,
+            engine=engine,
+            verification=cli._create_verification_pass(settings, engine),
+            fallback=cli._create_fallback_reviewer(settings),
+        )
+        enabled = [
+            name
+            for name, on in (
+                (DESIGN_LEVEL, settings.design_level),
+                (DOCS_LEVEL, settings.docs_level),
+            )
+            if on
+        ]
+        return {name: shared for name in (*enabled, CODE_LEVEL)}
+    for note in _unrecorded_rule_inputs(reviews.rules, case):
+        print(f"      -> {note}")
+    # Routed by the live run's own router, so a replay matches rules and makes
+    # stages exactly as the review it measures would.
+    router = cli._ReviewRouter(settings, review_plan(settings))
+    chosen = router.choose(
+        repository,
+        PullRequest(case.number, case.title, case.body, case.author, case.head, ""),
+        case.labels or (),
+        files,
+    )
+    if chosen is None:
+        return dict(router.stages)
+    cli._report_chosen_stages(chosen)
+    return dict(chosen.stages)
+
+
+def _unrecorded_rule_inputs(
+    rules: "Sequence[ReviewRule]", case: ReplayCase
+) -> "list[str]":
+    """Say which rules match on something this case was pinned without.
+
+    Such a rule is matched as if the pull request had no author or no labels, so
+    the replay may review it differently from how a live run did.
+    """
+
+    notes = []
+    for rule in rules:
+        missing = [
+            name
+            for name, wanted, absent in (
+                ("authors", rule.match.authors, not case.author),
+                ("labels", rule.match.labels, case.labels is None),
+            )
+            if wanted and absent
+        ]
+        if missing:
+            notes.append(
+                f"Rule {rule.number} of the reviews file matches on "
+                f"{' and '.join(missing)}, which this case was pinned without; it "
+                "is matched as if there were none; capture records both"
+            )
+    return notes
+
+
 def replay_case(
     settings: Settings,
     case: ReplayCase,
@@ -1468,54 +1679,54 @@ def replay_case(
         repository, pull_request, exact_repository, material, extra_bundles = (
             prepared[:5]
         )
-        engine = cli.create_review_engine(settings)
-        verification = cli._create_verification_pass(settings, engine)
-        fallback = cli._create_fallback_reviewer(settings)
+        stages = _replay_stages(settings, case, repository, prepared.files)
+        code = stages[CODE_LEVEL]
         usage = cli._ModelUsage()
 
         def measured(inner, role):
             return cli._MeasuredEngine(inner, usage, role, metrics, repository)
 
-        # Wrapped once, so every level's fallback calls are measured the same way;
-        # the bundle path wrapped the reviewer itself and so measured nothing.
-        measured_fallback = (
-            replace(fallback, engine=measured(fallback.engine, "fallback"))
-            if fallback is not None
-            else None
-        )
+        # Wrapped once each, so every level's fallback calls are measured the same
+        # way; the bundle path wrapped the reviewer itself and so measured nothing.
+        measured_fallbacks: "dict[int, Any]" = {}
+
+        def measured_fallback(stage):
+            if stage.fallback is None:
+                return None
+            key = id(stage.fallback)
+            if key not in measured_fallbacks:
+                measured_fallbacks[key] = replace(
+                    stage.fallback,
+                    engine=measured(stage.fallback.engine, "fallback"),
+                )
+            return measured_fallbacks[key]
+
         # The advisory levels are reviewer work, so verifying recorded candidates
-        # skips them: their whole point is costing no reviewer budget.
-        if settings.design_level and recorded is None:
+        # skips them: their whole point is costing no reviewer budget. They run in
+        # the plan's order, which ends with the code review.
+        for name, stage in stages.items():
+            if recorded is not None or name not in (DESIGN_LEVEL, DOCS_LEVEL):
+                continue
+            designing = name == DESIGN_LEVEL
+            run_level = cli._design_level if designing else cli._docs_level
             try:
-                assessment = cli._design_level(
-                    settings,
-                    measured(engine, "review"),
-                    _measured_verification(verification, measured),
+                judged = run_level(
+                    stage.settings,
+                    measured(stage.engine, "review"),
+                    _measured_verification(stage.verification, measured),
                     exact_repository,
                     pull_request,
                     material,
-                    fallback=measured_fallback,
+                    fallback=measured_fallback(stage),
                 )
-                print(f"      -> Solution design judged {assessment.verdict}")
+                subject = "Solution design" if designing else "Documentation"
+                print(f"      -> {subject} judged {judged.verdict}")
             except (ReviewError, CommandError, EngineError) as error:
-                print(f"      -> Design level failed: {error}")
-        if settings.docs_level and recorded is None:
-            try:
-                docs = cli._docs_level(
-                    settings,
-                    measured(engine, "review"),
-                    _measured_verification(verification, measured),
-                    exact_repository,
-                    pull_request,
-                    material,
-                    fallback=measured_fallback,
-                )
-                print(f"      -> Documentation judged {docs.verdict}")
-            except (ReviewError, CommandError, EngineError) as error:
-                print(f"      -> Documentation level failed: {error}")
+                noun = "Design" if designing else "Documentation"
+                print(f"      -> {noun} level failed: {error}")
         if recorded is not None:
             findings, proposer = recorded
-            review_settings, review_engine = settings, engine
+            review_settings, review_engine = code.settings, code.engine
             # Verifying held proposals never re-asks the reviewer for a verdict, so
             # this mode has no approval to report and must not invent one.
             approve: Optional[bool] = None
@@ -1537,9 +1748,9 @@ def replay_case(
                     review_settings,
                     review_engine,
                 ) = cli._review_with_engine_fallback(
-                    settings,
-                    measured(engine, "review"),
-                    measured_fallback,
+                    code.settings,
+                    measured(code.engine, "review"),
+                    measured_fallback(code),
                     exact_repository,
                     pull_request,
                     material,
@@ -1552,7 +1763,7 @@ def replay_case(
         candidates = list(findings)
         if candidates_path is not None:
             save_candidates(
-                candidates_path, case, candidates, current_attribution(settings)
+                candidates_path, case, candidates, current_attribution(code.settings)
             )
         if findings:
             (
@@ -1562,8 +1773,8 @@ def replay_case(
                 verified_reason,
                 _,
             ) = cli._verify_code_candidates(
-                settings,
-                _measured_verification(verification, measured),
+                code.settings,
+                _measured_verification(code.verification, measured),
                 review_settings,
                 measured(review_engine, "verify"),
                 exact_repository,
@@ -1590,9 +1801,9 @@ def replay_case(
                     bundle_settings,
                     bundle_engine,
                 ) = cli._review_with_engine_fallback(
-                    settings,
-                    measured(engine, "review"),
-                    measured_fallback,
+                    code.settings,
+                    measured(code.engine, "review"),
+                    measured_fallback(code),
                     exact_repository,
                     pull_request,
                     bundle_material,
@@ -1606,8 +1817,8 @@ def replay_case(
                 continue
             if bundle_findings:
                 (_, bundle_findings, _, _, _) = cli._verify_code_candidates(
-                    settings,
-                    _measured_verification(verification, measured),
+                    code.settings,
+                    _measured_verification(code.verification, measured),
                     bundle_settings,
                     measured(bundle_engine, "verify"),
                     exact_repository,
@@ -1654,7 +1865,7 @@ def replay_case(
 
     # As live: one limit across every bundle and every committed key, the most
     # severe first, so a replay scores what a live run would post.
-    findings, held_back = select_findings(findings, settings.max_findings)
+    findings, held_back = select_findings(findings, code.settings.max_findings)
     for finding in held_back:
         print(
             f"      -> Held for the next review [{finding.severity.upper()}] "
@@ -2166,6 +2377,8 @@ def case_for_pull_request(settings: Settings, spec: str) -> ReplayCase:
         base_ref=refs.get("base_ref") or "",
         captured="named",
         body=refs.get("body") or "",
+        author=str(refs.get("author") or ""),
+        labels=_labels_of(refs.get("labels")),
     )
 
 
@@ -2357,9 +2570,28 @@ def advisory_case(
         record["linked_issues"] = [
             issue.reference for issue in material.linked_issues
         ]
-        engine = cli.create_review_engine(settings)
-        verification = cli._create_verification_pass(settings, engine)
-        fallback = cli._create_fallback_reviewer(settings)
+        level_settings = settings
+        if _reviews_of(settings) is not None:
+            stage = _replay_stages(settings, case, repository, prepared.files).get(
+                level
+            )
+            if stage is None:
+                print(
+                    f"      -> Skipped: the reviews file gives this pull request no "
+                    f"{noun} review"
+                )
+                record["skipped"] = f"the reviews file gives it no {noun} review"
+                return record
+            level_settings = stage.settings
+            engine, verification, fallback = (
+                stage.engine,
+                stage.verification,
+                stage.fallback,
+            )
+        else:
+            engine = cli.create_review_engine(settings)
+            verification = cli._create_verification_pass(settings, engine)
+            fallback = cli._create_fallback_reviewer(settings)
         usage = cli._ModelUsage()
 
         def measured(inner, role):
@@ -2368,7 +2600,7 @@ def advisory_case(
         # With no separate verifier a level verifies with its reviewer, which is the
         # primary engine unless the primary failed; the pairing needs it named.
         if verification is None:
-            verification = cli.VerificationPass(engine=engine, settings=settings)
+            verification = cli.VerificationPass(engine=engine, settings=level_settings)
         paired = _PairedVerifier(
             measured(verification.engine, "verify"),
             level,
@@ -2377,7 +2609,7 @@ def advisory_case(
         run_level = cli._design_level if level == DESIGN_LEVEL else cli._docs_level
         try:
             assessment = run_level(
-                settings,
+                level_settings,
                 measured(engine, "review"),
                 replace(verification, engine=paired),
                 checkout,

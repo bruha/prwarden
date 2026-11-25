@@ -326,8 +326,10 @@ review's engine, model, or effort, as `_review_basis` already compares.
 `--fallback-engine` replaces each review's second engine, `--no-fallback` leaves
 each review only its first, and a `--verify-engine` gives a type without a verify
 stage one. `prwarden doctor` checks every engine the file names and reports any
-`.env` key it replaces as not read. An evaluation arm still overrides the run's own
-settings, so a replay reviews every type on the code review's engines.
+`.env` key it replaces as not read. An evaluation arm that names no reviews file
+still overrides the run's own settings, so its replay reviews every type on the code
+review's engines; an arm that names one replays each case with that file's types,
+engines, limits, and rules, as described under evaluation.
 
 #### Moving from `.env`
 
@@ -1002,6 +1004,23 @@ record lists the issues it read, so two measurements whose inputs differed show 
 An arm is a named set of overridable scalar settings plus an optional engine. An arm
 may not set anything that needs a matching command, such as the verification engine,
 because an arm must not be able to describe a configuration the loader would refuse.
+Such an arm replays every type on the code review's engines, as every measurement did
+before an arm could name a reviews file, so the two stay comparable.
+
+An arm may instead name a reviews file, `"reviews": "path"`, read from the arm set's
+folder when relative, and then sets nothing else, since the file says every setting an
+arm could. The file is checked as the loader checks a live one, before any review, and
+each case is replayed with the types, order, engines, and limits the file gives it,
+its rules matched on the case's repository, changed files under their old and new
+names, author, and labels. A case records its author and labels when `capture` pins
+it, or when it is mined as a control or named with `--pr`; a case pinned without them
+is matched as if it had none, and the replay says so for each rule that matches on
+them. The case set's fingerprint covers a case's author and labels once it records
+them, since they choose its rules. An advisory replay of a level the file gives a case no review of skips that
+case. The checks reading is not replayed. The arm's description records the file's
+path and a fingerprint of its content, which `compare_metrics` names on each side and
+counts as a thing that changed.
+
 The measurement records the arm, the reviewer's version, commit, and dirty flag, the
 effective settings, and a fingerprint of the case set; `compare_metrics` reports
 loudly when the fingerprints differ, when one side is a replay and the other a live

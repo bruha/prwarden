@@ -355,6 +355,7 @@ def list_open_prs(
                 f"GitHub omitted labels for {repository.slug} pull request"
             )
         label_names: set[str] = set()
+        listed_labels: list[str] = []
         for label in labels:
             if not isinstance(label, dict) or not isinstance(label.get("name"), str):
                 raise CommandError(
@@ -362,6 +363,7 @@ def list_open_prs(
                     f"{repository.slug} pull request"
                 )
             label_names.add(label["name"].strip().casefold())
+            listed_labels.append(label["name"].strip())
         if is_draft or label_names.intersection(normalized_excluded_labels):
             continue
         author = item.get("author") or {}
@@ -378,6 +380,7 @@ def list_open_prs(
                 url=str(item.get("url") or ""),
                 head_ref=str(item.get("headRefName") or ""),
                 base_ref=str(item.get("baseRefName") or ""),
+                labels=tuple(listed_labels),
             )
         )
     return pull_requests
@@ -773,8 +776,8 @@ def list_review_comments_by_reviewer(
 
 
 def _pull_request_refs(repository: Repository, number: int) -> "dict[str, Any]":
-    """Return the head, base branch, merge state, title, and description of one
-    pull request."""
+    """Return the head, base branch, merge state, title, description, author, and
+    labels of one pull request."""
 
     try:
         output = _run_for(
@@ -786,7 +789,8 @@ def _pull_request_refs(repository: Repository, number: int) -> "dict[str, Any]":
                 "--jq",
                 "{head: .head.sha, head_ref: .head.ref, base_ref: .base.ref, "
                 "base_sha: .base.sha, merged: .merged, "
-                "merge_commit: .merge_commit_sha, title: .title, body: .body}",
+                "merge_commit: .merge_commit_sha, title: .title, body: .body, "
+                "author: .user.login, labels: [.labels[].name]}",
             ],
             retry_transient=True,
         )

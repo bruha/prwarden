@@ -445,6 +445,12 @@ class GitHubFeedbackTests(unittest.TestCase):
             )
 
         self.assertEqual([pull_request.number for pull_request in pull_requests], [3])
+        # Kept as listed, so a pinned case can say which reviews-file rules it
+        # matched; they never tell two pull requests apart.
+        self.assertEqual(pull_requests[0].labels, ("frontend",))
+        self.assertEqual(
+            pull_requests[0], replace(pull_requests[0], labels=("other",))
+        )
         args = run.call_args.args[0]
         self.assertIn("isDraft", args[args.index("--json") + 1])
         self.assertIn("labels", args[args.index("--json") + 1])

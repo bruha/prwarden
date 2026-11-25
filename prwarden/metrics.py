@@ -270,6 +270,8 @@ def _side(document: Mapping[str, Any]) -> str:
     arm = document.get("arm")
     if isinstance(arm, Mapping) and arm.get("name"):
         parts.append(f"arm={arm['name']}")
+    if isinstance(arm, Mapping) and arm.get("reviews_fingerprint"):
+        parts.append(f"reviews={arm['reviews_fingerprint']}")
     reviewer = document.get("reviewer")
     if isinstance(reviewer, Mapping):
         build = str(reviewer.get("commit") or reviewer.get("version") or "")
@@ -340,6 +342,16 @@ def _provenance_warnings(
         changed.append(f"engine {before.get('engine')} -> {after.get('engine')}")
     if before.get("model") != after.get("model"):
         changed.append(f"model {before.get('model')} -> {after.get('model')}")
+    # A reviews file changes the engines of each type and which types a pull
+    # request gets, none of which the top-level settings above can show.
+    before_file, after_file = (
+        str(arm.get("reviews_fingerprint") or "") if isinstance(arm, Mapping) else ""
+        for arm in (before.get("arm"), after.get("arm"))
+    )
+    if before_file != after_file:
+        changed.append(
+            f"reviews file {before_file or 'none'} -> {after_file or 'none'}"
+        )
     before_reviewer = before.get("reviewer") or {}
     after_reviewer = after.get("reviewer") or {}
     if isinstance(before_reviewer, Mapping) and isinstance(after_reviewer, Mapping):
