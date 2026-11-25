@@ -15,6 +15,10 @@
     {
       "name": "tighter-budget",
       "max_diff_bytes": 60000
+    },
+    {
+      "name": "example-reviews-file",
+      "reviews": "../reviews.example.json"
     }
   ]
 }

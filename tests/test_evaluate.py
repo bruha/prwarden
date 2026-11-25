@@ -63,6 +63,11 @@ from prwarden.cli import VerificationPass
 from prwarden.metrics import compare
 from prwarden.engine import DESIGN_LEVEL, DOCS_LEVEL, EngineError, build_prompt
 from prwarden.metrics import ReviewMetrics
+from prwarden.reviews_file import (
+    apply_overrides,
+    parse_reviews,
+    settings_from_reviews,
+)
 from prwarden.models import (
     DocsAssessment,
     DocsFinding,
@@ -309,6 +314,37 @@ class CaseSetTests(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "unusable head commit"):
                 load_cases(path)
 
+    def test_the_author_and_labels_a_rule_matches_on_are_read(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_cases(
+                directory,
+                {
+                    "cases": [
+                        self.case(author="octocat", labels=["dependencies"]),
+                        self.case(number=124, labels=[]),
+                        self.case(number=125),
+                    ]
+                },
+            )
+
+            labelled, unlabelled, unrecorded = load_cases(path)
+
+            self.assertEqual(labelled.author, "octocat")
+            self.assertEqual(labelled.labels, ("dependencies",))
+            # No labels and labels never recorded are not the same case.
+            self.assertEqual(unlabelled.labels, ())
+            self.assertIsNone(unrecorded.labels)
+            self.assertEqual(unrecorded.author, "")
+
+    def test_labels_that_are_not_names_are_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_cases(
+                directory, {"cases": [self.case(labels="dependencies")]}
+            )
+
+            with self.assertRaisesRegex(ConfigError, "not a list of names"):
+                load_cases(path)
+
     def test_an_empty_or_unreadable_set_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             empty = self.write_cases(directory, {"cases": []})
@@ -454,6 +490,194 @@ class ArmTests(unittest.TestCase):
                     with self.assertRaisesRegex(ConfigError, pattern):
                         load_arm(path, arm["name"]).applied_to(settings)
 
+    def test_an_arm_may_replay_under_a_reviews_file(self) -> None:
+        """The file's types and engines, read from beside the arm set."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            reviews = Path(directory) / "candidate.json"
+            reviews.write_text(json.dumps(REVIEWS_PAYLOAD), encoding="utf-8")
+            path = self.write_arms(
+                directory, [{"name": "file", "reviews": "candidate.json"}]
+            )
+
+            arm = load_arm(path, "file")
+            applied = arm.applied_to(self.settings(directory))
+
+            self.assertEqual(arm.reviews, reviews)
+            self.assertIsNotNone(applied.reviews)
+            self.assertEqual(applied.review_engine, "kiro")
+            self.assertEqual(applied.review_model, "code-model")
+            self.assertTrue(applied.docs_level)
+            self.assertFalse(applied.design_level)
+            described = arm.describe()
+            self.assertEqual(described["reviews"], str(reviews))
+            self.assertRegex(described["reviews_fingerprint"], "^[0-9a-f]{16}$")
+
+    def test_an_edited_file_gets_another_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reviews = Path(directory) / "candidate.json"
+            path = self.write_arms(
+                directory, [{"name": "file", "reviews": "candidate.json"}]
+            )
+            reviews.write_text(json.dumps(REVIEWS_PAYLOAD), encoding="utf-8")
+            first = load_arm(path, "file").reviews_fingerprint
+            reviews.write_text(
+                json.dumps({**REVIEWS_PAYLOAD, "concurrency": 2}), encoding="utf-8"
+            )
+
+            self.assertNotEqual(load_arm(path, "file").reviews_fingerprint, first)
+
+    def test_a_reviews_arm_sets_nothing_else(self) -> None:
+        """The file names every setting an arm can, so a second source would leave
+        it unclear which of the two a measurement ran under."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "candidate.json").write_text(
+                json.dumps(REVIEWS_PAYLOAD), encoding="utf-8"
+            )
+            path = self.write_arms(
+                directory,
+                [
+                    {
+                        "name": "both",
+                        "reviews": "candidate.json",
+                        "engine": "claude",
+                        "max_findings": 3,
+                    }
+                ],
+            )
+
+            with self.assertRaisesRegex(
+                ConfigError, "may set nothing else: engine, max_findings"
+            ):
+                load_arm(path, "both")
+
+    def test_a_reviews_arm_needs_a_file_the_loader_accepts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            broken = Path(directory) / "broken.json"
+            broken.write_text(json.dumps({"types": {}}), encoding="utf-8")
+            for value, pattern in (
+                ("absent.json", "cannot be read"),
+                ("broken.json", "types.code"),
+                ("", "must name its reviews file"),
+                (3, "must name its reviews file"),
+            ):
+                with self.subTest(value=value):
+                    path = self.write_arms(
+                        directory, [{"name": "file", "reviews": value}]
+                    )
+                    with self.assertRaisesRegex(ConfigError, pattern):
+                        load_arm(path, "file")
+
+    def test_an_arm_without_a_reviews_file_runs_on_the_code_engines(self) -> None:
+        """As every measurement before such arms did, so they stay comparable."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(self.settings(directory), reviews=Mock())
+
+            self.assertIsNone(BASELINE_ARM.applied_to(settings).reviews)
+
+    def test_every_example_arm_loads(self) -> None:
+        """The examples are what an operator copies from."""
+
+        path = Path(__file__).resolve().parent.parent / "evals" / "arms.example.json"
+        names = [arm["name"] for arm in json.loads(path.read_text())["arms"]]
+        for name in names:
+            with self.subTest(arm=name):
+                self.assertEqual(load_arm(path, name).name, name)
+
+
+REVIEWS_PAYLOAD = {
+    "types": {
+        "docs": {"review": {"engines": [{"engine": "kiro", "model": "docs-model"}]}},
+        "code": {"review": {"engines": [{"engine": "kiro", "model": "code-model"}]}},
+    },
+    "rules": [
+        {
+            "match": {"files": ["*.md"]},
+            "order": ["docs", "code"],
+            "types": {"code": {"review": {"engines": [{"engine": "claude"}]}}},
+        },
+        {"match": {"labels": ["dependencies"]}, "order": ["code"]},
+    ],
+}
+
+
+class ReplayStagesTests(unittest.TestCase):
+    """A replay under a reviews file gives each case the types and engines a live
+    run would give its pull request, its rules included."""
+
+    def stages(self, case: ReplayCase, files=({"filename": "app.py"},)):
+        with tempfile.TemporaryDirectory() as directory:
+            reviews = parse_reviews(REVIEWS_PAYLOAD, Path(directory) / "r.json")
+            settings = settings_from_reviews(
+                ArmTests().settings(directory), apply_overrides(reviews)
+            )
+            repository = settings.repositories[0]
+            with patch(
+                "prwarden.cli.create_review_engine",
+                side_effect=lambda chosen: Mock(chosen=chosen),
+            ), patch("prwarden.cli._verification_passes", return_value=None), patch(
+                "prwarden.cli._fallback_reviewers", return_value=None
+            ), patch("sys.stdout", new_callable=StringIO) as output:
+                stages = evaluate._replay_stages(
+                    settings, case, repository, list(files)
+                )
+        return stages, output.getvalue()
+
+    def case(self, **fields) -> ReplayCase:
+        return ReplayCase("owner/app", 1, "a" * 40, "b" * 40, **fields)
+
+    def test_a_case_no_rule_matches_gets_the_file_s_own_types(self) -> None:
+        stages, output = self.stages(self.case(author="octocat", labels=()))
+
+        self.assertEqual(list(stages), ["docs", "code"])
+        self.assertEqual(stages["docs"].settings.review_model, "docs-model")
+        self.assertEqual(stages["code"].settings.review_model, "code-model")
+        self.assertEqual(output, "")
+
+    def test_a_rule_on_its_files_changes_the_code_review_s_engine(self) -> None:
+        stages, output = self.stages(
+            self.case(labels=()),
+            files=({"filename": "README.md", "previous_filename": "OLD.md"},),
+        )
+
+        self.assertEqual(list(stages), ["docs", "code"])
+        self.assertEqual(stages["code"].settings.review_engine, "claude")
+        self.assertIn("Following rule 1 of the reviews file", output)
+
+    def test_a_rule_on_its_labels_drops_the_documentation_review(self) -> None:
+        stages, output = self.stages(self.case(labels=("Dependencies",)))
+
+        self.assertEqual(list(stages), ["code"])
+        self.assertIn("Following rule 2", output)
+
+    def test_a_case_pinned_without_labels_says_so(self) -> None:
+        """Matched as having none, which may not be how a live run reviewed it."""
+
+        stages, output = self.stages(self.case())
+
+        self.assertEqual(list(stages), ["docs", "code"])
+        self.assertIn(
+            "Rule 2 of the reviews file matches on labels, which this case was "
+            "pinned without",
+            output,
+        )
+
+    def test_without_a_reviews_file_every_type_shares_one_engine(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(ArmTests().settings(directory), design_level=False)
+            with patch("prwarden.cli.create_review_engine") as create, patch(
+                "prwarden.cli._create_verification_pass", return_value=None
+            ), patch("prwarden.cli._create_fallback_reviewer", return_value=None):
+                stages = evaluate._replay_stages(
+                    settings, self.case(), settings.repositories[0], []
+                )
+
+        self.assertEqual(list(stages), ["docs", "code"])
+        self.assertIs(stages["docs"], stages["code"])
+        create.assert_called_once_with(settings)
+
 
 class CaptureTests(unittest.TestCase):
     def test_capture_pins_the_head_and_the_merge_base(self) -> None:
@@ -483,6 +707,7 @@ class CaptureTests(unittest.TestCase):
                 "url",
                 head_ref="feat/x",
                 base_ref="develop",
+                labels=("dependencies",),
             )
             path = root / "evals" / "cases.json"
 
@@ -499,6 +724,10 @@ class CaptureTests(unittest.TestCase):
             written = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(written["cases"][0]["number"], 7)
             self.assertEqual(written["cases"][0]["base_ref"], "develop")
+            # What a reviews file's rules match on, so a replay can match them too.
+            self.assertEqual(written["cases"][0]["author"], "author")
+            self.assertEqual(written["cases"][0]["labels"], ["dependencies"])
+            self.assertEqual(load_cases(path)[0].labels, ("dependencies",))
             # The description states intent, and a live review reads it.
             self.assertEqual(
                 load_cases(path)[0].body,
@@ -2168,6 +2397,7 @@ class ReplayDecisionTests(unittest.TestCase):
         recorded=None,
         body: str = "",
         changed=({"filename": "a.py"},),
+        stages=None,
     ):
         case = ReplayCase("owner/app", 1, "a" * 40, "b" * 40, body=body)
         repository = Repository("app", "owner/app", Path("/tmp"))
@@ -2214,6 +2444,13 @@ class ReplayDecisionTests(unittest.TestCase):
         ), patch(
             "prwarden.evaluate.replace", side_effect=lambda material, **kw: material
         ), patch(
+            "prwarden.evaluate._replay_stages",
+            **(
+                {"return_value": stages}
+                if stages is not None
+                else {"side_effect": evaluate._replay_stages}
+            ),
+        ), patch(
             "sys.stdout", output
         ):
             workspace.return_value.__enter__.return_value = repository
@@ -2226,6 +2463,27 @@ class ReplayDecisionTests(unittest.TestCase):
     @staticmethod
     def reviewed(findings=(), approve=True, reason="The change is correct."):
         return ({}, list(findings), approve, reason, [], Mock(), Mock())
+
+    def test_the_code_review_runs_on_the_stage_the_reviews_file_gives_it(
+        self,
+    ) -> None:
+        """A rule's lighter code engine and its own limit, not the run's."""
+
+        code_settings = Mock(max_findings=1)
+        code = Mock(settings=code_settings, fallback=None, verification=None)
+        findings = [
+            Finding("high", f"Defect {index}", "a.py", 1, "p", "f")
+            for index in range(2)
+        ]
+        score, output = self.run_case(
+            [self.reviewed(findings, approve=False)],
+            [({}, findings, False, "", [])],
+            stages={"code": code},
+        )
+
+        self.assertIs(self.review_call.call_args.args[0], code_settings)
+        self.assertEqual(score["confirmed"], 1)
+        self.assertIn("Held for the next review", output)
 
     def test_a_clean_review_reports_the_approval_a_live_run_would_send(self) -> None:
         score, output = self.run_case([self.reviewed()])
@@ -3095,6 +3353,35 @@ class AdvisoryCaseTests(unittest.TestCase):
                 for index, verdict in enumerate(verdicts, start=1)
             ]
         }
+
+    def test_a_level_the_reviews_file_does_not_give_a_case_is_skipped(self) -> None:
+        """A rule that runs only the code review leaves nothing to measure."""
+
+        case = ReplayCase("owner/app", 1, "a" * 40, "b" * 40, labels=("deps",))
+        repository = Repository("app", "owner/app", Path("/tmp"))
+        prepared = evaluate._PreparedCase(
+            repository,
+            PullRequest(1, "Title", "", "replay", "a" * 40, ""),
+            repository,
+            ReviewMaterial("diff", {"app.py": frozenset({1})}),
+            (),
+        )
+        context = Mock()
+        context.__enter__ = Mock(return_value=prepared)
+        context.__exit__ = Mock(return_value=False)
+        with patch("prwarden.evaluate._prepared_case", return_value=context), patch(
+            "prwarden.evaluate._reviews_of", return_value=Mock()
+        ), patch(
+            "prwarden.evaluate._replay_stages", return_value={"code": Mock()}
+        ), patch("prwarden.cli._docs_level") as docs_level, patch(
+            "sys.stdout", new_callable=StringIO
+        ) as output:
+            record = advisory_case(Mock(), case, DOCS_LEVEL, ReviewMetrics())
+
+        docs_level.assert_not_called()
+        self.assertIn("gives it no documentation review", record["skipped"])
+        self.assertIn("Skipped", output.getvalue())
+        self.assertEqual(record["proposals"], [])
 
     def test_the_same_proposals_are_judged_now_and_at_the_baseline(self) -> None:
         def assessment(candidates):

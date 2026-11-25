@@ -991,6 +991,16 @@ switched off, a different budget — and the measurement records which arm ran, 
 reviewer's own commit, whether that tree was dirty, and a fingerprint of the case
 set. A prompt is code rather than a setting, so the commit is what identifies it.
 
+An arm can also name a reviews file, to measure a change to it before using it live:
+
+```json
+{"name": "lighter-docs", "reviews": "lighter-docs-reviews.json"}
+```
+
+Each case is then replayed with the types and engines that file gives it, its rules
+included, and the measurement records a fingerprint of the file. Rules that match on
+an author or labels need cases pinned by `capture`, which records both.
+
 ### Where the labels come from
 
 `python3 -m prwarden.evaluate label` builds the corpus out of delivered history rather

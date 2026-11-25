@@ -71,6 +71,40 @@ class CoverageWarningTests(unittest.TestCase):
         self.assertNotIn("DIFFERENT COVERAGE", report)
 
 
+class ReviewsFileComparisonTests(unittest.TestCase):
+    """A reviews file changes each type's engines and which types a pull request
+    gets, and none of that shows in the top-level settings."""
+
+    def document(self, fingerprint=None, model="claude-opus-5.5"):
+        arm = {"name": "file"}
+        if fingerprint:
+            arm.update(reviews="reviews.json", reviews_fingerprint=fingerprint)
+        return {
+            "engine": "kiro",
+            "model": model,
+            "arm": arm,
+            "summary": {"reproduced": 1},
+            "cases": {"count": 1, "fingerprint": "same", "scored": ["app#1"]},
+        }
+
+    def test_each_side_names_its_reviews_file(self):
+        report = compare(self.document("aaaa1111"), self.document("bbbb2222"))
+
+        self.assertIn("reviews=aaaa1111", report)
+        self.assertIn("reviews=bbbb2222", report)
+
+    def test_a_changed_file_counts_as_something_that_differs(self):
+        report = compare(self.document(), self.document("bbbb2222", model="other"))
+
+        self.assertIn("2 things differ", report)
+        self.assertIn("reviews file none -> bbbb2222", report)
+
+    def test_one_file_on_both_sides_is_not_a_difference(self):
+        report = compare(self.document("aaaa1111"), self.document("aaaa1111"))
+
+        self.assertNotIn("reviews file", report)
+
+
 class RecordingTests(unittest.TestCase):
     def metrics(self) -> ReviewMetrics:
         return ReviewMetrics()
