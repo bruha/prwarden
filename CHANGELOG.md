@@ -9,8 +9,19 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 4.1.0 f0745536ae0b22c93ecdcf72ea136e0546737261 -->
+<!-- release-baseline: 4.2.0 f1487b9d91440970f93774a5aa065842e8a8687a -->
 ## [Unreleased]
+
+## [4.2.0] - 2026-11-25
+
+### Added
+
+- **evaluate:** let an arm replay under a reviews file (`dae6ee7`).
+
+### Fixed
+
+- **docs:** accept missing entries for a code block that lists commands (`033df13`).
+- **evaluate:** route replays through the live router and fingerprint routing (`c84d4a1`).
 
 ## [4.1.0] - 2026-11-23
 
