@@ -372,6 +372,31 @@ class CaseSetTests(unittest.TestCase):
             cases_fingerprint([first, second]), cases_fingerprint([first, moved])
         )
 
+    def test_the_fingerprint_follows_what_routes_a_case(self) -> None:
+        """A case's author and labels pick the rules it is reviewed under."""
+
+        bare = ReplayCase("owner/app", 1, "a" * 40, "b" * 40)
+        labelled = replace(bare, labels=("dependencies",))
+        unlabelled = replace(bare, labels=())
+
+        self.assertNotEqual(cases_fingerprint([bare]), cases_fingerprint([labelled]))
+        self.assertNotEqual(
+            cases_fingerprint([unlabelled]), cases_fingerprint([labelled])
+        )
+        self.assertNotEqual(cases_fingerprint([bare]), cases_fingerprint([unlabelled]))
+        self.assertNotEqual(
+            cases_fingerprint([bare]),
+            cases_fingerprint([replace(bare, author="octocat")]),
+        )
+        # A case that records neither keeps the fingerprint it always had.
+        import hashlib
+
+        before = json.dumps([f"owner/app#1@{'a' * 40}:{'b' * 40}"])
+        self.assertEqual(
+            cases_fingerprint([bare]),
+            hashlib.sha256(before.encode("utf-8")).hexdigest()[:16],
+        )
+
 
 class ArmTests(unittest.TestCase):
     def write_arms(self, directory: str, arms) -> Path:

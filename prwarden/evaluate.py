@@ -70,7 +70,6 @@ from .reviews_file import (
     ReviewRule,
     ReviewsFile,
     apply_overrides,
-    for_pull_request,
     load_reviews_file,
     settings_from_reviews,
 )
@@ -520,10 +519,23 @@ def cases_fingerprint(cases: "Sequence[ReplayCase]") -> str:
 
     import hashlib
 
-    payload = json.dumps(
-        sorted(f"{case.slug}#{case.number}@{case.head}:{case.base}" for case in cases)
-    )
+    payload = json.dumps(sorted(_case_identity(case) for case in cases))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _case_identity(case: ReplayCase) -> str:
+    """Return what a case replays: its commits and, once recorded, what routes it.
+
+    The author and labels pick which reviews-file rules a case matches, so two sets
+    that differ in them are different work. A case that records neither keeps the
+    identity it had before they were recorded, so earlier fingerprints still match.
+    """
+
+    identity = f"{case.slug}#{case.number}@{case.head}:{case.base}"
+    if case.author or case.labels is not None:
+        labels = sorted(case.labels) if case.labels is not None else None
+        identity += " " + json.dumps([case.author, labels])
+    return identity
 
 
 def load_arm(path: Path, name: str) -> ReplayArm:
@@ -1598,28 +1610,19 @@ def _replay_stages(
         return {name: shared for name in (*enabled, CODE_LEVEL)}
     for note in _unrecorded_rule_inputs(reviews.rules, case):
         print(f"      -> {note}")
-    paths = sorted(
-        {
-            path
-            for file_data in files
-            for path in (file_data.get("filename"), file_data.get("previous_filename"))
-            if isinstance(path, str) and path
-        }
+    # Routed by the live run's own router, so a replay matches rules and makes
+    # stages exactly as the review it measures would.
+    router = cli._ReviewRouter(settings, review_plan(settings))
+    chosen = router.choose(
+        repository,
+        PullRequest(case.number, case.title, case.body, case.author, case.head, ""),
+        case.labels or (),
+        files,
     )
-    resolved, matched = for_pull_request(
-        reviews,
-        repository=(repository.slug, repository.name),
-        author=case.author,
-        labels=case.labels or (),
-        paths=paths,
-    )
-    plan = review_plan(
-        settings_from_reviews(settings, resolved) if matched else settings
-    )
-    stages = cli._create_review_stages(plan)
-    if matched:
-        cli._report_chosen_stages(cli._ChosenStages(stages, plan, matched))
-    return stages
+    if chosen is None:
+        return dict(router.stages)
+    cli._report_chosen_stages(chosen)
+    return dict(chosen.stages)
 
 
 def _unrecorded_rule_inputs(
