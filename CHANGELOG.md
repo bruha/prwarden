@@ -9,8 +9,19 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 4.2.0 f1487b9d91440970f93774a5aa065842e8a8687a -->
+<!-- release-baseline: 4.3.0 6a05c3d721fa9214b3d4ddeb732324c7a8d7851c -->
 ## [Unreleased]
+
+## [4.3.0] - 2026-11-26
+
+### Added
+
+- **github:** name who signed off a review-policy change in its approval (`3463036`).
+
+### Documentation
+
+- say a signed-off approval names its signer in the README (`264707e`).
+- describe the approval's body without calling it bodyless (`6a05c3d`).
 
 ## [4.2.0] - 2026-11-25
 
