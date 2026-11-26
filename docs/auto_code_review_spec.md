@@ -1429,8 +1429,12 @@ Built-in adapters:
   output and unwraps its response envelope. It refuses a head whose `.agents/` or
   `.agent/` holds anything but rule and workflow documents, because Antigravity
   runs the MCP servers and hooks a head names there outside its sandbox.
-- `codex`: uses non-interactive, ephemeral, read-only Codex execution with a
-  required output schema. It never reads the user configuration, where trusted
+- `codex`: uses non-interactive, ephemeral Codex execution with a required
+  output schema, under a permission profile given on the command line that
+  reads only the workspace, its linked dependency directories, and the minimal
+  paths tools need, writes nothing, and has no network; `--sandbox` is not
+  passed, since its read-only mode reads the whole disk, and a Codex older than
+  0.138.0, which would ignore the profile, is refused. It never reads the user configuration, where trusted
   projects are recorded, so a head's `.codex/config.toml` is never loaded. Codex
   reads files only through shell commands, so its prompt ends with a note that a
   command that only reads, inside the workspace, is the reading the prompt allows,
@@ -1438,10 +1442,13 @@ Built-in adapters:
   candidate, whatever its verdict, is refused as an engine failure when `--json`
   events show no command that succeeded.
 - `claude`: uses Claude Code print and safe modes with read-only tools and a
-  required output schema. It reads only the operator's own settings and no MCP
+  required output schema, in `dontAsk` permission mode, which keeps reads in the
+  workspace and the linked dependency directories given by `--add-dir`. It reads only the operator's own settings and no MCP
   configuration, because safe mode still loads a head's project settings.
 - `kiro`: uses Kiro CLI headless mode with read/search tools and strict JSON
-  parsing before common finding validation. It refuses a head that ships Kiro
+  parsing before common finding validation. No tool is trusted, and its agent
+  allows reading only under `./**`, so a read outside the workspace is asked
+  about, which a headless call refuses. It refuses a head that ships Kiro
   configuration other than documents, because Kiro would load and could execute
   it, and gives the worktree its own setting that keeps the answer unrendered and
   its own agent, which offers only those tools, denies skills so the list of every

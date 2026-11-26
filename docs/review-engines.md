@@ -41,9 +41,10 @@ codex login status
 python3 -m prwarden --engine codex --repo owner/repository --pr 123
 ```
 
-The adapter uses non-interactive `codex exec`, an ephemeral session, a read-only
-sandbox, disabled user configuration and project instruction loading, and a
-JSON output schema. It uses the saved session reported by `codex login status`.
+The adapter uses non-interactive `codex exec`, an ephemeral session, a
+permission profile that reads only the workspace, its linked dependencies, and
+the minimal paths tools need, with no network, disabled user configuration and
+project instruction loading, and a JSON output schema. It uses the saved session reported by `codex login status`.
 `codex exec` has no effort flag and the user configuration that would hold one is
 skipped, so the role's effort is passed as `--config model_reasoning_effort="…"`;
 without an effort the model runs at its own default, which is `low` for several
