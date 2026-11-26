@@ -1,6 +1,7 @@
 import json
 import re
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -49,6 +50,7 @@ tell you still holds. An answer given without reading the workspace is refused.
 CODEX_PERMISSION_PROFILE = "prwarden-review"
 # The first Codex whose permission profiles this adapter relies on.
 MIN_CODEX_VERSION = (0, 138, 0)
+VERSION_TIMEOUT_SECONDS = 30
 CODEX_VERSION_PATTERN = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
 
@@ -318,7 +320,7 @@ class CodexEngine:
         # Read once per engine: the version of a CLI does not change mid-run.
         self._version_checked = False
 
-    def _require_permission_profiles(self) -> None:
+    def _require_permission_profiles(self, timeout_seconds: int) -> None:
         """Refuse a Codex too old to confine itself to the workspace.
 
         An older Codex ignores the permission profile it is given and runs with its
@@ -331,7 +333,7 @@ class CodexEngine:
         try:
             output = run_cmd(
                 [*self.settings.review_engine_command, "--version"],
-                timeout_seconds=30,
+                timeout_seconds=timeout_seconds,
                 environment=build_engine_environment(self.settings),
                 inherit_environment=False,
             )
@@ -368,7 +370,11 @@ class CodexEngine:
             raise EngineError(
                 f"Configured repository path does not exist: {repository.path}"
             )
-        self._require_permission_profiles()
+        # The check is part of this invocation, so its time comes out of the same
+        # budget, and a fallback starts when the budget says it should.
+        started = time.monotonic()
+        self._require_permission_profiles(min(VERSION_TIMEOUT_SECONDS, timeout))
+        timeout = max(1, timeout - int(time.monotonic() - started))
 
         schema = strict_output_schema(
             build_schema(self.settings.max_findings, material)

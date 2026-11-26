@@ -3404,26 +3404,54 @@ class CodexVersionGateTests(unittest.TestCase):
             with self.subTest(output=output):
                 with patch("prwarden.engine_codex.run_cmd", return_value=output):
                     with self.assertRaisesRegex(EngineError, "0.138.0 or later"):
-                        self.engine()._require_permission_profiles()
+                        self.engine()._require_permission_profiles(30)
 
     def test_a_current_codex_is_checked_once(self):
         engine = self.engine()
         with patch(
             "prwarden.engine_codex.run_cmd", return_value="codex-cli 0.171.0"
         ) as run:
-            engine._require_permission_profiles()
-            engine._require_permission_profiles()
+            engine._require_permission_profiles(30)
+            engine._require_permission_profiles(30)
 
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0], ["codex", "--version"])
         self.assertFalse(run.call_args.kwargs["inherit_environment"])
+
+    def test_the_check_is_charged_to_the_review_budget(self):
+        """The version check and the review share one timeout, so a slow check
+        never stretches the invocation past it."""
+
+        engine = self.engine()
+        engine.settings.review_timeout_seconds = 300
+        engine.settings.max_findings = 3
+        engine.settings.review_model = None
+        engine.settings.review_effort = None
+        engine.settings.review_code_effort = None
+        answer = codex_answering({"findings": []})
+        calls = []
+
+        def run(args, **options):
+            calls.append(options["timeout_seconds"])
+            if args[-1] == "--version":
+                return "codex-cli 0.171.0"
+            return answer(args, **options)
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Repository("app", "owner/app", Path(directory))
+            with patch("prwarden.engine_codex.run_cmd", side_effect=run), patch(
+                "prwarden.engine_codex.time.monotonic", side_effect=[100.0, 125.0]
+            ):
+                engine.review(*ReviewEngineTests.input(repository))
+
+        self.assertEqual(calls, [30, 275])
 
     def test_an_unreadable_version_is_an_engine_failure(self):
         with patch(
             "prwarden.engine_codex.run_cmd", side_effect=CommandError("not found")
         ):
             with self.assertRaisesRegex(EngineError, "Could not read the Codex"):
-                self.engine()._require_permission_profiles()
+                self.engine()._require_permission_profiles(30)
 
 
 class AntigravityReviewBudgetTests(unittest.TestCase):
