@@ -31,6 +31,12 @@ class Repository:
     # Who counts as the reviewer here follows it: the account's own pull requests
     # are its own, never approved.
     github_account: Optional[str] = None
+    # The variable in `.env` holding the token this repository is read and reviewed
+    # with, when it is not GitHub CLI's login. A fine-grained token covers one owner's
+    # repositories and grants only what it names, so repositories of several owners
+    # each name the token for their owner. The token must belong to the account the
+    # repository is read as, which is checked before it is used.
+    github_token_env: Optional[str] = None
     # Whether `path` is a clone PR Warden makes and keeps itself, because the entry
     # named no local checkout. Such a clone is fetched as the account above, with
     # GitHub CLI's credentials, since it has none of its own.

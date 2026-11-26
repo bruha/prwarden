@@ -159,17 +159,26 @@ def check_github_access(settings: Settings) -> List[Check]:
     ]
     seen: "set[str]" = set()
     for repository in settings.repositories:
+        # A token a repository names in .env is its own route, reported once.
+        name = repository.github_token_env
+        if name and f"env:{name}" not in seen:
+            seen.add(f"env:{name}")
+            routes.append((name, repository))
+            continue
         account = repository.github_account
-        if account and account.casefold() not in seen:
+        if not name and account and account.casefold() not in seen:
             seen.add(account.casefold())
             routes.append((account, repository))
     checks: List[Check] = []
     for account, repository in routes:
         if repository is not None and github.repository_account_problem(repository):
             continue
+        named = repository is not None and repository.github_token_env is not None
         token = (
             f"GitHub token for {account}"
             if repository is None
+            else f"GitHub token in {account}"
+            if named
             else f"GitHub CLI's login for {account}, which repositories naming it "
             "are read as,"
         )
@@ -193,8 +202,12 @@ def check_github_access(settings: Settings) -> List[Check]:
             continue
         remedy = (
             f"A fine-grained token with {FINE_GRAINED_PERMISSIONS}, set as GH_TOKEN "
-            "in the configuration's .env, is enough"
+            "in the configuration's .env, is enough; a fine-grained token covers one "
+            "owner's repositories, so for several owners give each repository entry "
+            "a github_token_env naming its owner's token"
             if repository is None
+            else f"Replace it with a fine-grained token with {FINE_GRAINED_PERMISSIONS}"
+            if named
             else "GH_TOKEN does not reach these repositories, so log the account in "
             "to GitHub CLI with a fine-grained token with "
             f"{FINE_GRAINED_PERMISSIONS} (gh auth login --with-token) to narrow it"

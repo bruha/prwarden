@@ -217,7 +217,15 @@ when it is the reviewer's own account; each is told the remedy that reaches it. 
 fine-grained `GH_TOKEN` in `.env` with Contents read, Pull requests read and write,
 Issues read, Checks read, Commit statuses read, and Actions read covers every call a
 review makes as the reviewer, and the same token logged in for a `github_account`
-covers its repositories. Actions read is only for the checks level's job logs: a
+covers its repositories. A fine-grained token covers one owner's repositories, so
+an entry may name the `.env` variable holding its own token with
+`github_token_env`. Every call for that repository then carries that token, in
+place of `GH_TOKEN`, the reviewer's login, and its `github_account`'s login, whose
+login is then not read at all. The token is held as a secret no post may carry,
+and is used only after `gh api user` with it names the account the repository is
+read as; a missing token, one GitHub refuses, or another account's fails that
+repository alone, with the reason, and is reported by `prwarden doctor`, which
+also reports each named token's scopes on a route of its own. Actions read is only for the checks level's job logs: a
 token without it costs the level the log, and it reads the check's summary instead.
 
 ### The reviews file

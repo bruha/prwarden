@@ -314,6 +314,16 @@ def load_repositories(
                     f"{label}.github_account is invalid: {error}"
                 ) from error
 
+        github_token_env = item.get("github_token_env")
+        if github_token_env is not None and (
+            not isinstance(github_token_env, str)
+            or not ENV_KEY_PATTERN.fullmatch(github_token_env)
+        ):
+            raise ConfigError(
+                f"{label}.github_token_env must name an environment variable, such "
+                'as "GITHUB_TOKEN_EXAMPLE_ORG", when provided'
+            )
+
         jira_projects = item.get("jira_projects", [])
         if not isinstance(jira_projects, list) or not all(
             isinstance(project, str)
@@ -339,6 +349,7 @@ def load_repositories(
                 path=checkout,
                 slack=slack,
                 github_account=github_account,
+                github_token_env=github_token_env,
                 managed_checkout=managed,
                 jira_projects=tuple(
                     dict.fromkeys(project.strip().upper() for project in jira_projects)

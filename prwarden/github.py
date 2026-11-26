@@ -68,6 +68,12 @@ _pinned_account: "dict[str, str]" = {}
 # are still reviewed.
 _repository_accounts: "dict[str, dict[str, str]]" = {}
 _repository_account_failures: "dict[str, str]" = {}
+# A repository can name a token of its own in `.env`, such as a fine-grained token
+# for its owner's repositories alone. Keyed by the repository's slug folded to one
+# case; a token that is missing, or belongs to another account, is kept as the reason
+# that repository fails, and the others are still reviewed.
+_repository_tokens: "dict[str, dict[str, str]]" = {}
+_repository_token_failures: "dict[str, str]" = {}
 
 
 def marker_variants(marker: str) -> "tuple[str, ...]":
@@ -122,11 +128,17 @@ def pin_github_account(
     repository's entry names an account for that repository alone, which is the
     more specific choice. A missing login for it is not raised here. Only that
     repository's calls fail, with the reason, and the others are still reviewed.
+
+    A repository that names a token in `.env` (`github_token_env`) is read with that
+    token instead of any login, once GitHub confirms it belongs to the account the
+    repository is read as; a missing or mismatched token fails that repository alone.
     """
 
     _pinned_account.clear()
     _repository_accounts.clear()
     _repository_account_failures.clear()
+    _repository_tokens.clear()
+    _repository_token_failures.clear()
     for name in GITHUB_TOKEN_VARIABLES:
         hold_secret(os.environ.get(name))
     if not any(os.environ.get(name) for name in GITHUB_TOKEN_VARIABLES):
@@ -136,7 +148,8 @@ def pin_github_account(
     accounts = {
         repository.github_account.casefold(): repository.github_account
         for repository in repositories
-        if repository.github_account
+        # A repository that names its own token never uses the account's login.
+        if repository.github_account and not repository.github_token_env
     }
     for key, account in sorted(accounts.items()):
         try:
@@ -145,6 +158,56 @@ def pin_github_account(
             _repository_account_failures[key] = str(error)
         else:
             _repository_accounts[key] = {"GH_TOKEN": token}
+    logins: "dict[str, str]" = {}
+    for repository in repositories:
+        if repository.github_token_env:
+            _pin_repository_token(repository, username, logins)
+
+
+def _pin_repository_token(
+    repository: Repository, username: str, logins: "dict[str, str]"
+) -> None:
+    """Pin the token a repository names in `.env`, or record why it cannot be.
+
+    The token is used only once GitHub says whose it is, and only when that is the
+    account the repository is read as: a token pasted under the wrong name would
+    otherwise read, review, and approve as somebody else. ``logins`` remembers each
+    token's account, so a token several repositories name is asked about once.
+    """
+
+    name = repository.github_token_env
+    assert name is not None
+    key = repository.slug.casefold()
+    token = os.environ.get(name, "").strip()
+    if not token:
+        _repository_token_failures[key] = (
+            f"{repository.slug} is read with the GitHub token in {name}, which the "
+            "configuration's .env does not set"
+        )
+        return
+    hold_secret(token)
+    if token not in logins:
+        try:
+            logins[token] = commands.run_cmd(
+                ["gh", "api", "user", "--jq", ".login"],
+                environment={"GH_TOKEN": token},
+                timeout_seconds=30,
+            ).strip()
+        except CommandError as error:
+            _repository_token_failures[key] = (
+                f"GitHub refused the token in {name}, which {repository.slug} is "
+                f"read with: {error}"
+            )
+            return
+    expected = reviewer_account(repository, username)
+    if logins[token].casefold() != expected.casefold():
+        _repository_token_failures[key] = (
+            f"The GitHub token in {name} belongs to {logins[token] or 'no account'}, "
+            f"and {repository.slug} is read as {expected}; set {name} to a token of "
+            f"{expected}'s"
+        )
+        return
+    _repository_tokens[key] = {"GH_TOKEN": token}
 
 
 def reviewer_account(repository: Repository, reviewer_username: str) -> str:
@@ -160,6 +223,21 @@ def _run_for(repository: Repository, args: Sequence[str], **options: Any) -> str
     reviewer, because the account it names is the only one configured for it.
     """
 
+    if repository.github_token_env:
+        key = repository.slug.casefold()
+        if key in _repository_token_failures:
+            raise CommandError(_repository_token_failures[key], command="gh")
+        if key not in _repository_tokens:
+            raise CommandError(
+                f"{repository.slug} is read with the GitHub token in "
+                f"{repository.github_token_env}, and it was not pinned before this "
+                "GitHub call",
+                command="gh",
+            )
+        environment = dict(options.get("environment") or {})
+        environment.update(_repository_tokens[key])
+        options["environment"] = environment
+        return run_cmd(args, **options)
     account = repository.github_account
     if account:
         key = account.casefold()
@@ -1239,8 +1317,10 @@ def repository_size(repository: Repository) -> Optional[int]:
 
 
 def repository_account_problem(repository: Repository) -> Optional[str]:
-    """Return why the account a repository names could not be pinned, if it was not."""
+    """Return why the account or token a repository names could not be pinned."""
 
+    if repository.github_token_env:
+        return _repository_token_failures.get(repository.slug.casefold())
     account = repository.github_account
     if not account:
         return None

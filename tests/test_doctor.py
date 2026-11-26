@@ -492,3 +492,31 @@ class DiagnoseTests(unittest.TestCase):
         self.assertIn(access, checks)
         check_access.assert_not_called()
         self.assertNotIn(access, broken)
+
+
+class NamedTokenAccessTests(unittest.TestCase):
+    def test_a_named_token_is_reported_once_on_a_route_of_its_own(self) -> None:
+        """Its repositories never use a CLI login, so the remedy is the token."""
+
+        org_app = Repository("app", "org/app", github_token_env="ORG_TOKEN")
+        org_site = Repository("site", "org/site", github_token_env="ORG_TOKEN")
+        settings = replace(
+            settings_for("/tmp", org_app), repositories=[org_app, org_site]
+        )
+
+        def token_scopes(repository=None):
+            return ("repo",) if repository is None else ("repo", "workflow")
+
+        with patch(
+            "prwarden.doctor.github.token_scopes", side_effect=token_scopes
+        ) as read_scopes, patch(
+            "prwarden.doctor.github.repository_role", return_value="push"
+        ), patch(
+            "prwarden.doctor.github.repository_account_problem", return_value=None
+        ):
+            checks = doctor.check_github_access(settings)
+
+        self.assertEqual(statuses(checks), [OK, NOTE])
+        self.assertIn("GitHub token in ORG_TOKEN has scopes", checks[1].message)
+        self.assertIn("Replace it with a fine-grained token", checks[1].message)
+        self.assertEqual(read_scopes.call_count, 2)

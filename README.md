@@ -193,7 +193,13 @@ the reviewer uses it in place of the CLI's login. A repository whose entry names
 `"github_account"` is still read with that account's GitHub CLI login, which no
 `GH_TOKEN` replaces; narrow it by logging that account in with a fine-grained token,
 `gh auth login --with-token`. An organisation has to allow fine-grained tokens for
-its repositories. `prwarden doctor` reports the scopes of each of these credentials
+its repositories. A fine-grained token covers the repositories of one owner, a
+user or an organisation, so when the reviewed repositories have several owners,
+make one token per owner and name it in each entry with `"github_token_env"`,
+below. A fine-grained token reaches only repositories its account or that account's
+organisations own: for another user's repository the reviewer collaborates on, use a
+classic token whose only scope is `repo`, or `public_repo` when the repository is
+public, and name it the same way. `prwarden doctor` reports the scopes of each of these credentials
 and the repositories where an account is an administrator.
 
 ## Requirements
@@ -252,6 +258,19 @@ readable over that account's SSH key or credentials.
 ```json
 { "slug": "your-name/private-app", "path": "~/src/private-app", "slack": false,
   "github_account": "your-name" }
+```
+
+An entry may set `"github_token_env"` to the name of a `.env` variable holding the
+token that repository is read and reviewed with, in place of any GitHub CLI login,
+such as a fine-grained token for its owner's repositories. Entries of the same
+owner name the same variable. Before using it PR Warden asks GitHub whose token it
+is, and uses it only when it belongs to the account the repository is read as, its
+`github_account` or the reviewer; a token that is missing or another account's
+fails only that repository.
+
+```json
+{ "slug": "your-org/example-app", "path": "~/src/example-app",
+  "github_token_env": "GITHUB_TOKEN_YOUR_ORG" }
 ```
 
 An entry may set `"jira_projects"` to the Jira project keys its pull requests name
