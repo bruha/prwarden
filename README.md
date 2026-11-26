@@ -233,7 +233,8 @@ An entry with no `path` is cloned by PR Warden itself the first time one of its
 pull requests is reviewed, into `~/.local/share/prwarden/checkouts/<owner>/<name>`
 for an installed copy or `.state/checkouts/` in a clone. The clone holds Git objects
 only, nothing is installed into it, and it is fetched with GitHub CLI's login for
-the account the repository is read as, so it needs no Git credentials of its own.
+the account the repository is read as, or with the token the entry names in
+`"github_token_env"`, so it needs no Git credentials of its own.
 Delete it to reclaim the space; the next review clones it again.
 
 An entry may also set `"slack": false` to keep the repository out of Slack, when
@@ -289,7 +290,7 @@ Important `.env` settings:
 | `GITHUB_COMMENT_TEMPLATE_FILE` | Markdown layout for GitHub inline findings |
 | `GITHUB_COMMENT_TAGS_FILE` | Editable tag aliases for template values |
 | `GITHUB_REVIEWER_USERNAME` | Optional reviewer identity override that skips the GitHub user lookup |
-| `GH_TOKEN` | Optional token every call made as the reviewer uses in place of GitHub CLI's login, such as a narrower fine-grained one; a repository's `github_account` keeps that account's login, and the review engines never receive it |
+| `GH_TOKEN` | Optional token every call made as the reviewer uses in place of GitHub CLI's login, such as a narrower fine-grained one; a repository's `github_account` keeps that account's login, and a repository whose entry names `github_token_env` uses that variable's token instead of either, and the review engines never receive it |
 | `SLACK_WEBHOOK_URL` | Slack delivery and failure-notification webhook |
 | `AUTO_REVIEW_DRY_RUN` | First live-delivery gate; keep `1` while testing |
 
