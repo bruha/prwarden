@@ -62,6 +62,11 @@ CREDENTIAL_SHAPES = (
         "an Anthropic API key",
         re.compile(r"\bsk-ant-(?:api|admin)\d{2}-(?P<body>[A-Za-z0-9_-]{80,})"),
     ),
+    # What Claude Code signs in with, `claude setup-token` included.
+    _Shape(
+        "an Anthropic sign-in token",
+        re.compile(r"\bsk-ant-(?:oat|ort)\d{2}-(?P<body>[A-Za-z0-9_-]{80,})"),
+    ),
     _Shape("an npm token", re.compile(r"\bnpm_(?P<body>[A-Za-z0-9]{36})\b")),
     _Shape(
         "a private key",
@@ -355,3 +360,47 @@ def redact_credentials(
     if not pairs:
         return list(items)
     return [_redacted(item, pairs) for item in items]
+
+
+# What PR Warden posts is partly model text, and a model that a pull request talked
+# into reading a key from the reviewing host could write it into a finding, a note,
+# or a check reading, where the pull request's author reads it. Everything posted is
+# therefore checked for a credential, whatever a model wrote and wherever it came
+# from. A committed key a finding names is already shown by its prefix only, which
+# no shape matches, and a private key's header alone is what a finding about one
+# quotes: only the key material after it is the secret.
+PRIVATE_KEY_MATERIAL = (
+    re.compile(
+        r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
+        r"\s*(?:[A-Za-z0-9+/=]{40,}\s*)+"
+    ),
+    # The start of every OpenSSH private key's body, "openssh-key-v1" in base64,
+    # which no public key and no other format begins with.
+    re.compile(r"b3BlbnNzaC1rZXktdjE[A-Za-z0-9+/=]{20,}"),
+)
+# A value this host holds is looked for as itself, whatever its shape; one shorter
+# than this is too likely to occur in ordinary text to say anything.
+MIN_HELD_SECRET_CHARACTERS = 16
+
+
+def outgoing_secret(text: str, held: "Sequence[str]" = ()) -> Optional[str]:
+    """Return what kind of secret ``text`` carries, or None when it carries none.
+
+    ``held`` are the values this host holds, such as its tokens and its Slack
+    webhook, found in any shape. Only the kind is returned, never the value, so the
+    answer can be printed, stored, and sent where the text could not go.
+    """
+
+    for value in held:
+        if len(value) >= MIN_HELD_SECRET_CHARACTERS and value in text:
+            return "a secret this host holds"
+    for pattern in PRIVATE_KEY_MATERIAL:
+        if pattern.search(text):
+            return "private key material"
+    for shape in CREDENTIAL_SHAPES:
+        if "body" not in shape.pattern.groupindex:
+            continue
+        for match in shape.pattern.finditer(text):
+            if not _is_placeholder(match.group("body")):
+                return shape.kind
+    return None

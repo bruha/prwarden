@@ -43,6 +43,7 @@ from prwarden.secret_scan import (
     credential_findings,
     find_credential,
     find_credentials,
+    outgoing_secret,
     redact_credentials,
     with_credential_findings,
 )
@@ -661,6 +662,55 @@ class PlantedReviewTests(unittest.TestCase):
             [(1, True), (2, False)],
         )
         self.assertTrue(result["posted"][1].covers_credential)
+
+
+class OutgoingSecretTests(unittest.TestCase):
+    """What PR Warden posts never carries a secret, whatever a model wrote."""
+
+    def test_finds_a_credential_a_model_wrote_into_its_text(self):
+        token = generated("ghp_", 36)
+
+        self.assertEqual(
+            outgoing_secret(f"The fix is to rotate {token} today."),
+            "a GitHub token",
+        )
+
+    def test_finds_a_claude_sign_in_token(self):
+        token = generated("sk-ant-oat01-", 95)
+
+        self.assertEqual(outgoing_secret(token), "an Anthropic sign-in token")
+
+    def test_finds_private_key_material_but_not_a_header_alone(self):
+        """A finding about a committed key quotes its header; the body is the key."""
+
+        header = "-----BEGIN OPENSSH " + "PRIVATE KEY-----"
+        body = "b3BlbnNzaC1rZXktdjE" + generated("", 60)
+
+        self.assertIsNone(outgoing_secret(f"Line 1 adds `{header}`."))
+        self.assertEqual(
+            outgoing_secret(f"{header}\n{body}\n"), "private key material"
+        )
+        self.assertEqual(
+            outgoing_secret(f"Split: {body}"), "private key material"
+        )
+        pem = "-----BEGIN RSA " + "PRIVATE KEY-----\n" + generated("MII", 61)
+        self.assertEqual(outgoing_secret(pem), "private key material")
+
+    def test_finds_a_value_this_host_holds_in_any_shape(self):
+        webhook_secret = "Zq7" + generated("", 30)
+
+        self.assertEqual(
+            outgoing_secret(f"see {webhook_secret}", [webhook_secret]),
+            "a secret this host holds",
+        )
+        # Too short to mean anything when it turns up in ordinary text.
+        self.assertIsNone(outgoing_secret("value abc123", ["abc123"]))
+
+    def test_a_committed_key_shown_by_its_prefix_and_a_placeholder_pass(self):
+        self.assertIsNone(outgoing_secret("This line adds `ghp_…` to the repository"))
+        self.assertIsNone(
+            outgoing_secret("ghp_" + "EXAMPLE" + generated("", 30)),
+        )
 
 
 if __name__ == "__main__":

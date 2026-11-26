@@ -10,6 +10,7 @@ from . import commands
 from .comment_template import CommentTemplate
 from .commands import CommandError
 from .config import GITHUB_USERNAME_PATTERN
+from .delivery import guard_outgoing, hold_secret
 from .models import (
     FAILING_OPTIONAL_CHECKS,
     WAITING_FOR_CHECKS,
@@ -102,6 +103,7 @@ def _account_token(username: str, role: str) -> str:
             "log it in again with `gh auth login`",
             command="gh",
         )
+    hold_secret(token)
     return token
 
 
@@ -125,6 +127,8 @@ def pin_github_account(
     _pinned_account.clear()
     _repository_accounts.clear()
     _repository_account_failures.clear()
+    for name in GITHUB_TOKEN_VARIABLES:
+        hold_secret(os.environ.get(name))
     if not any(os.environ.get(name) for name in GITHUB_TOKEN_VARIABLES):
         _pinned_account["GH_TOKEN"] = _account_token(
             username, "the reviewer account"
@@ -2072,6 +2076,7 @@ def submit_waiting_review(
         "change.\n" + WAITING_COMMENT_MARKER,
         "comments": [{"path": path, "line": line, "side": "RIGHT", "body": body}],
     }
+    guard_outgoing((payload["body"], body), "GitHub")
     output = _run_for(
         repository,
         [
@@ -2428,6 +2433,7 @@ def _post_conversation_comment(
 ) -> str:
     """Post one pull-request conversation comment and return its comment ID."""
 
+    guard_outgoing((body,), "GitHub")
     output = _run_for(
         repository,
         [
@@ -2489,6 +2495,7 @@ def submit_approval(
         "event": "APPROVE",
         **({"body": body} if body else {}),
     }
+    guard_outgoing((body,), "GitHub")
     output = _run_for(
         repository,
         [
@@ -2554,6 +2561,10 @@ def submit_review(
             for finding in findings
         ],
     }
+    guard_outgoing(
+        [comment["body"] for comment in pending_payload["comments"]] + [body],
+        "GitHub",
+    )
     output = _run_for(
         repository,
         [

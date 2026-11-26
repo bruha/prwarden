@@ -587,6 +587,7 @@ STATUS_OUTCOMES = {
     "approval_withheld": "approval withheld",
     FAILED: "failed",
     "delivery_uncertain": "delivery uncertain, not retried",
+    "delivery_blocked": "not posted: its text held a secret; not retried",
     "delivery_started": "delivery started; its outcome was not recorded",
     "in_progress": "stopped before an outcome was recorded",
     "superseded": "superseded by a newer head",

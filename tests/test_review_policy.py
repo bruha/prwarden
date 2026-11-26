@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 from prwarden import cli
 from prwarden.config import Settings
+from prwarden.delivery import OutgoingSecretError
 from prwarden.github import APPROVAL_COMMENT_MARKER
 from prwarden.models import (
     PriorReviewComment,
@@ -376,6 +377,7 @@ class OrchestrationTests(unittest.TestCase):
         checks=(),
         checks_level=False,
         check_log="",
+        approval_error=None,
     ):
         repository = Repository("app", "owner/app", self.root)
         pull_request = PullRequest(
@@ -424,7 +426,9 @@ class OrchestrationTests(unittest.TestCase):
         ) as workspace, patch(
             "prwarden.cli.submit_review", return_value="review-1"
         ) as submit_review, patch(
-            "prwarden.cli.submit_approval", return_value="approval-1"
+            "prwarden.cli.submit_approval",
+            return_value="approval-1",
+            side_effect=approval_error,
         ) as submit_approval, patch(
             "prwarden.cli.submit_waiting_comment", return_value="comment-1"
         ) as submit_waiting, patch(
@@ -576,6 +580,29 @@ class OrchestrationTests(unittest.TestCase):
         self.assertIn("`head`", body)
         self.assertIn(APPROVAL_COMMENT_MARKER, body)
         self.assertEqual(signed["record"]["status"], "delivered")
+
+    def test_a_delivery_refused_for_a_secret_is_settled_and_not_spent_again(
+        self,
+    ) -> None:
+        """The same review would write the same text, so the head is not retried,
+        and the refusal reaches the operator as the run's error."""
+
+        engine = self.approving_engine()
+        refusal = OutgoingSecretError("PR Warden did not post to GitHub: a secret")
+        files = [{"filename": "app.py", "patch": "@@ -0,0 +1 @@\n+value = 1"}]
+
+        first = None
+        with self.assertRaises(OutgoingSecretError) as raised:
+            first = self.run_review(engine, files, approval_error=refusal)
+        with JsonStateStore(self.root / "state.json") as store:
+            record = store.get(store.key("owner/app", 1, "head", "github"))
+        again = self.run_review(engine, files)
+
+        self.assertIsNone(first)
+        self.assertIs(raised.exception, refusal)
+        self.assertEqual(record["status"], "delivery_blocked")
+        self.assertEqual(engine.review.call_count, 1)
+        again["submit_approval"].assert_not_called()
 
     def test_an_approval_of_the_head_signs_it_off_on_the_first_review(self) -> None:
         engine = self.approving_engine()

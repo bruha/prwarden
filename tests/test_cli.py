@@ -6416,5 +6416,33 @@ class OrchestrationTests(unittest.TestCase):
         send.assert_not_called()
 
 
+class HeldRunSecretsTests(unittest.TestCase):
+    def test_the_webhook_and_what_engines_see_are_kept_out_of_posts(self) -> None:
+        from prwarden import delivery
+
+        self.addCleanup(delivery._held_secrets.clear)
+        settings = Settings(
+            reviewer_username="reviewer",
+            repositories=[],
+            dry_run=False,
+            slack_webhook_url="https://example.invalid/webhook/Z9y8X7w6",
+            state_file=Path("state.json"),
+            review_engine="claude",
+            review_engine_command=("claude",),
+            review_engine_env_allowlist=("ENGINE_SIGN_IN",),
+            review_model=None,
+            review_timeout_seconds=300,
+            max_diff_bytes=100000,
+            max_findings=10,
+        )
+        with patch.dict(os.environ, {"ENGINE_SIGN_IN": "sign-in-Q1w2E3r4T5"}):
+            cli._hold_run_secrets(settings)
+
+        self.assertEqual(
+            delivery._held_secrets,
+            {"https://example.invalid/webhook/Z9y8X7w6", "sign-in-Q1w2E3r4T5"},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

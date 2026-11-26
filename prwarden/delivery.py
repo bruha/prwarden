@@ -31,6 +31,48 @@ class DeliveryUncertainError(RuntimeError):
     """Raised when a delivery may have succeeded despite a client-side error."""
 
 
+class OutgoingSecretError(DeliveryError):
+    """Raised, before anything is sent, when the text to post carries a secret.
+
+    Nothing was sent, so it is a delivery that definitely did not begin. The same
+    review would write the same text again, so the head it was for is not retried.
+    """
+
+
+# The secrets this host holds, kept out of everything it posts: its GitHub tokens,
+# its Slack webhook, and what the operator lets an engine see. Held for the run only.
+_held_secrets: "set[str]" = set()
+
+
+def hold_secret(value: Optional[str]) -> None:
+    """Keep ``value`` out of everything this run posts."""
+
+    if value:
+        _held_secrets.add(value)
+
+
+def guard_outgoing(texts: "Sequence[Optional[str]]", destination: str) -> None:
+    """Refuse to send ``texts`` to ``destination`` when one of them holds a secret.
+
+    Raises OutgoingSecretError naming the kind of secret, never its value.
+    """
+
+    # Imported here: the scanner reads diffs through the review module, which
+    # reaches GitHub, whose writers call this guard.
+    from .secret_scan import outgoing_secret
+
+    held = sorted(_held_secrets, key=len, reverse=True)
+    for text in texts:
+        kind = outgoing_secret(text, held) if text else None
+        if kind is not None:
+            raise OutgoingSecretError(
+                f"PR Warden did not post to {destination}: the text holds {kind}, "
+                "which it never posts, so a model's output cannot carry it out. "
+                "This head is not retried; review it by hand, and see the run's "
+                "transcript for which review wrote it"
+            )
+
+
 ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![\w:/])/(?:[^\s/\\|<>]+/)+([^\s/\\|<>]*)")
 
 
@@ -455,9 +497,10 @@ def _format_reviewer(
 
 
 def send_slack_message(webhook_url: str, text: str, timeout_seconds: int = 20) -> str:
-    """Post one message to Slack, without local filesystem paths."""
+    """Post one message to Slack, without local filesystem paths or secrets."""
 
     text = redact_local_paths(text)
+    guard_outgoing((text,), "Slack")
     request = urllib.request.Request(
         webhook_url,
         data=json.dumps({"text": text}).encode("utf-8"),

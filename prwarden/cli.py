@@ -36,6 +36,7 @@ from .config import (
 from .delivery import (
     DeliveryError,
     DeliveryUncertainError,
+    OutgoingSecretError,
     format_design_slack_message,
     format_docs_slack_message,
     format_manual_review_message,
@@ -43,6 +44,7 @@ from .delivery import (
     format_slack_message,
     format_stale_review_message,
     format_waiting_slack_message,
+    hold_secret,
     send_slack_message,
     withheld_note,
 )
@@ -869,6 +871,35 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     return parser
+
+
+def _undelivered_status(error: DeliveryError) -> str:
+    """Return the status a delivery that did not begin leaves its head in.
+
+    A delivery refused for the secret its text held is settled: the same review
+    would write the same text, so it is not spent again on this head, and the
+    error that refused it reaches the operator once. Any other is retried.
+    """
+
+    return "delivery_blocked" if isinstance(error, OutgoingSecretError) else "failed"
+
+
+def _hold_run_secrets(settings: Settings) -> None:
+    """Keep this host's own secrets out of everything the run posts.
+
+    The GitHub tokens are held where they are read. The Slack webhook is held here,
+    and so is every variable the operator lets an engine see, which is the one
+    place a model can be handed a secret: whatever it does with one, the text it
+    writes is never posted while it holds that value.
+    """
+
+    hold_secret(settings.slack_webhook_url)
+    names = set(settings.review_engine_env_allowlist)
+    if settings.reviews is not None:
+        for _, engine_names in settings.reviews.engine_env:
+            names.update(engine_names)
+    for name in sorted(names):
+        hold_secret(os.environ.get(name))
 
 
 def _selected_concurrency(settings: Settings, requested: Optional[int]) -> int:
@@ -4326,7 +4357,7 @@ def _process_pull_request(
                 body=_review_body(material.diff_budget, findings, withheld_findings),
             )
     except DeliveryError as error:
-        store.set_status(state_key, "failed", error=str(error))
+        store.set_status(state_key, _undelivered_status(error), error=str(error))
         raise
     except CommentTemplateError as error:
         store.set_status(state_key, "failed", error=str(error))
@@ -4748,7 +4779,7 @@ def _deliver_waiting_note(
                 ),
             )
     except DeliveryError as error:
-        store.set_status(key, "failed", error=str(error), **details)
+        store.set_status(key, _undelivered_status(error), error=str(error), **details)
         print(f"      -> Could not say {subject}: {error}")
         return
     except (DeliveryUncertainError, CommandError) as error:
@@ -5865,7 +5896,7 @@ def _deliver_docs_notes(
     except DeliveryError as error:
         store.set_status(
             state_key,
-            "failed",
+            _undelivered_status(error),
             error=str(error),
             docs_fingerprint=docs_fingerprint,
         )
@@ -6210,7 +6241,7 @@ def _deliver_design_notes(
         print(f"      -> Design notes may or may not have posted: {error}")
         return
     except DeliveryError as error:
-        store.set_status(state_key, "failed", error=str(error))
+        store.set_status(state_key, _undelivered_status(error), error=str(error))
         print(f"      -> Design notes were not posted: {error}")
         return
     store.set_status(
@@ -6504,6 +6535,7 @@ def run(args: argparse.Namespace) -> int:
     # Before anything reads GitHub, so a run never reads or posts as an account
     # other than the reviewer just because it was the active one.
     pin_github_account(settings.reviewer_username, settings.repositories)
+    _hold_run_secrets(settings)
 
     concurrency = _selected_concurrency(settings, getattr(args, "concurrency", None))
     live = bool(args.live and not settings.dry_run)

@@ -341,6 +341,23 @@ class PathRedactionTests(unittest.TestCase):
             captured["body"], "Failure at review-state.json.lock"
         )
 
+    def test_slack_delivery_never_sends_a_secret(self) -> None:
+        """Refused before anything is sent, so nothing may have been delivered."""
+
+        from prwarden import delivery
+        from prwarden.delivery import OutgoingSecretError
+
+        self.addCleanup(delivery._held_secrets.clear)
+        held = "held-" + "Q1w2E3r4T5y6U7i8"
+        delivery.hold_secret(held)
+        with patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaises(OutgoingSecretError) as raised:
+                send_slack_message("https://example.invalid/webhook", f"x {held}")
+
+        urlopen.assert_not_called()
+        self.assertNotIn(held, str(raised.exception))
+        self.assertIsInstance(raised.exception, delivery.DeliveryError)
+
 
 if __name__ == "__main__":
     unittest.main()

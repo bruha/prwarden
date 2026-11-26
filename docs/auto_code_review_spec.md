@@ -528,7 +528,9 @@ A pull-request head is skipped when either condition is true:
    review receipt remains unresolved.
 
 Terminal JSON states are `delivered`, `no_findings`, `approval_withheld`,
-`delivery_uncertain`, and `skipped_oversized`. `approval_withheld` means there
+`delivery_uncertain`, `delivery_blocked`, and `skipped_oversized`.
+`delivery_blocked` means nothing was posted because the text held a secret.
+`approval_withheld` means there
 was no new finding to post but the approval is still blocked: by an existing
 qualifying issue, or by the controller itself, as for a head that changes review
 policy, whose record keeps what changed under `policy_changes`. It stores the
@@ -1530,6 +1532,23 @@ excerpts and citations included, in comments, in Slack, and on the terminal, so 
 comment kept after a force-push never preserves a value the push removed. Nothing
 written beside the value is read. A replay applies the same check, so a control
 case reports what a live run would deliver.
+
+Everything PR Warden posts is checked once more just before it is sent, whatever
+wrote it: every inline comment and review body, approval text, conversation comment,
+and Slack message, error notifications included. A model that a pull request
+talked into reading a key from the reviewing host could otherwise write it into a
+finding or a note, where the pull request's author reads it. The check refuses text
+holding a value of any shape above, private key material (the base64 body after a
+private-key header, or an OpenSSH key's body anywhere; a header alone, as a finding
+about a committed key quotes it, passes), an Anthropic sign-in token, or any value
+this host holds: its GitHub tokens, its Slack webhook, and the value of every
+variable an engine is allowed to see. A refused delivery sends nothing and is a
+`DeliveryError`, never an uncertain one, and its error names only the kind of secret.
+It leaves the head `delivery_blocked`, a terminal status, because the same review
+would write the same text: the head is not reviewed again until a new head or
+`--force`, and the run's error reaches the operator once. A level whose notes were
+refused is settled for its pull request the same way, and a waiting note so refused
+is not attempted again for its head.
 
 The common prompt permits only read-only local file search and reading for semantic
 verification, and prohibits edits, command execution, networking, browsing, and

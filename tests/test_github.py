@@ -1312,6 +1312,84 @@ class GitHubFeedbackTests(unittest.TestCase):
             self.assertEqual(github.check_requirements(repository, pull_request), {})
 
 
+class OutgoingSecretGuardTests(unittest.TestCase):
+    """Nothing PR Warden writes to GitHub carries a secret, whatever a model wrote."""
+
+    def setUp(self) -> None:
+        from prwarden import delivery
+
+        self.addCleanup(delivery._held_secrets.clear)
+        self.addCleanup(github._pinned_account.clear)
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in github.GITHUB_TOKEN_VARIABLES:
+            os.environ.pop(name, None)
+        self.repository = Repository("app", "owner/app")
+        self.pull_request = PullRequest(7, "Title", "", "author", "a" * 40, "url")
+        # Built here, so no source line holds a credential-shaped value.
+        self.token = "ghp_" + "Ab1Cd2Ef3Gh4" * 3
+
+    def finding(self, problem: str) -> Finding:
+        return Finding(
+            severity="high",
+            title="Bug",
+            path="app.py",
+            line=1,
+            problem=problem,
+            suggestion="Fix it.",
+            trigger="Always.",
+            impact="Breaks.",
+            evidence=(FindingEvidence("app.py", 1, "value = 1", "the line"),),
+            counterevidence_reason="None.",
+        )
+
+    def test_a_finding_carrying_a_token_is_never_posted(self) -> None:
+        from prwarden.delivery import OutgoingSecretError
+
+        with patch("prwarden.github.run_cmd") as run:
+            with self.assertRaises(OutgoingSecretError) as raised:
+                submit_review(
+                    self.repository,
+                    self.pull_request,
+                    [self.finding(f"Reads {self.token} from the host.")],
+                    "kiro",
+                    None,
+                    load_comment_template(
+                        DEFAULT_GITHUB_COMMENT_TEMPLATE_FILE,
+                        DEFAULT_GITHUB_COMMENT_TAGS_FILE,
+                    ),
+                )
+
+        run.assert_not_called()
+        self.assertIn("a GitHub token", str(raised.exception))
+        self.assertNotIn(self.token, str(raised.exception))
+
+    def test_a_note_carrying_the_reviewers_own_token_is_never_posted(self) -> None:
+        """The pinned token is held as soon as it is read, in any shape."""
+
+        from prwarden.delivery import OutgoingSecretError
+
+        own = "gho" + "x9Y8z7W6v5U4t3S2"
+        with patch("prwarden.github.commands.run_cmd", return_value=own):
+            github.pin_github_account("reviewer")
+        with patch("prwarden.github.commands.run_cmd") as run:
+            with self.assertRaises(OutgoingSecretError):
+                github.submit_design_notes(
+                    self.repository, self.pull_request, f"Note: {own}"
+                )
+            with self.assertRaises(OutgoingSecretError):
+                submit_approval(self.repository, self.pull_request, f"ok {own}")
+
+        run.assert_not_called()
+
+    def test_a_clean_text_is_posted(self) -> None:
+        with patch("prwarden.github.run_cmd", return_value='{"id": 5}') as run:
+            submit_approval(self.repository, self.pull_request, "Approved at abc.")
+
+        run.assert_called_once()
+
+
 class GitHubAccountPinningTests(unittest.TestCase):
     """A run must read and post as the reviewer, whichever account is active."""
 

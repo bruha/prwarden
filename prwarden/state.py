@@ -13,6 +13,9 @@ TERMINAL_STATUSES = {
     "approval_withheld",
     "delivery_uncertain",
     "skipped_oversized",
+    # Its text held a secret, so nothing was posted; the same review would write it
+    # again. A later head or --force reviews it again.
+    "delivery_blocked",
     # Keyed by pull request rather than by head: one manual-review message per
     # pull request, however many times its author pushes to it.
     "oversized_notified",
