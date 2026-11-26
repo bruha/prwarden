@@ -673,7 +673,9 @@ rather than advisory notes nobody checked.
   require, such as an end-to-end suite the team left optional, does not hold it
   back either: the approval goes ahead and is followed by a `Checks to fix`
   reminder naming that check. A branch that requires no check keeps every failed
-  check holding it.
+  check holding it. An approval that a person's sign-off of a review-policy change
+  let through is not bodyless: it names that person and the head, as the `LGTM`
+  comment and the Slack `LGTM` for such a head do.
 - A review that found nothing but holds its approval over a failed check, or
   because the PR changes review policy, says so on the PR once per head, naming the
   failed checks or the policy files, so the author, or an agent waiting on the
