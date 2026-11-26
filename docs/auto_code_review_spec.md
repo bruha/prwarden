@@ -1789,9 +1789,9 @@ the `EXCLUDED_PR_LABELS` JSON array are excluded during discovery; label
 matching is case-insensitive.
 
 When a complete review returns no qualifying findings, print `LGTM` to the
-terminal. For a team pull request, submit a bodyless `APPROVE` review for the
-exact head SHA, whose text names the person when their sign-off of its
-review-policy change is what let it through. For a self-authored pull request, send the clean-review Slack
+terminal. For a team pull request, submit an `APPROVE` review for the exact head
+SHA, without a body, or, when a person's sign-off of its review-policy change is
+what let it through, with a body that names that person and the head. For a self-authored pull request, send the clean-review Slack
 message without GitHub approval, or, in a repository kept out of Slack, post the
 `LGTM` pull-request comment instead. Immediately before any of these deliveries, fetch
 GitHub mergeability. A conflicting
