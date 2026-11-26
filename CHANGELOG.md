@@ -9,8 +9,27 @@ Until 1.0.0 the project was developed in a private repository, as AI Code Review
 and its public history starts at 1.0.2. The commit hashes in the entries up to and
 including 1.0.2 refer to commits that this repository does not contain.
 
-<!-- release-baseline: 4.3.0 6a05c3d721fa9214b3d4ddeb732324c7a8d7851c -->
+<!-- release-baseline: 4.4.0 ddbba144fb7c654b495104696e68039fb02a533b -->
 ## [Unreleased]
+
+## [4.4.0] - 2026-11-27
+
+### Added
+
+- **delivery:** never post text that carries a secret (`da49e6a`).
+- **engine:** confine every engine to its review workspace (`69a6ab1`).
+- **github:** let a repository name its own token in .env (`cb6b600`).
+
+### Fixed
+
+- **engine:** charge the Codex version check to the review's own timeout (`3ff4d0d`).
+
+### Documentation
+
+- describe each engine's confinement where its adapter is described (`e2b20f4`).
+- name the Codex permission profile in the prompt-rules table (`cc576ac`).
+- say Kiro reads no linked dependency in the threat model (`b17b0e2`).
+- say a named token also reaches the managed clone and replaces GH_TOKEN (`ddbba14`).
 
 ## [4.3.0] - 2026-11-26
 
