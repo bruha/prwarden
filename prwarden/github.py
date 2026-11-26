@@ -604,7 +604,8 @@ def code_level_feedback(
     and could cite one to withhold an approval. Advisory notes never do that, whoever
     runs PR Warden, so every conversation comment carrying an advisory, LGTM, or
     waiting marker is left out of what the code level weighs, cites, and reads as new
-    feedback. Only a comment's author, or a maintainer who could delete it anyway,
+    feedback, as is an approval's own text, wherever it carries the approval marker.
+    Only a comment's author, or a maintainer who could delete it anyway,
     can put a marker in it, so a marker can never make another person's objection
     advisory. The advisory levels still read these notes, so as not to repeat them,
     and another installation's inline findings stay: they are review comments, and
@@ -621,8 +622,10 @@ def code_level_feedback(
         comment
         for comment in comments
         # A waiting note can be inline too, on a review-policy change; it asks for
-        # a person and objects to nothing.
+        # a person and objects to nothing. An approval's own text, another
+        # installation's included, says who signed it off and objects to nothing.
         if not carries_marker(comment.body, WAITING_COMMENT_MARKER)
+        and not carries_marker(comment.body, APPROVAL_COMMENT_MARKER)
         and (
             comment.kind != "conversation"
             or not any(carries_marker(comment.body, marker) for marker in advisory)
@@ -1761,6 +1764,7 @@ def format_lgtm_comment(
     verify_model: Optional[str] = None,
     rejected_candidates: int = 0,
     idle_verifier: "tuple[Optional[str], Optional[str]]" = (None, None),
+    signed_off_by: Optional[str] = None,
 ) -> str:
     """Describe a clean result on the reviewer's own pull request.
 
@@ -1773,6 +1777,9 @@ def format_lgtm_comment(
     ``idle_verifier`` is the configured verifier when no candidate reached it. It is
     named as having had nothing to check, never as having verified, because a
     verifier that judged nothing confirmed nothing.
+
+    ``signed_off_by`` is the person whose sign-off of this head's review-policy
+    change let the clean result through, named so it is not read as PR Warden's own.
     """
 
     if rejected_candidates < 0:
@@ -1784,6 +1791,8 @@ def format_lgtm_comment(
         "and GitHub reports no merge conflicts. This PR can be merged once "
         "required checks and branch protections pass.",
     ]
+    if signed_off_by:
+        lines.extend(["", f"@{signed_off_by} signed off its review-policy change."])
     if rejected_candidates:
         issue_word = "issue" if rejected_candidates == 1 else "issues"
         lines.extend(
@@ -2447,13 +2456,38 @@ def _post_conversation_comment(
     return str(response["id"])
 
 
+APPROVAL_COMMENT_MARKER = "<!-- prwarden:approval -->"
+
+
+def format_signed_off_approval(pull_request: PullRequest, signer: str) -> str:
+    """Say whose sign-off let an approval of a review-policy change through.
+
+    Without it the approval of a head whose approval was withheld reads as PR
+    Warden changing its mind, when it was a person who decided. The note names the
+    head because the sign-off was given for that head and no other.
+    """
+
+    return "\n".join(
+        [
+            f"PR Warden found nothing to report at `{pull_request.head_sha[:12]}`. "
+            f"@{signer} signed off its review-policy change, so it is approved.",
+            APPROVAL_COMMENT_MARKER,
+            "",
+        ]
+    )
+
+
 def submit_approval(
     repository: Repository,
     pull_request: PullRequest,
+    body: Optional[str] = None,
 ) -> str:
+    """Approve the exact head, with ``body`` as the approval's text when given."""
+
     payload = {
         "commit_id": pull_request.head_sha,
         "event": "APPROVE",
+        **({"body": body} if body else {}),
     }
     output = _run_for(
         repository,

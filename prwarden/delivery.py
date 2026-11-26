@@ -308,13 +308,15 @@ def format_slack_lgtm_message(
     verify_engine: Optional[str] = None,
     verify_model: Optional[str] = None,
     rejected_candidates: int = 0,
+    signed_off_by: Optional[str] = None,
 ) -> str:
     """Describe a clean result, including candidates verification threw out.
 
     An LGTM reached by rejecting candidates is a different event from a review
     that saw nothing to raise, and only the first says the verification pass did
     any work. Reporting the count distinguishes them without implying the
-    rejected candidates were real defects.
+    rejected candidates were real defects. ``signed_off_by`` is the person whose
+    sign-off of the head's review-policy change let the LGTM through.
     """
     if rejected_candidates < 0:
         raise ValueError("Rejected candidate count must not be negative")
@@ -332,6 +334,10 @@ def format_slack_lgtm_message(
         "no merge conflicts. This PR can be merged once required checks "
         "and branch protections pass.",
     ]
+    if signed_off_by:
+        lines.append(
+            f"> GitHub user {signed_off_by} signed off its review-policy change."
+        )
     if rejected_candidates:
         issue_word = "issue" if rejected_candidates == 1 else "issues"
         lines.append(

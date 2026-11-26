@@ -7,7 +7,8 @@ GitHub repositories, review each eligible head commit through a configured
 review-engine adapter, and route confirmed correctness or security findings:
 
 - Team pull requests with findings: one GitHub review containing inline comments.
-- Team pull requests without findings: one `APPROVE` review without a body;
+- Team pull requests without findings: one `APPROVE` review without a body,
+  or, for a review-policy change a person signed off, one naming them;
   `LGTM` is terminal output only.
 - Configured reviewer's pull requests: one private Slack message.
 - Configured reviewer's pull requests without findings: after final head and
@@ -1488,7 +1489,10 @@ Delivered feedback names the engine that actually reviewed, which is
 the fallback engine when the primary failed. The aggregated Slack error
 notification follows the same rule, which distinguishes a review that failed
 before verification from one that failed after it. GitHub approval reviews remain
-bodyless.
+bodyless, except the approval of a review-policy change a person signed off,
+whose text names that person and the head, carries the
+`<!-- prwarden:approval -->` marker, and never reaches another installation's
+code level. The `LGTM` comment and Slack message for such a head name them too.
 
 The common prompt treats repository and pull-request content as untrusted data.
 The code-level prompt places each block of that data inside one of its own tags, and
@@ -1786,7 +1790,8 @@ matching is case-insensitive.
 
 When a complete review returns no qualifying findings, print `LGTM` to the
 terminal. For a team pull request, submit a bodyless `APPROVE` review for the
-exact head SHA. For a self-authored pull request, send the clean-review Slack
+exact head SHA, whose text names the person when their sign-off of its
+review-policy change is what let it through. For a self-authored pull request, send the clean-review Slack
 message without GitHub approval, or, in a repository kept out of Slack, post the
 `LGTM` pull-request comment instead. Immediately before any of these deliveries, fetch
 GitHub mergeability. A conflicting
@@ -1861,7 +1866,8 @@ mask or replace the original command failure.
 - On POSIX systems, dotenv configuration must have mode `0600` so webhook and
   provider secrets are not exposed to other local accounts.
 - Zero findings never produce a GitHub comment on a team pull request. A clean
-  team pull request may receive a bodyless approval, while a clean self-authored
+  team pull request may receive a bodyless approval, or one naming the person
+  who signed off its review-policy change, while a clean self-authored
   pull request may produce an `LGTM` Slack message after mergeability checks, or,
   in a repository kept out of Slack, one `LGTM` pull-request comment.
 - Fully removed files use compact deletion metadata, do not count toward the

@@ -51,6 +51,13 @@ class DeliveryFormattingTests(unittest.TestCase):
     def test_lgtm_message_stays_silent_when_no_candidate_was_raised(self):
         self.assertNotIn("Verification confirmed", self.lgtm())
 
+    def test_lgtm_message_names_who_signed_off_the_policy_change(self):
+        self.assertIn(
+            "> GitHub user maintainer signed off its review-policy change.",
+            self.lgtm(signed_off_by="maintainer"),
+        )
+        self.assertNotIn("signed off", self.lgtm())
+
     def test_lgtm_message_rejects_an_impossible_candidate_count(self):
         with self.assertRaises(ValueError):
             self.lgtm(rejected_candidates=-1)

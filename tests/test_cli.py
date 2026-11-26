@@ -3250,7 +3250,7 @@ class OrchestrationTests(unittest.TestCase):
                     key = store.key(repository.slug, 1, "head", "github")
                     self.assertEqual(store.get(key)["status"], "delivered")
 
-            submit_approval.assert_called_once_with(repository, pull_request)
+            submit_approval.assert_called_once_with(repository, pull_request, None)
             submit_review.assert_not_called()
 
     def test_merge_conflict_withholds_approval_and_remains_retryable(self) -> None:
@@ -3512,7 +3512,7 @@ class OrchestrationTests(unittest.TestCase):
                     key = store.key(repository.slug, 1, "head", "github")
                     self.assertEqual(store.get(key)["status"], "delivered")
 
-            submit_approval.assert_called_once_with(repository, pull_request)
+            submit_approval.assert_called_once_with(repository, pull_request, None)
             self.assertEqual(snapshot.call_count, 4)
             self.assertEqual(
                 [call.args[0] for call in sleep.call_args_list],

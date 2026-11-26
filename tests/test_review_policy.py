@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 from prwarden import cli
 from prwarden.config import Settings
+from prwarden.github import APPROVAL_COMMENT_MARKER
 from prwarden.models import (
     PriorReviewComment,
     PullRequest,
@@ -569,6 +570,11 @@ class OrchestrationTests(unittest.TestCase):
             signed["terminal"],
         )
         signed["submit_approval"].assert_called_once()
+        # The approval names whose sign-off let it through, and for which head.
+        body = signed["submit_approval"].call_args.args[2]
+        self.assertIn("@maintainer signed off its review-policy change", body)
+        self.assertIn("`head`", body)
+        self.assertIn(APPROVAL_COMMENT_MARKER, body)
         self.assertEqual(signed["record"]["status"], "delivered")
 
     def test_an_approval_of_the_head_signs_it_off_on_the_first_review(self) -> None:
@@ -583,6 +589,10 @@ class OrchestrationTests(unittest.TestCase):
             result["terminal"],
         )
         result["submit_approval"].assert_called_once()
+        self.assertIn(
+            "@maintainer signed off",
+            result["submit_approval"].call_args.args[2],
+        )
         result["submit_waiting_review"].assert_not_called()
 
     FAILED_CHECK = (

@@ -236,6 +236,30 @@ class ReviewerCommentMiningTests(unittest.TestCase):
 
         self.assertEqual(kept, (human, finding, summary))
 
+    def test_another_installations_approval_text_never_reaches_the_code_level(self):
+        """An approval naming who signed it off objects to nothing, so it is never
+        weighed, cited, or read as feedback that arrived during a review."""
+
+        from prwarden.github import (
+            code_level_feedback,
+            format_signed_off_approval,
+        )
+        from prwarden.models import PriorReviewComment
+
+        approval = PriorReviewComment(
+            "review:1",
+            "review",
+            "colleague",
+            format_signed_off_approval(
+                PullRequest(7, "Title", "", "author", "a" * 40, "url"), "maintainer"
+            ).strip(),
+            None,
+            None,
+            None,
+        )
+
+        self.assertEqual(code_level_feedback([approval]), ())
+
 
 class GitHubFeedbackTests(unittest.TestCase):
     def test_detects_when_all_delivered_review_findings_are_resolved(self):
@@ -792,6 +816,42 @@ class GitHubFeedbackTests(unittest.TestCase):
                 "event": "APPROVE",
             },
         )
+
+    def test_a_signed_off_approval_names_the_signer_and_the_head(self):
+        """The approval says a person let it through, so it is not read as PR
+        Warden changing its mind, and its text never signs anything off itself."""
+
+        from prwarden.github import (
+            APPROVAL_COMMENT_MARKER,
+            format_signed_off_approval,
+            is_signoff,
+        )
+
+        repository = Repository("app", "owner/app")
+        pull_request = PullRequest(7, "Title", "", "author", "a" * 40, "url")
+        body = format_signed_off_approval(pull_request, "maintainer")
+        with patch("prwarden.github.run_cmd", return_value='{"id": 99}') as run:
+            submit_approval(repository, pull_request, body)
+
+        payload = json.loads(run.call_args.kwargs["input_text"])
+        self.assertEqual(payload["body"], body)
+        self.assertEqual(payload["event"], "APPROVE")
+        self.assertIn("@maintainer signed off its review-policy change", body)
+        self.assertIn(f"`{'a' * 12}`", body)
+        self.assertIn(APPROVAL_COMMENT_MARKER, body)
+        self.assertFalse(is_signoff(body))
+
+    def test_an_lgtm_comment_names_who_signed_off_the_policy_change(self):
+        from prwarden.github import format_lgtm_comment
+
+        pull_request = PullRequest(7, "Title", "", "author", "a" * 40, "url")
+
+        signed = format_lgtm_comment(
+            pull_request, "kiro", None, signed_off_by="maintainer"
+        )
+
+        self.assertIn("@maintainer signed off its review-policy change.", signed)
+        self.assertNotIn("signed off", format_lgtm_comment(pull_request, "kiro", None))
 
     def test_collects_other_reviewers_feedback_and_locations(self):
         repository = Repository("app", "owner/app")

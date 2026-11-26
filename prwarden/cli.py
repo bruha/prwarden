@@ -88,6 +88,7 @@ from .github import (
     pin_github_account,
     read_check_log,
     reviewer_account,
+    format_signed_off_approval,
     submit_approval,
     submit_design_notes,
     submit_docs_notes,
@@ -3488,6 +3489,9 @@ def _process_pull_request(
     # Whether this head's sign-off was already read for this review, so it is read
     # once even when nobody has signed it off.
     policy_signoff_read = False
+    # Who signed off this head's review-policy change when that is what let the
+    # approval through, named in the approval so it is not read as PR Warden's own.
+    approval_signer: Optional[str] = None
     # Failed checks GitHub does not require, which the approval is delivered beside.
     optional_failing: "tuple[str, ...]" = ()
     # Confirmed findings over the one limit a review posts, kept for its record.
@@ -3944,6 +3948,7 @@ def _process_pull_request(
                 approve = False
                 approval_reason = _policy_change_reason(policy_changes)
             else:
+                approval_signer = signer
                 print(
                     f"      -> @{signer} signed off this head's review-policy "
                     "change, so it no longer holds the approval back"
@@ -4257,7 +4262,13 @@ def _process_pull_request(
     store.set_status(state_key, "delivery_started")
     try:
         if not findings and destination == "github":
-            receipt_id = submit_approval(repository, pull_request)
+            receipt_id = submit_approval(
+                repository,
+                pull_request,
+                format_signed_off_approval(pull_request, approval_signer)
+                if approval_signer
+                else None,
+            )
         elif not findings and destination == OWN_GITHUB_DESTINATION:
             idle_verifier = _verifier_identity(code.settings)
             if idle_verifier == (reviewer_engine, reviewer_model):
@@ -4272,6 +4283,7 @@ def _process_pull_request(
                     *verifier,
                     rejected_candidates=rejected_candidates,
                     idle_verifier=idle_verifier,
+                    signed_off_by=approval_signer,
                 ),
             )
         elif not findings:
@@ -4285,6 +4297,7 @@ def _process_pull_request(
                     reviewer_model,
                     *verifier,
                     rejected_candidates=rejected_candidates,
+                    signed_off_by=approval_signer,
                 ),
             )
         elif destination == "slack":
