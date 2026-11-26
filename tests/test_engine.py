@@ -7,7 +7,7 @@ import threading
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from prwarden.commands import CommandError
 from prwarden.config import Settings
@@ -50,6 +50,7 @@ from prwarden.engine_claude import ClaudeEngine
 from prwarden.engine_codex import (
     CODEX_READING_NOTE,
     CodexEngine,
+    codex_permission_arguments,
     is_clean_result,
     strict_output_schema,
 )
@@ -285,6 +286,14 @@ class ExhaustedQuotaTests(unittest.TestCase):
 
 
 class ReviewEngineTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # The version gate runs its own command; its tests below run it directly.
+        gate = patch(
+            "prwarden.engine_codex.CodexEngine._require_permission_profiles"
+        )
+        gate.start()
+        self.addCleanup(gate.stop)
+
     def settings(
         self,
         directory: str,
@@ -1710,7 +1719,16 @@ class ReviewEngineTests(unittest.TestCase):
             args = run.call_args.args[0]
             self.assertEqual(args[:2], ["codex", "exec"])
             self.assertIn("--ephemeral", args)
-            self.assertEqual(args[args.index("--sandbox") + 1], "read-only")
+            # Not the read-only sandbox, which reads the whole disk: a permission
+            # profile reading only the workspace, with no network.
+            self.assertNotIn("--sandbox", args)
+            self.assertIn('default_permissions="prwarden-review"', args)
+            self.assertIn(
+                'permissions.prwarden-review.filesystem={":minimal"="read", '
+                '":workspace_roots"={"."="read"}}',
+                args,
+            )
+            self.assertIn("permissions.prwarden-review.network.enabled=false", args)
             # Trusted projects live in the user configuration, and a trusted
             # project's own `.codex/config.toml` would choose MCP servers and hooks.
             self.assertIn("--ignore-user-config", args)
@@ -2225,7 +2243,10 @@ class ReviewEngineTests(unittest.TestCase):
             # Safe mode still loads project settings, whose apiKeyHelper runs.
             self.assertEqual(args[args.index("--setting-sources") + 1], "user")
             self.assertIn("--strict-mcp-config", args)
-            self.assertEqual(args[args.index("--permission-mode") + 1], "plan")
+            # Plan mode read any file the account could; dontAsk keeps the
+            # engine inside the workspace.
+            self.assertEqual(args[args.index("--permission-mode") + 1], "dontAsk")
+            self.assertNotIn("--add-dir", args)
             self.assertEqual(args[args.index("--tools") + 1], "Read,Grep,Glob")
             self.assertIn("--json-schema", args)
             self.assertFalse(run.call_args.kwargs["inherit_environment"])
@@ -2286,7 +2307,8 @@ class ReviewEngineTests(unittest.TestCase):
             self.assertEqual(output, {"verdict": "approve", "findings": []})
             args = run.call_args.args[0]
             self.assertEqual(args[:3], ["kiro-cli", "chat", "--no-interactive"])
-            self.assertIn("--trust-tools=read,grep,glob", args)
+            # A trusted tool reads outside the workspace, past any deny rule.
+            self.assertFalse(any(arg.startswith("--trust-tools") for arg in args))
             self.assertEqual(args[args.index("--agent") + 1], "prwarden-review")
             self.assertIn("Return exactly one JSON object", args[-1])
             self.assertFalse(run.call_args.kwargs["inherit_environment"])
@@ -2324,7 +2346,9 @@ class ReviewEngineTests(unittest.TestCase):
             agent["permissions"],
             {
                 "rules": [
-                    {"capability": "fs_read", "effect": "allow"},
+                    # Reading inside the workspace only; any other read is asked
+                    # about, which a headless call refuses.
+                    {"capability": "fs_read", "match": ["./**"], "effect": "allow"},
                     # Without it Kiro offered its skill tool, listing every skill
                     # installed, about 10,000 tokens resent on every turn.
                     {"capability": "skill", "effect": "deny"},
@@ -2906,6 +2930,43 @@ class ReviewEngineTests(unittest.TestCase):
             ),
         )
 
+    def test_each_engine_may_read_its_linked_dependencies_and_nothing_else(self):
+        """Confined to the workspace, an engine still reads the installed packages
+        linked into it, by their resolved directory and nothing around it."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            installed = Path(directory) / "checkout" / "node_modules"
+            installed.mkdir(parents=True)
+            repository = Repository("app", "owner/app", Path(directory))
+            pull_request, material = self.input(repository)[1:]
+            material = replace(
+                material,
+                dependency_links=(
+                    DependencyLink("node_modules", str(installed), ("bun.lock",)),
+                ),
+            )
+            target = str(installed.resolve())
+
+            codex = codex_permission_arguments(material)
+            self.assertIn(
+                'permissions.prwarden-review.filesystem={":minimal"="read", '
+                f'":workspace_roots"={{"."="read"}}, {json.dumps(target)}="read"}}',
+                codex,
+            )
+            settings = self.settings(
+                directory, repository, engine="claude", command=("claude",)
+            )
+            with patch(
+                "prwarden.engine_claude.run_cmd",
+                return_value=json.dumps(
+                    {"subtype": "success", "structured_output": {"findings": []}}
+                ),
+            ) as run:
+                ClaudeEngine(settings).review(repository, pull_request, material)
+
+            args = run.call_args.args[0]
+            self.assertEqual(args[args.index("--add-dir") + 1], target)
+
     def test_a_partial_link_says_a_missing_package_proves_nothing(self):
         """Absence must not be read as evidence when only some packages are linked."""
 
@@ -3327,6 +3388,42 @@ class ReviewEngineTests(unittest.TestCase):
             )
             self.assertIsNone(verification_engine_settings(unchanged))
             self.assertIs(create_verification_engine(unchanged, primary), primary)
+
+
+class CodexVersionGateTests(unittest.TestCase):
+    """An older Codex ignores the profile that keeps it in the workspace."""
+
+    def engine(self) -> CodexEngine:
+        settings = Mock()
+        settings.review_engine_command = ("codex",)
+        settings.review_engine_env_allowlist = ()
+        return CodexEngine(settings)
+
+    def test_a_codex_too_old_for_permission_profiles_is_refused(self):
+        for output in ("codex-cli 0.137.9", "codex-cli", ""):
+            with self.subTest(output=output):
+                with patch("prwarden.engine_codex.run_cmd", return_value=output):
+                    with self.assertRaisesRegex(EngineError, "0.138.0 or later"):
+                        self.engine()._require_permission_profiles()
+
+    def test_a_current_codex_is_checked_once(self):
+        engine = self.engine()
+        with patch(
+            "prwarden.engine_codex.run_cmd", return_value="codex-cli 0.171.0"
+        ) as run:
+            engine._require_permission_profiles()
+            engine._require_permission_profiles()
+
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], ["codex", "--version"])
+        self.assertFalse(run.call_args.kwargs["inherit_environment"])
+
+    def test_an_unreadable_version_is_an_engine_failure(self):
+        with patch(
+            "prwarden.engine_codex.run_cmd", side_effect=CommandError("not found")
+        ):
+            with self.assertRaisesRegex(EngineError, "Could not read the Codex"):
+                self.engine()._require_permission_profiles()
 
 
 class AntigravityReviewBudgetTests(unittest.TestCase):

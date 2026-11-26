@@ -63,8 +63,13 @@ about 30 seconds, giving as its reason that it could not read the workspace. So 
 adapter ends the prompt with a note that, in Codex, a command that only reads, such
 as `cat`, `rg`, or `sed -n`, run inside the workspace, is the file reading the prompt
 allows, and that nothing else may run: no build, test, script, interpreter, package
-manager, git, or network command, and nothing the head ships. The read-only,
-no-network sandbox enforces what the note cannot. On the same pull request Codex
+manager, git, or network command, and nothing the head ships. A permission
+profile enforces what the note cannot. Codex's read-only sandbox let a command
+read the whole disk, so the adapter passes no `--sandbox` and defines the
+`prwarden-review` profile on the command line instead: it reads the minimal paths
+common tools need, the workspace, and the dependency directories linked into it,
+writes nothing, and has no network. A Codex older than 0.138.0 would ignore the
+profile, so the adapter reads `codex --version` once and refuses such a Codex. On the same pull request Codex
 then ran 28 reading commands over six minutes.
 
 The adapter also checks that it did. `codex exec --json` prints each command as an
@@ -126,8 +131,9 @@ claude auth status
 python3 -m prwarden --engine claude --repo owner/repository --pr 123
 ```
 
-The adapter uses print mode, safe mode, plan permissions, only the built-in
-`Read`, `Grep`, and `Glob` tools, no MCP tools, no browser integration, no
+The adapter uses print mode, safe mode, `dontAsk` permissions, only the built-in
+`Read`, `Grep`, and `Glob` tools, each linked dependency directory added with
+`--add-dir`, no MCP tools, no browser integration, no
 session persistence, and JSON-schema output, and passes the role's effort as
 `--effort`. It uses the saved session reported by `claude auth status`.
 
@@ -153,7 +159,12 @@ python3 -m prwarden --engine kiro --repo owner/repository --pr 123
 The adapter uses headless mode and runs every call as PR Warden's own agent,
 `prwarden-review`, which it writes into the review worktree as
 `.kiro/agents/prwarden-review.json`. That agent offers the model only Kiro's read,
-grep, and glob tools, which are also the only ones trusted, and no MCP server.
+grep, and glob tools, and no MCP server. The call passes no `--trust-tools`: a
+trusted tool runs on any path it would otherwise ask about, and with
+`--trust-tools=read` Kiro read a file in the home folder past even an explicit
+deny rule. The agent allows reading under `./**`, the workspace, and any other
+read is asked about, which a headless call refuses. Kiro also refuses a link
+that leads out of the workspace, so it does not read linked dependencies.
 It has no system prompt of its own: Kiro's default agent sends an IDE assistant's
 prompt of some 20,000 characters, about how to work in an editor, with every turn of
 a review that takes thirty, and on a trivial call measured with Kiro CLI 3.1 the

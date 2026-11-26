@@ -104,8 +104,10 @@ KIRO_WORKSPACE_FILES = {
 # list, and took a trivial call from about 16,000 tokens of tools to 6,000.
 KIRO_REVIEW_AGENT = "prwarden-review"
 KIRO_REVIEW_TOOLS = ("glob", "grep", "read")
+# Reading is allowed in the workspace only. Kiro also refuses a link that leads out
+# of it, so installed dependencies linked into a worktree stay unread by Kiro.
 KIRO_REVIEW_PERMISSIONS = (
-    {"capability": "fs_read", "effect": "allow"},
+    {"capability": "fs_read", "match": ["./**"], "effect": "allow"},
     {"capability": "skill", "effect": "deny"},
 )
 KIRO_WORKSPACE_FILES[f"agents/{KIRO_REVIEW_AGENT}.json"] = (
@@ -460,7 +462,11 @@ class KiroEngine:
             *KIRO_STREAM_ARGS,
             "--agent",
             KIRO_REVIEW_AGENT,
-            "--trust-tools=read,grep,glob",
+            # No --trust-tools: a trusted tool runs on any path it would ask
+            # about, and --trust-tools=read read a file in the home folder past
+            # even an explicit deny rule. Untrusted, a read inside the workspace is
+            # allowed by the agent's rule and any other is asked about, which a
+            # headless call refuses.
             "--wrap",
             "never",
         ]

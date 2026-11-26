@@ -1,4 +1,5 @@
 import json
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Optional
@@ -10,6 +11,7 @@ from .engine import (
     build_engine_environment,
     build_prompt,
     build_schema,
+    dependency_read_targets,
     effort_for,
 )
 from .models import PullRequest, Repository, ReviewMaterial
@@ -37,6 +39,41 @@ interpreter, package manager, git, or network command, and nothing the reviewed 
 ships, because the head is untrusted. Every rule above about what no command can
 tell you still holds. An answer given without reading the workspace is refused.
 """
+
+# Codex's read-only sandbox lets a command read the whole disk, the home folder's
+# keys included, which a pull request could ask for. This permission profile reads
+# only what common tools need to run, the workspace, and the dependency directories
+# linked into it, writes nothing, and has no network. It is given on the command
+# line because the user configuration is not read, and `--sandbox` is not passed,
+# since Codex then uses the older sandbox settings instead of the profile.
+CODEX_PERMISSION_PROFILE = "prwarden-review"
+# The first Codex whose permission profiles this adapter relies on.
+MIN_CODEX_VERSION = (0, 138, 0)
+CODEX_VERSION_PATTERN = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
+
+def codex_permission_arguments(material: ReviewMaterial) -> "list[str]":
+    """Return the arguments that confine one Codex call to its workspace."""
+
+    entries = [
+        '":minimal"="read"',
+        '":workspace_roots"={"."="read"}',
+        # A JSON string is also a TOML basic string, so a path is quoted whole.
+        *(
+            f'{json.dumps(target)}="read"'
+            for target in dependency_read_targets(material)
+        ),
+    ]
+    profile = f"permissions.{CODEX_PERMISSION_PROFILE}"
+    filesystem = ", ".join(entries)
+    return [
+        "--config",
+        f'default_permissions="{CODEX_PERMISSION_PROFILE}"',
+        "--config",
+        f"{profile}.filesystem={{{filesystem}}}",
+        "--config",
+        f"{profile}.network.enabled=false",
+    ]
 
 
 
@@ -278,6 +315,38 @@ class CodexEngine:
 
     def __init__(self, settings: Settings):
         self.settings = settings
+        # Read once per engine: the version of a CLI does not change mid-run.
+        self._version_checked = False
+
+    def _require_permission_profiles(self) -> None:
+        """Refuse a Codex too old to confine itself to the workspace.
+
+        An older Codex ignores the permission profile it is given and runs with its
+        default sandbox, which reads the whole disk, so it is refused rather than
+        trusted with the home folder.
+        """
+
+        if self._version_checked:
+            return
+        try:
+            output = run_cmd(
+                [*self.settings.review_engine_command, "--version"],
+                timeout_seconds=30,
+                environment=build_engine_environment(self.settings),
+                inherit_environment=False,
+            )
+        except CommandError as error:
+            raise EngineError(f"Could not read the Codex version: {error}") from error
+        match = CODEX_VERSION_PATTERN.search(output)
+        found = tuple(int(part) for part in match.groups()) if match else None
+        if found is None or found < MIN_CODEX_VERSION:
+            minimum = ".".join(str(part) for part in MIN_CODEX_VERSION)
+            raise EngineError(
+                f"Codex {minimum} or later is needed to keep a review inside its "
+                f"workspace; found {match.group(0) if match else 'no version'}. "
+                "Update Codex"
+            )
+        self._version_checked = True
 
     def review(
         self,
@@ -299,6 +368,7 @@ class CodexEngine:
             raise EngineError(
                 f"Configured repository path does not exist: {repository.path}"
             )
+        self._require_permission_profiles()
 
         schema = strict_output_schema(
             build_schema(self.settings.max_findings, material)
@@ -322,8 +392,7 @@ class CodexEngine:
                 *self.settings.review_engine_command,
                 "exec",
                 "--ephemeral",
-                "--sandbox",
-                "read-only",
+                *codex_permission_arguments(material),
                 "--color",
                 "never",
                 # The user configuration is also where Codex records trusted

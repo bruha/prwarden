@@ -2577,6 +2577,24 @@ def build_engine_environment(
     return environment
 
 
+def dependency_read_targets(material: ReviewMaterial) -> tuple[str, ...]:
+    """Return the linked dependency directories an engine may read besides its
+    workspace.
+
+    The controller links installed dependencies into the workspace so a
+    dependency-API claim can be verified. Every adapter confines its engine to the
+    workspace, and the engines resolve a link before applying that limit, so each
+    link's target is named as readable on its own, and nothing around it is.
+    """
+
+    targets: list[str] = []
+    for link in material.dependency_links:
+        target = str(Path(link.target).resolve())
+        if target not in targets:
+            targets.append(target)
+    return tuple(targets)
+
+
 # A name the reviewed head chose is shown only when it is plainly a path: no spaces,
 # no newlines, nothing that could read as a sentence in the controller's voice.
 LISTED_PATH = re.compile(r"[A-Za-z0-9._/-]{1,200}")

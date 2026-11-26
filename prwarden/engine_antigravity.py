@@ -16,6 +16,7 @@ from .engine import (
     build_engine_environment,
     build_prompt,
     build_schema,
+    dependency_read_targets,
     effort_for,
     host_loaded_instructions,
     is_exhausted_quota,
@@ -503,22 +504,6 @@ def _is_retryable_antigravity_failure(detail: str) -> bool:
     )
 
 
-def _dependency_read_targets(material: ReviewMaterial) -> tuple[str, ...]:
-    """Return linked dependency targets that the sandbox must allow reading.
-
-    The controller links installed dependencies into the workspace so a
-    dependency-API claim can be verified. Antigravity resolves symlinks before
-    applying its read policy, so each link target needs an explicit allowance.
-    """
-
-    targets: list[str] = []
-    for link in material.dependency_links:
-        target = str(Path(link.target).resolve())
-        if target not in targets:
-            targets.append(target)
-    return tuple(targets)
-
-
 class AntigravityEngine:
     """Translate the common review contract to Antigravity CLI arguments."""
 
@@ -564,7 +549,7 @@ class AntigravityEngine:
                             f"read_file({review_workspaces})",
                             *(
                                 f"read_file({target})"
-                                for target in _dependency_read_targets(material)
+                                for target in dependency_read_targets(material)
                             ),
                         ],
                         "deny": [
@@ -659,7 +644,7 @@ class AntigravityEngine:
         )
         readable_roots = "\n".join(
             f"  {root}"
-            for root in (workspace_root, *_dependency_read_targets(material))
+            for root in (workspace_root, *dependency_read_targets(material))
         )
         prompt += host_loaded_instructions(
             repository.path, "Antigravity", ANTIGRAVITY_LOADED_INSTRUCTIONS

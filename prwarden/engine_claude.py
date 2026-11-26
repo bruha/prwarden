@@ -8,6 +8,7 @@ from .engine import (
     build_engine_environment,
     build_prompt,
     build_schema,
+    dependency_read_targets,
     effort_for,
 )
 from .models import PullRequest, Repository, ReviewMaterial
@@ -83,8 +84,13 @@ class ClaudeEngine:
             "--setting-sources",
             "user",
             "--strict-mcp-config",
+            # Plan mode let the Read tool open any file this account can, the
+            # home folder's keys included, which a pull request could ask for.
+            # `dontAsk` refuses every action nothing pre-approved, which in print
+            # mode leaves reading and searching inside the workspace, and the
+            # dependency directories added below, and nothing else.
             "--permission-mode",
-            "plan",
+            "dontAsk",
             "--tools",
             "Read,Grep,Glob",
             "--disallowedTools",
@@ -97,6 +103,8 @@ class ClaudeEngine:
             "--json-schema",
             json.dumps(schema, separators=(",", ":")),
         ]
+        for target in dependency_read_targets(material):
+            args.extend(["--add-dir", target])
         if self.settings.review_model:
             args.extend(["--model", self.settings.review_model])
         effort = effort_for(self.settings, material)
