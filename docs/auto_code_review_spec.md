@@ -590,7 +590,11 @@ covers the same work, and an operator who started a manual run does not need to 
 told their scheduled run stood down for it. Every other way the state file can fail
 remains an error. One that cannot be written at all, as from a sandbox that lets a
 run read and reach the network but not write the state directory, says so and that
-the run belongs outside the sandbox, before anything is reviewed.
+the run belongs outside the sandbox, before anything is reviewed. It names what
+started the run, so the sandbox is known: an agent CLI by the variable it sets in
+the commands it runs (`CODEX_SANDBOX`, `CODEX_THREAD_ID`, `CLAUDECODE`, or
+`KIRO_CHAT_CLI_BIN`), or else the parent process's executable as `ps` reports it,
+and nothing when neither says.
 
 A run asked for one pull request by `--repo` and `--pr` that GitHub reports merged,
 closed, a draft, or carrying an excluded label says which and reviews nothing, with

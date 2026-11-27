@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import tempfile
 import threading
 from datetime import datetime, timezone
@@ -42,6 +43,39 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# What an agent CLI sets in the environment of the commands it runs, so a run it
+# started can say so. Checked in order: a sandbox marker is the more specific one.
+AGENT_MARKERS = (
+    ("CODEX_SANDBOX", "Codex, inside its sandbox"),
+    ("CODEX_THREAD_ID", "Codex"),
+    ("CLAUDECODE", "Claude Code"),
+    ("KIRO_CHAT_CLI_BIN", "Kiro"),
+)
+
+
+def _launcher() -> Optional[str]:
+    """Return what started this process, when it can be told, for an error.
+
+    An agent CLI is named by the variable it sets; otherwise the parent process's
+    executable name is read from `ps`. Nothing is guessed: None when neither says.
+    """
+
+    for name, agent in AGENT_MARKERS:
+        if os.environ.get(name):
+            return agent
+    try:
+        parent = subprocess.run(
+            ["ps", "-o", "comm=", "-p", str(os.getppid())],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return os.path.basename(parent) or None
+
+
 class FileLock:
     def __init__(self, path: Path):
         self.path = path
@@ -53,11 +87,14 @@ class FileLock:
             self.handle = self.path.open("a+b")
         except OSError as error:
             # Typically a sandbox that lets the run read and reach the network but
-            # not write here. Said plainly, since the cure is where it runs.
+            # not write here. Said plainly, since the cure is where it runs, and
+            # naming what started the run says which sandbox that was.
+            launcher = _launcher()
+            started = f" This run was started by {launcher}." if launcher else ""
             raise StateError(
                 f"Cannot write the review state in {self.path.parent} "
-                f"({error.strerror or error}). A live run must record what it "
-                "posts, so run it where that directory is writable, outside any "
+                f"({error.strerror or error}).{started} A live run must record what "
+                "it posts, so run it where that directory is writable, outside any "
                 "sandbox"
             ) from error
         try:

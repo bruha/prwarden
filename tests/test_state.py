@@ -1,8 +1,9 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from prwarden.state import JsonStateStore, StateError, StateLockedError
 
@@ -120,6 +121,43 @@ class JsonStateTests(unittest.TestCase):
                     with JsonStateStore(path):
                         pass
         self.assertNotIsInstance(raised.exception, StateLockedError)
+
+    def test_a_state_directory_it_cannot_write_names_what_started_the_run(self):
+        """A sandboxed agent's run arrives in Slack with nothing saying whose
+        sandbox it was, so the error names the agent that set its marker."""
+
+        from prwarden import state
+
+        refused = PermissionError(1, "Operation not permitted")
+        for environment, expected in (
+            ({"CODEX_SANDBOX": "seatbelt", "CODEX_THREAD_ID": "t"}, "Codex, inside"),
+            ({"CODEX_THREAD_ID": "t"}, "started by Codex."),
+            ({"CLAUDECODE": "1"}, "started by Claude Code."),
+        ):
+            with self.subTest(expected), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "state.json"
+                markers = {name for name, _ in state.AGENT_MARKERS}
+                clean = {k: v for k, v in os.environ.items() if k not in markers}
+                with patch.dict(os.environ, {**clean, **environment}, clear=True):
+                    with patch.object(Path, "open", side_effect=refused):
+                        with self.assertRaises(StateError) as raised:
+                            with JsonStateStore(path):
+                                pass
+                self.assertIn(expected, str(raised.exception))
+
+    def test_otherwise_the_parent_process_is_named_or_nothing_is_said(self):
+        from prwarden import state
+
+        markers = {name for name, _ in state.AGENT_MARKERS}
+        clean = {k: v for k, v in os.environ.items() if k not in markers}
+        with patch.dict(os.environ, clean, clear=True):
+            with patch(
+                "prwarden.state.subprocess.run",
+                return_value=Mock(stdout="/Applications/Example.app/example-cli\n"),
+            ):
+                self.assertEqual(state._launcher(), "example-cli")
+            with patch("prwarden.state.subprocess.run", side_effect=OSError):
+                self.assertIsNone(state._launcher())
 
 
 if __name__ == "__main__":
